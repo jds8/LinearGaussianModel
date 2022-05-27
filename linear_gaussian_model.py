@@ -156,6 +156,7 @@ class GaussianDistribution:
         prob_dist = dist.MultivariateNormal(torch.cat([x.mu.reshape(-1) for x in left]), torch.inverse(precision))
         return GaussianDistribution(prob_dist, left=left, right=right)
 
+
     def mul_posterior(self, other):
         assert (self.right in other.left) ^ (other.right in self.left)  # ensures forms like p(x|y)p(y)
         print("WARNING: Calculating product of densities while assuming that precisely one term is a posterior and that, it conditions on a variable one step away in the graphical model.")
@@ -208,113 +209,6 @@ class GaussianDistribution:
         prob_dist = dist.MultivariateNormal(torch.cat([x.mu.reshape(-1) for x in left]), torch.inverse(precision))
         return GaussianDistribution(prob_dist, left=left, right=right)
 
-    # def __mul__(self, other):
-    #     assert (self.right in other.left) ^ (other.right in self.left)  # ensures forms like p(x|y)p(y)
-
-    #     if self.right in other.left:
-    #         right = other.right
-    #         left = other.left + self.left
-    #         y_cv = self.covariance()
-    #         x_cv = other.covariance()
-    #         y_precision = torch.inverse(y_cv)
-    #         x_precision = torch.inverse(x_cv)
-
-    #         mod_y_precision = torch.zeros_like(x_precision)
-    #         right_id = other.left.index(self.right)
-    #         a_mat = torch.tensor([x.get_coef_wrt(self.right) for x in self.left]).view(1,-1)
-    #         mod_y_precision[right_id, right_id] = torch.matmul(torch.matmul(a_mat, y_precision), a_mat.t())
-    #         lambda_x_x = x_precision + mod_y_precision
-
-    #         correlation_precision = -torch.matmul(a_mat, y_precision)
-    #         if correlation_precision.nelement() > 1:
-    #             lambda_x_y = correlation_precision
-    #             lambda_y_x = correlation_precision.t()
-    #         else:
-    #             lambda_x_y = torch.zeros(1, lambda_x_x.shape[0])
-    #             lambda_x_y[0, right_id] = correlation_precision
-    #             lambda_y_x = torch.zeros(1, lambda_x_x.shape[0])
-    #             lambda_y_x[0, right_id] = correlation_precision.t()
-    #     else:  # other.right in self.left in this case
-    #         right = self.right
-    #         left = self.left + other.left
-    #         y_cv = other.covariance()
-    #         x_cv = self.covariance()
-    #         y_precision = torch.inverse(y_cv)
-    #         x_precision = torch.inverse(x_cv)
-
-    #         mod_y_precision = torch.zeros_like(x_precision)
-    #         right_id = self.left.index(other.right)
-    #         a_mat = torch.tensor([x.get_coef_wrt(other.right) for x in other.left])
-    #         mod_y_precision[right_id, right_id] = torch.matmul(torch.matmul(a_mat, y_precision), a_mat.t())
-    #         lambda_x_x = x_precision + mod_y_precision
-
-    #         correlation_precision = -torch.matmul(a_mat, y_precision)
-    #         if correlation_precision.nelement() > 1:
-    #             lambda_x_y = correlation_precision
-    #             lambda_y_x = correlation_precision.t()
-    #         else:
-    #             lambda_x_y = torch.zeros(1, lambda_x_x.shape[0])
-    #             lambda_x_y[0, right_id] = correlation_precision
-    #             lambda_y_x = torch.zeros(1, lambda_x_x.shape[0])
-    #             lambda_y_x[0, right_id] = correlation_precision.t()
-    #     # hackery
-    #     if lambda_x_x.nelement() == 1:
-    #         lambda_x_x = lambda_x_x.reshape(1,1)
-    #     if lambda_x_y.nelement() == 1:
-    #         lambda_x_y = lambda_x_y.reshape(1,1)
-    #     if lambda_y_x.nelement() == 1:
-    #         lambda_y_x = lambda_y_x.reshape(1,1)
-    #     if y_precision.nelement() == 1:
-    #         y_precision = y_precision.reshape(1,1)
-
-    #     try:
-    #         precision = torch.cat([torch.cat([lambda_x_x, lambda_x_y.t()], dim=1), torch.cat([lambda_y_x, y_precision.t()], dim=1)], axis=0)
-    #     except:
-    #         precision = torch.cat([torch.cat([lambda_x_x, lambda_x_y.t()], dim=0).t(), torch.cat([lambda_y_x, y_precision.t()], dim=1)], axis=0)
-
-    #     prob_dist = dist.MultivariateNormal(torch.cat([x.mu.reshape(-1) for x in left]), torch.inverse(precision))
-    #     return GaussianDistribution(prob_dist, left=left, right=right)
-
-    # def __mul__(self, other):
-    #     other.left = other.left[0]
-    #     self.left = self.left[0]
-    #     assert (self.right == other.left) ^ (other.right == self.left)  # ensures forms like p(x|y)p(y)
-
-    #     if self.right == other.left:
-    #         right = other.right
-    #         left = [other.left, self.left]
-    #         y_cv = self.covariance()
-    #         x_cv = other.covariance()
-    #         y_precision = torch.inverse(y_cv)
-    #         x_precision = torch.inverse(x_cv)
-    #         lambda_x_x = x_precision + self.left.a * y_precision * self.left.a
-    #         # for posterior: lambda_x_x = 1/other.left.conditional_variance()
-    #         lambda_x_y = -self.left.a * y_precision
-    #         # for posterior: lambda_x_y = 1/other.left.conditional_variance()/self.left.a
-    #         lambda_y_x = -y_precision * self.left.a
-    #     else:  # other.right == self.left in this case
-    #         right = self.right
-    #         left = [self.left, other.left]
-    #         y_cv = other.covariance()
-    #         x_cv = self.covariance()
-    #         y_precision = torch.inverse(y_cv)
-    #         x_precision = torch.inverse(x_cv)
-    #         lambda_x_x = x_precision + other.left.a * y_precision * other.left.a
-    #         lambda_x_y = -other.left.a * y_precision
-    #         lambda_y_x = -y_precision * other.left.a
-    #     # hackery
-    #     if lambda_x_x.nelement() == 1:
-    #         lambda_x_x = lambda_x_x.reshape(1,1)
-    #     if lambda_x_y.nelement() == 1:
-    #         lambda_x_y = lambda_x_y.reshape(1,1)
-    #     if lambda_y_x.nelement() == 1:
-    #         lambda_y_x = lambda_y_x.reshape(1,1)
-    #     if y_precision.nelement() == 1:
-    #         y_precision = y_precision.reshape(1,1)
-
-    #     precision = torch.cat([torch.cat([lambda_x_x, lambda_x_y], axis=1), torch.cat([lambda_y_x, y_precision], axis=1)], axis=0)
-    #     prob_dist = dist.MultivariateNormal(torch.cat([x.mu.reshape(-1) for x in left]), torch.inverse(precision))
-    #     return GaussianDistribution(prob_dist, left=left, right=right)
 
     def marginalize_out(self, var):
         if isinstance(var, list):
@@ -776,15 +670,15 @@ def evaluate():
     print('abs difference of evidence estimate and evidence: {}'.format(abs(evidence_true-evidence_est)))
 
 
-ys = torch.rand(10, 1)
-A = torch.tensor(2.).reshape(1,1)
-Q = torch.tensor(3.).reshape(1,1)
-C = torch.tensor(0.5).reshape(1,1)
-R = torch.tensor(2.).reshape(1,1)
-mu_0 = torch.ones_like(ys[0])
-Q_0 = Q
+def test():
+    ys = torch.rand(10, 1)
+    A = torch.tensor(2.).reshape(1,1)
+    Q = torch.tensor(3.).reshape(1,1)
+    C = torch.tensor(0.5).reshape(1,1)
+    R = torch.tensor(2.).reshape(1,1)
+    mu_0 = torch.ones_like(ys[0])
+    Q_0 = Q
 
-if __name__ == "__main__":
     num_transitions = 2
     xt = GaussianRandomVariable(mu_0, Q_0)
     w = GaussianRandomVariable(0., Q)
@@ -913,6 +807,57 @@ if __name__ == "__main__":
     print('p(x1,y1) mean: {}'.format(joint.mean()))
     print('p(x1,y1) cov: {}'.format(joint.covariance()))
     print('p(x1,y1) precision: {}'.format(torch.inverse(joint.covariance())))
+
+
+if __name__ == "__main__":
+    ys = torch.rand(10, 1)
+    A = torch.tensor(2.).reshape(1,1)
+    Q = torch.tensor(3.).reshape(1,1)
+    C = torch.tensor(0.5).reshape(1,1)
+    R = torch.tensor(2.).reshape(1,1)
+    mu_0 = torch.ones_like(ys[0])
+    Q_0 = Q
+
+    num_transitions = 2
+    xt = GaussianRandomVariable(mu_0, Q_0)
+    w = GaussianRandomVariable(0., Q)
+    v = GaussianRandomVariable(0., R)
+    p_xt_prev = xt.prior()
+    xs = [xt]
+    ys = []
+    posterior_xt_prev_given_yt_prev = None
+    for i in range(num_transitions):
+        xt = LinearGaussian(A, xt, w, name="x")
+        yt = LinearGaussian(C, xt, v, name="y")
+        xs.append(xt)
+        ys.append(yt)
+
+        if posterior_xt_prev_given_yt_prev is not None:
+            joint_xt_given_yt_prev = xt.likelihood() * posterior_xt_prev_given_yt_prev
+            p_xt_given_yt_prev = joint_xt_given_yt_prev.marginalize_out(posterior_xt_prev_given_yt_prev.left[0])
+
+            joint_xt_yt_given_yt_prev = yt.likelihood() * p_xt_given_yt_prev
+            p_yt_given_yt_prev = joint_xt_yt_given_yt_prev.marginalize_out(p_xt_given_yt_prev.left[0])
+
+            joint_yt = p_yt_given_yt_prev * p_yt_prev
+
+        # set up for the next iteration
+        joint_xt_prev = xt.likelihood() * p_xt_prev
+        p_xt_prev = joint_xt_prev.marginalize_out(xt.x)
+
+        joint_yt_xt_prev = yt.likelihood() * p_xt_prev
+        p_yt_prev = joint_yt_xt_prev.marginalize_out(p_xt_prev.left[0])
+
+        posterior_xt_prev_given_yt_prev = yt.posterior()
+    print("p(y_1,...,y_n) mean: {}".format(joint_yt.mean()))
+    print("p(y_1,...,y_n) covariance: {}".format(joint_yt.covariance()))
+
+
+    # p(y1,y2) = p(y2|y1)p(y1)
+    # p(y2|y1) = int p(y2|x2)p(x2|y1)dx2
+    # p(x2|y1) = int p(x2|x1)p(x1|y1)dx1
+    # p(y1) = int p(y1|x1)p(x1)dx1
+    # p(x1) = int p(x1|x0)p(x0)dx0
 
     # train()
     # evaluate()
