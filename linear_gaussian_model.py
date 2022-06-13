@@ -1,6 +1,9 @@
 # imports
+import matplotlib.pyplot as plt
 import gym
 from stable_baselines3 import PPO
+from stable_baselines3.common.callbacks import BaseCallback
+import wandb
 import torch
 import torch.distributions as dist
 import torch.nn as nn
@@ -76,28 +79,188 @@ def score_initial_state(x0, mu_0, Q_0):
     """ Scores xt against the prior N(mu_0, Q_0) """
     return dist.MultivariateNormal(mu_0, Q_0).log_prob(x0)
 
-def generate_ys(num_steps, A, Q, C, R, mu_0, Q_0):
+def generate_trajectory(num_steps, A, Q, C, R, mu_0, Q_0):
     ys = []
+    xs = []
     xt = get_start_state(mu_0, Q_0)
-    for i in range(num_steps-1):
-        xt = state_transition(xt, A, Q)
-        ys.append(generate_y(xt, C, R))
-    return torch.cat(ys)
+    xs.append(xt)
+    priors = []
+    liks = []
+    for i in range(num_steps):
+        yt = generate_y(xt, C, R)
+        ys.append(yt)
+        liks.append(score_y(yt, xt, C, R))
 
-def analytical_evidence(ys, A, Q, C, R, mu0, Q0):
-    return torch.tensor(0.).reshape(1,1)
+        prev_xt = xt.clone()
+        xt = state_transition(xt, A, Q)
+        xs.append(xt)
+        priors.append(score_state_transition(xt, prev_xt, A, Q))
+    return torch.cat(ys), torch.cat(xs), torch.cat(priors), torch.cat(liks)
+
+def compute_covariance(ys):
+    cov = torch.zeros(len(ys), len(ys))
+    for r in range(len(ys)):
+        for c in range(len(ys)):
+            cov[r, c] = ys[r].covariance(ys[c])
+    return cov + torch.diag(torch.tensor([1e-6 for _ in range(cov.shape[0])]))
+
+def analytical_score(true_ys, A, Q, C, R, mu0, Q0):
+    num_transitions = len(true_ys)
+    xt = GaussianRandomVariable(mu_0, Q_0, name="x")
+    w = GaussianRandomVariable(0., Q, "w")
+    v = GaussianRandomVariable(0., R, "v")
+    p_xt_prev = xt.prior()
+    xs = [xt]
+    ys = []
+    posterior_xt_prev_given_yt_prev = None
+    for i in range(num_transitions):
+        yt = LinearGaussian(C, xt, v, name="y")
+        xt = LinearGaussian(A, xt, w, name="x")
+        xs.append(xt)
+        ys.append(yt)
+    cov = compute_covariance(ys)
+    d = dist.MultivariateNormal(torch.tensor([y.mu for y in ys]), cov)
+    return d.log_prob(true_ys.reshape(d.mean.shape))
+
+def estimate_evidence(priors, liks, log_qrobs):
+    return liks.sum() + priors.sum() - log_qrobs.sum()
+
+
+class CustomCallback(BaseCallback):
+    """
+    A custom callback that derives from ``BaseCallback``.
+
+    :param verbose: (int) Verbosity level 0: not output 1: info 2: debug
+    """
+    def __init__(self, env, verbose=1, eval_freq=10000, log_freq=100,
+                    gradient_save_freq = 0, run_id=''):
+        super(CustomCallback, self).__init__(verbose)
+        self.env = env
+        self.eval_freq = eval_freq
+        self.log_freq = log_freq
+        self.eval_incr = 1
+        self.best_mean_reward = -np.Inf
+        self.verbose = verbose
+        self.gradient_save_freq = gradient_save_freq
+        self.current_mod = 1
+
+    def _init_callback(self) -> None:
+        d = {}
+        if "algo" not in d:
+            d["algo"] = type(self.model).__name__
+        for key in self.model.__dict__:
+            if key in wandb.config:
+                continue
+            if type(self.model.__dict__[key]) in [float, int, str]:
+                d[key] = self.model.__dict__[key]
+            else:
+                d[key] = str(self.model.__dict__[key])
+        if self.gradient_save_freq > 0:
+            wandb.watch(self.model.policy, log_freq=self.gradient_save_freq, log="all")
+        wandb.config.setdefaults(d)
+
+    def eval_policy(self, policy, env):
+        #
+        total_reward, horizon, avg_wp = 0, 0, 0.
+        #
+        def eval_policy_helper(policy,env):
+            obs = env.reset()
+            done = False
+            total_reward, horizon = 0, 0
+            while not done:
+                action = policy(obs)
+                obs, reward, done, info = env.step(action)
+                total_reward += reward
+                horizon += 1
+            if isinstance(info, list):
+                info = info[0]
+            return total_reward, horizon, info
+
+        next_total_reward, next_horizon, wp = eval_policy_helper(policy,env)
+        total_reward += next_total_reward
+        horizon += next_horizon
+        # avg_wp += wp
+
+        return total_reward, horizon#, avg_wp
+
+    def _on_training_start(self) -> None:
+        """
+        This method is called before the first rollout starts.
+        """
+        # Evaluate the model
+        policy = lambda obs_: self.model.predict(obs_, deterministic=True)[0]
+        avg_return, avg_horizon = self.eval_policy(policy, self.training_env)
+        self.training_env.reset()
+        # log to wandb
+        wandb.log({'det_avg_return':avg_return,
+                   'det_avg_horizon':avg_horizon,
+                   'time_steps': self.num_timesteps,
+                   'updates': self.model._n_updates})
+        return None
+
+    def _on_rollout_start(self) -> None:
+        """
+        A rollout is the collection of environment interaction
+        using the current policy.
+        This event is triggered before collecting new samples.
+        """
+        # if we have hit conditions for full eval
+        if int(np.floor(self.eval_incr / self.eval_freq)) >= self.current_mod:
+            # if we passed increment threshold then we eval
+            self.current_mod += 1
+            # Evaluate the model
+            policy = lambda obs_: self.model.predict(obs_, deterministic=True)[0]
+            avg_return, avg_horizon, avg_wp = self.eval_policy(policy, self.training_env)
+            self.training_env.reset()
+            #
+            wandb.log({'det_avg_return':avg_return,
+                       'det_avg_horizon':avg_horizon,
+                       'det_avg_wp':avg_wp,
+                       'stoch_avg_return': np.mean([val['l'] for val in self.model.ep_info_buffer]),
+                       'stoch_avg_horizon': np.mean([val['r'] for val in self.model.ep_info_buffer]),
+                       'time_steps': self.num_timesteps,
+                       'updates': self.model._n_updates})
+            # New best model, you could save the agent here
+            if avg_return > self.best_mean_reward:
+                self.best_mean_reward = avg_return
+                self.save_model()
+
+        # otherwise just log stochastic info
+        else:
+            wandb.log({'stoch_avg_return': np.mean([val['l'] for val in self.model.ep_info_buffer]),
+                       'stoch_avg_horizon': np.mean([val['r'] for val in self.model.ep_info_buffer]),
+                       'time_steps': self.num_timesteps,
+                       'updates': self.model._n_updates})
+
+    def _on_step(self) -> bool:
+        """
+        This method will be called by the model after each call to `env.step()`.
+
+        For child callback (of an `EventCallback`), this will be called
+        when the event is triggered.
+
+        :return: (bool) If the callback returns False, training is aborted early.
+        """
+
+        if self.env.states:
+            q_log_prob = self.model.policy.to(self.env.states[-1].device).evaluate_actions(obs=self.env.states[-1].t(), actions=self.env.actions[-1])[1]
+            wandb.log({'log weights': self.env.p_log_probs[-1] - q_log_prob})
+
+        return True
 
 
 class LinearGaussianEnv(gym.Env):
-    def __init__(self, ys, A, Q, C, R, mu_0, Q_0):
+    def __init__(self, A, Q, C, R, mu_0, Q_0, traj_length=1, ys=None, sample_ys=False):
         # define action space
-        self.action_space = gym.spaces.Box(low=-1., high=1., shape=(mu_0.shape[0],), dtype=float)
+        self.action_space = gym.spaces.Box(low=-torch.inf, high=torch.inf, shape=(mu_0.shape[0],), dtype=float)
 
         # define observation sapce
-        self.observation_space = gym.spaces.Box(low=-1., high=1., shape=(mu_0.shape[0],), dtype=float)
+        self.observation_space = gym.spaces.Box(low=-torch.inf, high=torch.inf, shape=(mu_0.shape[0] + R.shape[0], 1), dtype=float)
 
         # data
+        self.traj_length = traj_length
         self.ys = ys
+        self.sample_ys = sample_ys
 
         # current index into data and max index
         self.index = 0
@@ -111,7 +274,13 @@ class LinearGaussianEnv(gym.Env):
         self.Q_0 = Q_0
 
         # store previous hidden state xt
+        self.prev_state = None
         self.prev_xt = None
+
+        self.p_log_probs = []
+        self.states = []
+        self.actions = []
+
 
     def step(self, action):
         # get y test and increment index
@@ -119,7 +288,10 @@ class LinearGaussianEnv(gym.Env):
         self.index += 1
 
         # cast action to the appropriate torch.tensor and dtype
-        xt = torch.tensor(action, dtype=ytest.dtype)
+        if isinstance(action, torch.Tensor):
+            xt = action.type(ytest.dtype)
+        else:
+            xt = torch.tensor(action, dtype=ytest.dtype)
 
         # score next observation (ytest) against the likelihood distribution
         lik_reward = score_y(ytest, xt, self.C, self.R)
@@ -128,23 +300,47 @@ class LinearGaussianEnv(gym.Env):
             prior_reward = score_initial_state(xt, self.mu_0, self.Q_0)
         else:
             prior_reward = score_state_transition(xt, self.prev_xt, self.A, self.Q)
+        self.p_log_probs.append(prior_reward)
+        self.actions.append(xt)
+        self.states.append(self.prev_state)
         reward = lik_reward.sum() + prior_reward.sum()
 
         # check done
         done = self.index >= len(self.ys)
 
-        # add y to info but set prev_xt to current xt
-        info = {'prior_reward': prior_reward}
+        # add p(y_i|x_i), p(x_i|x_{i-1}), x_i, x_{i-1} to info for future estimates
+        info = {'prior_reward': prior_reward,
+                'lik_reward': lik_reward,
+                'action': xt,
+                'xt': self.prev_xt}
+
+        # get next y
+        yout = self.ys[self.index] if not done else torch.zeros_like(ytest)
+
+        # update previous xt
         self.prev_xt = xt
 
+        self.prev_state = torch.cat([self.prev_xt.reshape(-1, 1), yout.reshape(-1, 1)])
+
         # return stuff
-        return self.prev_xt, reward.item(), done, info
+        return self.prev_state, reward.item(), done, info
+
 
     def reset(self):
         # set initial observation to be 0s
         self.prev_xt = torch.zeros_like(self.mu_0)
         self.index = 0
-        return self.prev_xt
+        self.states = []
+        self.actions = []
+        self.p_log_probs = []
+
+        if self.sample_ys:
+            self.ys, _, _, _ = generate_trajectory(self.traj_length, gen_A, gen_Q, gen_C, gen_R, gen_mu_0, gen_Q_0)
+        first_y = self.ys[0]
+
+        self.prev_state = torch.cat([self.prev_xt, first_y.reshape(-1, 1)])
+
+        return self.prev_state
 
 
 class LinearGaussianPolicy(nn.Module):
@@ -159,6 +355,16 @@ class LinearGaussianPolicy(nn.Module):
 MODEL = 'linear_gaussian_model'
 
 # params to generate ys
+ys = torch.tensor([[ 0.1198],
+                   [-0.1084],
+                   [ 0.2107],
+                   [ 0.2983],
+                   [-0.5857],
+                   [ 0.2646],
+                   [-1.0533],
+                   [-0.9299],
+                   [ 0.2199],
+                   [ 1.1221]])
 gen_A = torch.tensor(0.8).reshape(1, 1)
 gen_Q = torch.tensor(0.2).reshape(1, 1)
 gen_C = torch.tensor(0.8).reshape(1, 1)
@@ -166,75 +372,169 @@ gen_R = torch.tensor(0.2).reshape(1, 1)
 gen_mu_0 = torch.tensor(0.).reshape(1, 1)
 gen_Q_0 = gen_Q
 
-# test params
-A = torch.tensor(1.).reshape(1, 1)
-Q = torch.tensor(1.).reshape(1, 1)
-C = torch.tensor(1).reshape(1, 1)
-R = torch.tensor(1.).reshape(1, 1)
+# params to generate ys
+A = torch.tensor(0.8).reshape(1, 1)
+Q = torch.tensor(0.2).reshape(1, 1)
+C = torch.tensor(0.8).reshape(1, 1)
+R = torch.tensor(0.2).reshape(1, 1)
 mu_0 = torch.tensor(0.).reshape(1, 1)
-Q_0 = Q
+Q_0 = gen_Q
 
-def train():
+# # test params
+# A = torch.tensor(1.).reshape(1, 1)
+# Q = torch.tensor(1.).reshape(1, 1)
+# C = torch.tensor(1).reshape(1, 1)
+# R = torch.tensor(1.).reshape(1, 1)
+# mu_0 = torch.tensor(0.).reshape(1, 1)
+# Q_0 = Q
+
+# # verification params
+# ys = torch.rand(10, 1)
+# A = torch.tensor(2.).reshape(1, 1)
+# Q = torch.tensor(3.).reshape(1, 1)
+# C = torch.tensor(0.5).reshape(1, 1)
+# R = torch.tensor(2.).reshape(1, 1)
+# mu_0 = torch.zeros_like(ys[0])
+# Q_0 = Q
+
+def train(traj_length):
+    run = wandb.init(project='linear_gaussian_model', save_code=True, entity='iai')
+
     # create env
-    env = LinearGaussianEnv(ys, A, Q, C, R, mu_0, Q_0)
+    env = LinearGaussianEnv(A, Q, C, R, mu_0, Q_0, traj_length=traj_length, sample_ys=True)
     # network archictecture
     arch = [1024 for _ in range(3)]
     # create policy
-    model = PPO('MlpPolicy', env, ent_coef=0.5, policy_kwargs=dict(net_arch=[dict(pi=arch, vf=arch)]))
+    model = PPO('MlpPolicy', env, ent_coef=0.01, policy_kwargs=dict(net_arch=[dict(pi=arch, vf=arch)]), device='cpu')
 
     # train policy
-    model.learn(total_timesteps=10000)
+    model.learn(total_timesteps=100000, callback=CustomCallback(env, verbose=1))
 
     # save model
     model.save(MODEL)
 
-def evaluate(ys):
-    # load model
-    model = PPO.load(MODEL+'.zip')
+
+class ProposalDist:
+    def __init__(self, A, Q):
+        if isinstance(A, torch.Tensor):
+            self.A = A
+        else:
+            self.A = torch.tensor(A).reshape(1, -1)
+        if isinstance(Q, torch.Tensor):
+            self.Q = Q
+        else:
+            self.Q = torch.tensor(Q).reshape(1, -1)
+
+    def evaluate_actions(self, obs, actions):
+        """
+        Return None and score as tuple.
+        The only reason we return a tuple is to match what
+        the PPO policy returns on `evaluate_actions`
+        """
+
+        # We can ignore the "y" part of obs
+        prev_xt = obs.reshape(-1, 1)[0, :]
+
+        return (None, score_state_transition(actions, prev_xt, self.A, self.Q))
+
+    def predict(self, obs, deterministic=False):
+        # We can ignore the "y" part of obs
+        prev_xt = obs.reshape(-1, 1)[0, :]
+
+        try:
+            return state_transition(prev_xt, self.A, self.Q)
+        except:
+            import pdb; pdb.set_trace()
+            return state_transition(prev_xt, self.A, self.Q)
+
+
+
+def evaluate(ys, d):
+    print('\nevaluating...')
     # create env
-    env = LinearGaussianEnv(ys, A, Q, C, R, mu_0, Q_0)
+    env = LinearGaussianEnv(A, Q, C, R, mu_0, Q_0, ys=ys, sample_ys=False)
     # collect joint p(x,y)
     joints = []
     # evidence estimate
-    evidence_est = torch.tensor(0.).reshape(1,-1)
-    log_evidence_est = torch.tensor(0.).reshape(1,-1)
+    evidence_est = torch.tensor(0.).reshape(1, -1)
+    log_evidence_est = torch.tensor(0.).reshape(1, -1)
     # evaluate N times
-    N = torch.tensor(100)
-    for _ in range(N):
+    N = torch.tensor(1000)
+    # collect log( p(x,y)/q(x) )
+    log_p_y_over_qs = torch.zeros(N)
+    # keep track of log evidence estimates up to N sample trajectories
+    running_log_evidence_estimates = []
+    for i in range(N):
         done = False
         # get first obs
         obs = env.reset()
         # keep track of xs
         xs = []
         # keep track of prior over actions p(x)
-        p_x = torch.tensor(0.).reshape(1,-1)
+        log_p_x = torch.tensor(0.).reshape(1, -1)
+        log_p_y_given_x = torch.tensor(0.).reshape(1, -1)
+        # collect actions, likelihoods
+        actions = []
+        priors = []
+        liks = []
+        xts = []
         while not done:
-            xt = model.predict(obs, deterministic=True)[0]
+            xt = d.predict(obs, deterministic=False)[0]
+            xts.append(env.prev_xt)
             obs, reward, done, info = env.step(xt)
-            p_x += info['prior_reward']
+            priors.append(info['prior_reward'])
+            liks.append(info['lik_reward'])
+            log_p_x += info['prior_reward']
+            log_p_y_given_x += info['lik_reward']
+            actions.append(info['action'])
             xs.append(xt)
-        xs = torch.tensor(np.array(xs)).reshape(ys.shape)
+        if isinstance(xs[0], torch.Tensor):
+            xs = torch.cat(xs).reshape(ys.shape)
+        else:
+            xs = torch.tensor(np.array(xs)).reshape(ys.shape)
+
         # log p(x,y)
         log_num = log_joint(xs=xs, ys=ys, A=A, Q=Q, C=C, R=R, mu0=mu_0, Q0=Q_0)
         # log p(y)
-        log_evidence_est += log_num - p_x - torch.log(N)
+        # log_evidence_est += log_num - p_x - torch.log(N)
+        # q(x_1,x_2,...,x_t)
+
+        # log p(x,y)
+        log_p_y_x = log_p_y_given_x + log_p_x
+        log_qrobs = torch.zeros(len(env.states))
+        for j in range(len(env.states)):
+            state = env.states[j]
+            action = actions[j]
+            log_qrobs[j] = d.evaluate_actions(obs=state.t(), actions=action)[1].item()
+
+        log_q = torch.sum(log_qrobs)
+        log_p_y_over_qs[i] = (log_p_y_x - log_q).item()
+        running_log_evidence_estimates.append(torch.logsumexp(log_p_y_over_qs[0:i+1], -1) - torch.log(torch.tensor(i+1)))
+
         # p(y)
-        evidence_est += torch.exp(log_num - p_x)/N
-    evidence_true = analytical_evidence(ys=ys, A=A, Q=Q, C=C, R=R, mu0=mu_0, Q0=Q_0)
-    print('log evidence estimate: {}'.format(log_evidence_est))
-    print('evidence estimate: {}'.format(evidence_est))
-    print('true evidence: {}'.format(evidence_true))
-    print('abs difference of evidence estimate and evidence: {}'.format(abs(evidence_true-evidence_est)))
+        # evidence_est += torch.exp(log_num - p_x)/N
+
+    # log_evidence_estimate = torch.logsumexp(log_p_y_over_qs, -1) - torch.log(N)
+    # log_evidence_true = analytical_score(true_ys=ys, A=A, Q=Q, C=C, R=R, mu0=mu_0, Q0=Q_0)
+    # evidence_estimate = torch.exp(log_evidence_estimate)
+    # evidence_true = torch.exp(log_evidence_true)
+    # print('log evidence estimate: {}'.format(log_evidence_estimate))
+    # print('log evidence true: {}'.format(log_evidence_true))
+    # print('evidence estimate: {}'.format(evidence_estimate))
+    # print('evidence true: {}'.format(evidence_true))
+    # print('abs difference of evidence estimate and evidence: {}'.format(abs(evidence_true-evidence_estimate)))
+
+    return running_log_evidence_estimates, xts, env.states, actions, priors, liks
 
 def logp(ys, t, C=1, A=1, Q=1, R=1, mu=0):
-    return dist.Normal(C*A**t*mu, C**2*Q**2*t + R**2).log_prob(ys)
+    return dist.MultivariateNormal(C*A**t*mu, C**2*Q**2*t + R**2).log_prob(ys)
 
 def create_iso_plot():
     ys = torch.range(-100, 100, 0.1)
-    A = torch.tensor(0.8).reshape(1,1)
-    Q = torch.tensor(0.2).reshape(1,1)
-    C = torch.tensor(0.8).reshape(1,1)
-    R = torch.tensor(0.2).reshape(1,1)
+    A = torch.tensor(0.8).reshape(1, 1)
+    Q = torch.tensor(0.2).reshape(1, 1)
+    C = torch.tensor(0.8).reshape(1, 1)
+    R = torch.tensor(0.2).reshape(1, 1)
     mu_0 = torch.ones_like(ys[0])
     Q_0 = Q
     time_steps = 1000
@@ -483,12 +783,13 @@ class GaussianDistribution:
     def precision(self, **kwargs):
         return torch.inverse(self.covariance(**kwargs))
 
+
 class GaussianRandomVariable:
     x_ids = 0
     y_ids = 1
     def __init__(self, mu, sigma, observed=False, name=""):
-        self.mu = torch.tensor(mu)
-        self.sigma = torch.tensor(sigma)
+        self.mu = torch.tensor(mu) if not isinstance(mu, torch.Tensor) else mu
+        self.sigma = torch.tensor(sigma) if not isinstance(sigma, torch.Tensor) else sigma
         self.observed = observed
         if name == "x":
             self.name = 'x{}'.format(GaussianRandomVariable.x_ids)
@@ -548,9 +849,24 @@ class GaussianRandomVariable:
 
     def get_coef_wrt(self, var):
         if self == var:
-            return torch.tensor(self == var, dtype=torch.float32).reshape(1,-1)
+            return torch.tensor(self == var, dtype=torch.float32).reshape(1, -1)
         raise NotImplementedError
 
+    def covariance(self, var):
+        if self == var:
+            return self.sigma**2
+        try:
+            return var.a * self.covariance(var.x) + self.covariance(var.b)
+        except:
+            return torch.tensor(0.).reshape(1, -1)
+
+    def covariance_str(self, var):
+        if self == var:
+            return '{}'.format(self.sigma.item()**2)
+        try:
+            return '{} * ({}) + {}'.format(var.a.item(), self.covariance_str(var.x) ,self.covariance_str(var.b))
+        except:
+            return '{}'.format(torch.tensor(0.).reshape(1, -1).item())
 
 class LinearGaussian(GaussianRandomVariable):
     def __init__(self, a, x: GaussianRandomVariable, b: GaussianRandomVariable, name):
@@ -575,12 +891,7 @@ class LinearGaussian(GaussianRandomVariable):
         return self.a * self.x.get_coef_wrt(var)
 
     def likelihood(self):
-        """
-        The likelihood function for this variable P(Y|X).
-        Note that this function returns a distribution object which
-        can be evaluated at a particular value of X=x but can also
-        be used to compute joint distributions.
-        """
+        """"""
         a = self.a
         x = self.x
         b = self.b
@@ -613,12 +924,7 @@ class LinearGaussian(GaussianRandomVariable):
         sigma_term = torch.sqrt(sigma_x_given_y) if sigma_x_given_y.nelement() == 1 else sigma_x_given_y
 
         mu_x_given_y = sigma_x_given_y * (a * inv_sigma_y * (1. - b) + inv_sigma_x * x.mu)
-        # print('sigma_x_given_y: {}'.format(sigma_x_given_y))
-        # print('a: {}'.format(a))
-        # print('inv_sigma_y: {}'.format(inv_sigma_y))
-        # print('inv_sigma_x: {}'.format(inv_sigma_x))
-        # print('x.mu: {}'.format(x.mu))
-        # print('mu_x_given_y: {}'.format(mu_x_given_y))
+
         def post(value):
             mu_x_given_y = sigma_x_given_y * (a * inv_sigma_y * (value - b) + inv_sigma_x * x.mu)
             if sigma_x_given_y.nelement() == 1:
@@ -636,6 +942,64 @@ class LinearGaussian(GaussianRandomVariable):
         else:
             raise NotImplementedError
 
+    def covariance(self, var):
+        return self.a * self.x.covariance(var) + self.b.covariance(var)
+
+    def covariance_str(self, var):
+        return '{} * ({}) + {}'.format(self.a.item(), self.x.covariance_str(var), self.b.covariance_str(var))
+
+
+def test_covariance(true_ys=None):
+    num_transitions = len(true_ys)
+    xt = GaussianRandomVariable(mu_0, Q_0, name="x")
+    w = GaussianRandomVariable(0., Q, "w")
+    v = GaussianRandomVariable(0., R, "v")
+    p_xt_prev = xt.prior()
+    xs = [xt]
+    ys = []
+    posterior_xt_prev_given_yt_prev = None
+    for i in range(num_transitions):
+        yt = LinearGaussian(C, xt, v, name="y")
+        xt = LinearGaussian(A, xt, w, name="x")
+        xs.append(xt)
+        ys.append(yt)
+
+    # print('x1 estimate: {}={}'.format(ys[0].x.covariance_str(ys[0].x),ys[0].x.covariance(ys[0].x)))
+    # print('y1 estimate: {}={}'.format(ys[0].covariance_str(ys[0]),ys[0].covariance(ys[0])))
+    # print('x2 estimate: {}={}'.format(ys[1].x.covariance_str(ys[1].x),ys[1].x.covariance(ys[1].x)))
+    # print('y2 estimate: {}={}'.format(ys[1].covariance_str(ys[1]),ys[1].covariance(ys[1])))
+    # print('x3 estimate: {}={}'.format(ys[2].x.covariance_str(ys[2].x),ys[2].x.covariance(ys[2].x)))
+    # print('y3 estimate: {}={}'.format(ys[2].covariance_str(ys[2]), ys[2].covariance(ys[2])))
+    # x1_var = Q**2
+    # y1_var = C**2*x1_var + R**2
+    # x2_var = A**2*x1_var + Q**2
+    # x1_w_covar = 0.
+    # y2_var = C**2*x2_var + R**2
+    # x2_w_covar = A*x1_w_covar + Q**2
+    # x3_var = A**2*x2_var + 2*A*x2_w_covar + Q**2
+    # y3_var = C**2*x3_var + R**2
+    # print('x1 var: {}'.format(x1_var))
+    # print('y1 var: {}'.format(y1_var))
+    # print('x2 var: {}'.format(x2_var))
+    # print('y2 var: {}'.format(y2_var))
+    # print('x3 var: {}'.format(x3_var))
+    # print('y3 var: {}'.format(y3_var))
+
+    # cov_y1_y2 = C**2*A*Q**2 + R**2
+    # print('cov(y1, y2) estimate: {}={}'.format(ys[0].covariance_str(ys[1]), ys[0].covariance(ys[1])))
+    # print('cov(y1, y2) actual: {}'.format(cov_y1_y2))
+    # cov_y2_y3 = C**2*(A**3*Q**2+A*Q**2+Q**2) + R**2
+    # print('cov(y2, y3) estimate: {}={}'.format(ys[1].covariance_str(ys[2]), ys[1].covariance(ys[2])))
+    # print('cov(y2, y3) actual: {}'.format(cov_y2_y3))
+
+    cov = compute_covariance(ys)
+    print('cov {}'.format(cov))
+    print('cov cond number {}'.format(torch.linalg.cond(cov)))
+    d = dist.MultivariateNormal(torch.tensor([y.mu for y in ys]), cov)
+    print('mean: {}'.format(d.mean))
+    print('sample: {}'.format(d.sample()))
+    print('true ys: {}'.format(true_ys))
+    print('log_prob: {}'.format(d.log_prob(true_ys.reshape(d.mean.shape))))
 
 def test():
     num_transitions = 2
@@ -679,6 +1043,11 @@ def test():
     print("p(y_1,...,y_n) covariance: {}".format(joint_yt.covariance()))
 
 
+    # p(y1, y2, y3) = p(y3|y2,y1)*p(y2,y1)
+    # p(yn|y1,...,y_{n-1}) is the normalization constant
+    # p(xn|y1,...,yn) = int p(x{n-1}|y1,...,y{n-1})p(xn|x_{n-1})p(yn|xn) / p(yn|y1,...,y_{n-1}) x_{n-1}
+    # p(x2|y1,y2) = p(x2,y2|y1)/p(y2)
+    # p(x1|y1)
     # p(y1,y2) = p(y2|y1)p(y1)
     # p(y2|y1) = int p(y2|x2)p(x2|y1)dx2
     # p(x2|y1) = int p(x2|x1)p(x1|y1)dx1
@@ -688,9 +1057,118 @@ def test():
     # train()
     # evaluate()
 
+def load_rl_model(device):
+    # load model
+    model = PPO.load(MODEL+'.zip')
+    policy = model.policy.to(device)
+    return model, policy
+
+def importance_estimate(ys, A, Q):
+    print('\nimportance estimate\n')
+    pd = ProposalDist(A=A, Q=Q)
+    running_log_evidence_estimates, xts, states, actions, priors, liks = evaluate(ys, pd)
+    return ys, running_log_evidence_estimates
+
+def test_importance_sampler(traj_length, A, Q):
+    """
+    Generate trajectories with respect to the gen_A, gen_Q params
+    and estimate the evidence using IS with input params A, Q
+    """
+    ys, xs, priors, liks = generate_trajectory(traj_length, gen_A, gen_Q, gen_C, gen_R, gen_mu_0, gen_Q_0)
+    states = torch.cat([torch.zeros(1, 1), xs[0:-1]])
+    print('\ntesting importance sampler...\n')
+    for s, x, y, prior, lik in zip(states, xs, ys, liks, priors):
+        print('s_t = {} a_t = {} y_t = {} where p(a_t|s_t) = N({}, {}) = {} and p(y_t|a_t) = N({}, {}) = {}'.format(s.item(), x.item(), y.item(), (A*s).item(), Q.item(), prior, (C*x).item(), R.item(), lik))
+    print('ys: {}'.format(ys))
+
+    return importance_estimate(ys, A=A, Q=Q)
+
+def rl_estimate(ys):
+    print('\nrl_estimate\n')
+    _, policy = load_rl_model(ys.device)
+    return evaluate(ys, policy)
+
+def full_sweep(ys=None, train_model=False, traj_length=1):
+    if ys is None:
+        ys, xs, priors, liks = generate_trajectory(traj_length, gen_A, gen_Q, gen_C, gen_R, gen_mu_0, gen_Q_0)
+        states = torch.cat([torch.zeros(1, 1), xs[0:-1]])
+        print('\ngenerated trajs\n')
+        for s, x, y, prior, lik in zip(states, xs, ys, liks, priors):
+            print('s_t = {} a_t = {} y_t = {} where p(a_t|s_t) = N({}, {}) = {} and p(y_t|a_t) = N({}, {}) = {}'.format(s.item(), x.item(), y.item(), (A*s).item(), Q.item(), prior, (C*x).item(), R.item(), lik))
+        print('\nys: {}'.format(ys))
+        if train_model:
+            train(traj_length=traj_length)
+    rl_estimate(ys=ys)
+    print('\nrl output')
+    for s, x, y, prior, lik in zip(xts, actions, ys, priors, liks):
+        print('s_t = {} a_t = {} y_t = {} where p(a_t|s_t) = N({}, {}) = {} and p(y_t|a_t) = N({}, {}) = {}'.format(
+            s.item(), x.item(), y.item(), (A*s).item(), Q.item(), prior.item(), (C*x).item(), R.item(), lik.item()))
+    joint_p = torch.tensor(liks).sum() + torch.tensor(priors).sum()
+    log_qrobs = torch.zeros(len(states))
+    for j in range(len(states)):
+        state = states[j]
+        action = actions[j]
+        log_qrobs[j] = policy.evaluate_actions(obs=state.t(), actions=action)[1].item()
+        print('log_qrob state: {}'.format(state))
+        print('log_qrob action: {}'.format(action))
+    print('log qrobs: {}'.format(log_qrobs))
+    print('evidence estimate: {}'.format(joint_p - torch.sum(log_qrobs)))
+
+    print('\ntesting covariance')
+    test_covariance(ys)
+
+def compare_multiple_IS():
+    for traj_length in [1]:#[1, 10, 100]:
+        plt.figure(plt.gcf().number+1)
+
+        # generate ys from gen_A, gen_Q params
+        ys, xs, priors, liks = generate_trajectory(traj_length, gen_A, gen_Q, gen_C, gen_R, gen_mu_0, gen_Q_0)
+
+        # get evidence estimate using true params
+        _, log_evidence_mc = importance_estimate(ys, A=gen_A, Q=gen_Q)
+
+        # get evidence estimates using IS with other params
+        As = torch.range(0.2, 0.6, 0.2)
+        Qs = torch.range(0.2, 0.6, 0.2)
+        for _A in As:
+            for _Q in Qs:
+                # get is estimate of evidence using _A and _Q params
+                _, log_evidence_estimates = importance_estimate(ys, A=_A.reshape(1, 1), Q=_Q.reshape(1, 1))
+
+                # compute log ratio of IS estimate to MC value
+                diffs = torch.tensor(log_evidence_estimates) - log_evidence_mc[-1]
+                plt.plot(range(1, len(diffs)+1), diffs, label='A: {}, Q: {}'.format(_A, _Q))
+
+        # add RL plot
+        try:
+            running_estimate, _, _, _, _, _ = rl_estimate(ys)
+            diffs = torch.tensor(running_estimate) - log_evidence_mc[-1]
+            plt.plot(range(1, len(diffs)+1), diffs, label='RL')
+        except:
+            pass
+
+        plt.xlabel('Number of Samples')
+        plt.ylabel('log Ratio of Evidence Estimate with True Evidence')
+        plt.title('Convergence of Evidence Estimate to True Evidence (trajectory length: {})'.format(traj_length))
+        plt.savefig('/home/jsefas/linear-gaussian-model/traj_length_{}_evidence_convergence.png'.format(traj_length))
+
 
 if __name__ == "__main__":
-    # train()
-    ys = generate_ys(10, gen_A, gen_Q, gen_C, gen_R, gen_mu_0, gen_Q_0)
-    print(ys)
-    evaluate(ys)
+    compare_multiple_IS()
+
+    # ys = None
+    # traj_length=10
+    # full_sweep(ys, train_model=True, traj_length=traj_length)
+
+    # importance estimate
+    # ys, log_evidence_estimates = test_importance_sampler(traj_length=traj_length, A=torch.tensor(0.6).reshape(1, -1), Q=torch.tensor(0.1).reshape(1, -1))
+
+    # monte carlo estimate
+    # _, log_evidence_mc = importance_estimate(ys, A=gen_A, Q=gen_Q)
+
+    # compute log ratio of IS estimate to MC value
+    # diffs = log_evidence_estimates - log_evidence_mc[-1]
+    # plt.plot(diffs, range(1, len(diffs)+1))
+
+    # # rl estimate
+    # rl_estimate(ys)
