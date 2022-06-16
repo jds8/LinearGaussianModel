@@ -64,7 +64,7 @@ def neg_two_log_prob(xs, ys, A, Q, C, R, mu0, Q0):
         q_term += torch.matmul(x_term.t() * torch.inverse(Q), x_term) + torch.logdet(Q)
 
     x0_term = xs[0] - mu0
-    zero_term = x0_term.t() * torch.inverse(Q0) * x0_term + tau * (p + k) * torch.log(2*torch.tensor(torch.pi))
+    zero_term = x0_term.t() * torch.inverse(Q0) * x0_term + tau * (p + k) * torch.log(2*torch.tensor(math.pi))
     return r_term + q_term + zero_term
 
 def log_joint(xs, ys, A, Q, C, R, mu0, Q0):
