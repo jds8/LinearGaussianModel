@@ -1,5 +1,6 @@
 # imports
 import matplotlib.pyplot as plt
+import math
 import gym
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
@@ -252,10 +253,10 @@ class CustomCallback(BaseCallback):
 class LinearGaussianEnv(gym.Env):
     def __init__(self, A, Q, C, R, mu_0, Q_0, traj_length=1, ys=None, sample_ys=False):
         # define action space
-        self.action_space = gym.spaces.Box(low=-torch.inf, high=torch.inf, shape=(mu_0.shape[0],), dtype=float)
+        self.action_space = gym.spaces.Box(low=-math.inf, high=math.inf, shape=(mu_0.shape[0],), dtype=float)
 
         # define observation sapce
-        self.observation_space = gym.spaces.Box(low=-torch.inf, high=torch.inf, shape=(mu_0.shape[0] + R.shape[0], 1), dtype=float)
+        self.observation_space = gym.spaces.Box(low=-math.inf, high=math.inf, shape=(mu_0.shape[0] + R.shape[0], 1), dtype=float)
 
         # data
         self.traj_length = traj_length
@@ -459,7 +460,7 @@ def evaluate(ys, d):
     evidence_est = torch.tensor(0.).reshape(1, -1)
     log_evidence_est = torch.tensor(0.).reshape(1, -1)
     # evaluate N times
-    N = torch.tensor(1000)
+    N = torch.tensor(10000)
     # collect log( p(x,y)/q(x) )
     log_p_y_over_qs = torch.zeros(N)
     # keep track of log evidence estimates up to N sample trajectories
@@ -1118,7 +1119,7 @@ def full_sweep(ys=None, train_model=False, traj_length=1):
     test_covariance(ys)
 
 def compare_multiple_IS():
-    for traj_length in [1]:#[1, 10, 100]:
+    for traj_length in [10]:#[1, 10, 100]:
         plt.figure(plt.gcf().number+1)
 
         # generate ys from gen_A, gen_Q params
@@ -1137,7 +1138,7 @@ def compare_multiple_IS():
 
                 # compute log ratio of IS estimate to MC value
                 diffs = torch.tensor(log_evidence_estimates) - log_evidence_mc[-1]
-                plt.plot(range(1, len(diffs)+1), diffs, label='A: {}, Q: {}'.format(_A, _Q))
+                plt.plot(range(1, len(diffs)+1), diffs, label='A: {}, Q: {}'.format(round(_A.item(), 1), round(_Q.item(), 1)))
 
         # add RL plot
         try:
@@ -1150,15 +1151,16 @@ def compare_multiple_IS():
         plt.xlabel('Number of Samples')
         plt.ylabel('log Ratio of Evidence Estimate with True Evidence')
         plt.title('Convergence of Evidence Estimate to True Evidence (trajectory length: {})'.format(traj_length))
+        plt.legend()
         plt.savefig('/home/jsefas/linear-gaussian-model/traj_length_{}_evidence_convergence.png'.format(traj_length))
 
 
 if __name__ == "__main__":
-    compare_multiple_IS()
+    # compare_multiple_IS()
 
-    # ys = None
-    # traj_length=10
-    # full_sweep(ys, train_model=True, traj_length=traj_length)
+    ys = None
+    traj_length=10
+    full_sweep(ys, train_model=True, traj_length=traj_length)
 
     # importance estimate
     # ys, log_evidence_estimates = test_importance_sampler(traj_length=traj_length, A=torch.tensor(0.6).reshape(1, -1), Q=torch.tensor(0.1).reshape(1, -1))
