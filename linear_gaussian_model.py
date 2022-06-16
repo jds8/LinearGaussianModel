@@ -495,7 +495,7 @@ def evaluate(ys, d):
             xs = torch.tensor(np.array(xs)).reshape(ys.shape)
 
         # log p(x,y)
-        log_num = log_joint(xs=xs, ys=ys, A=A, Q=Q, C=C, R=R, mu0=mu_0, Q0=Q_0)
+        # log_num = log_joint(xs=xs, ys=ys, A=A, Q=Q, C=C, R=R, mu0=mu_0, Q0=Q_0)
         # log p(y)
         # log_evidence_est += log_num - p_x - torch.log(N)
         # q(x_1,x_2,...,x_t)
