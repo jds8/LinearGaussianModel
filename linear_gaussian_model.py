@@ -441,13 +441,7 @@ class ProposalDist:
     def predict(self, obs, deterministic=False):
         # We can ignore the "y" part of obs
         prev_xt = obs.reshape(-1, 1)[0, :]
-
-        try:
-            return state_transition(prev_xt, self.A, self.Q)
-        except:
-            import pdb; pdb.set_trace()
-            return state_transition(prev_xt, self.A, self.Q)
-
+        return state_transition(prev_xt, self.A, self.Q)
 
 
 def evaluate(ys, d):
@@ -511,10 +505,10 @@ def evaluate(ys, d):
         log_q = torch.sum(log_qrobs)
         log_p_y_over_qs[i] = (log_p_y_x - log_q).item()
         try:
-            running_log_evidence_estimates.append(torch.logsumexp(log_p_y_over_qs[0:i+1], -1) - torch.log(torch.tensor(i+1)))
+            running_log_evidence_estimates.append(torch.logsumexp(log_p_y_over_qs[0:i+1], -1) - torch.log(torch.tensor(i+1.)))
         except:
             import pdb; pdb.set_trace()
-            running_log_evidence_estimates.append(torch.logsumexp(log_p_y_over_qs[0:i+1], -1) - torch.log(torch.tensor(i+1)))
+            running_log_evidence_estimates.append(torch.logsumexp(log_p_y_over_qs[0:i+1], -1) - torch.log(torch.tensor(i+1.)))
 
 
         # p(y)
