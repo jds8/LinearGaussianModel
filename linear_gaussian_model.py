@@ -510,7 +510,12 @@ def evaluate(ys, d):
 
         log_q = torch.sum(log_qrobs)
         log_p_y_over_qs[i] = (log_p_y_x - log_q).item()
-        running_log_evidence_estimates.append(torch.logsumexp(log_p_y_over_qs[0:i+1], -1) - torch.log(torch.tensor(i+1)))
+        try:
+            running_log_evidence_estimates.append(torch.logsumexp(log_p_y_over_qs[0:i+1], -1) - torch.log(torch.tensor(i+1)))
+        except:
+            import pdb; pdb.set_trace()
+            running_log_evidence_estimates.append(torch.logsumexp(log_p_y_over_qs[0:i+1], -1) - torch.log(torch.tensor(i+1)))
+
 
         # p(y)
         # evidence_est += torch.exp(log_num - p_x)/N
@@ -1094,29 +1099,31 @@ def full_sweep(ys=None, train_model=False, traj_length=1):
         ys, xs, priors, liks = generate_trajectory(traj_length, gen_A, gen_Q, gen_C, gen_R, gen_mu_0, gen_Q_0)
         states = torch.cat([torch.zeros(1, 1), xs[0:-1]])
         print('\ngenerated trajs\n')
-        for s, x, y, prior, lik in zip(states, xs, ys, liks, priors):
+        for s, x, y, lik, prior in zip(states, xs, ys, liks, priors):
             print('s_t = {} a_t = {} y_t = {} where p(a_t|s_t) = N({}, {}) = {} and p(y_t|a_t) = N({}, {}) = {}'.format(s.item(), x.item(), y.item(), (A*s).item(), Q.item(), prior, (C*x).item(), R.item(), lik))
         print('\nys: {}'.format(ys))
         if train_model:
             train(traj_length=traj_length)
     rl_estimate(ys=ys)
-    print('\nrl output')
-    for s, x, y, prior, lik in zip(xts, actions, ys, priors, liks):
-        print('s_t = {} a_t = {} y_t = {} where p(a_t|s_t) = N({}, {}) = {} and p(y_t|a_t) = N({}, {}) = {}'.format(
-            s.item(), x.item(), y.item(), (A*s).item(), Q.item(), prior.item(), (C*x).item(), R.item(), lik.item()))
-    joint_p = torch.tensor(liks).sum() + torch.tensor(priors).sum()
-    log_qrobs = torch.zeros(len(states))
-    for j in range(len(states)):
-        state = states[j]
-        action = actions[j]
-        log_qrobs[j] = policy.evaluate_actions(obs=state.t(), actions=action)[1].item()
-        print('log_qrob state: {}'.format(state))
-        print('log_qrob action: {}'.format(action))
-    print('log qrobs: {}'.format(log_qrobs))
-    print('evidence estimate: {}'.format(joint_p - torch.sum(log_qrobs)))
+    # _, policy = load_rl_model(ys.device)
+    # print('\nrl output')
+    # for s, x, y, prior, lik in zip(states, xs, ys, priors, liks):
+    #     print('s_t = {} a_t = {} y_t = {} where p(a_t|s_t) = N({}, {}) = {} and p(y_t|a_t) = N({}, {}) = {}'.format(
+    #         s.item(), x.item(), y.item(), (A*s).item(), Q.item(), prior.item(), (C*x).item(), R.item(), lik.item()))
+    # joint_p = torch.tensor(liks).sum() + torch.tensor(priors).sum()
+    # log_qrobs = torch.zeros(len(states))
+    # for j in range(len(states)):
+    #     state = states[j]
+    #     action = xs[j]
+    #     y = ys[j]
+    #     log_qrobs[j] = policy.evaluate_actions(obs=torch.cat([state, y]).reshape(1, -1), actions=action)[1].item()
+    #     print('log_qrob state: {}'.format(state))
+    #     print('log_qrob action: {}'.format(action))
+    # print('log qrobs: {}'.format(log_qrobs))
+    # print('evidence estimate: {}'.format(joint_p - torch.sum(log_qrobs)))
 
-    print('\ntesting covariance')
-    test_covariance(ys)
+    # print('\ntesting covariance')
+    # test_covariance(ys)
 
 def compare_multiple_IS():
     for traj_length in [10]:#[1, 10, 100]:
