@@ -458,20 +458,6 @@ def plot_event_IS(num_steps=10, threshold=torch.tensor(0.5)):
 
     plot_IS(env_gen=env_gen, sample_fun=sample_ys_fun, get_true_log_prob_fun=sample_true_fun, name="event", extra_fun=extra_fun)
 
-
-    # ys, running_log_evidence_estimates = importance_estimate(ys, A=A, Q=Q, env=env)
-    # print('IS estimate (samples = {}): {}'.format(len(running_log_evidence_estimates), running_log_evidence_estimates[-1]))
-    # plot_log_diffs(running_log_evidence_estimates, p_gt_h, label='IS')
-
-    # _, running_log_evidence_estimates, _, _, _, _ = rl_estimate(ys, env=env)
-    # print('RL estimate (samples = {}): {}'.format(len(running_log_evidence_estimates), running_log_evidence_estimates[-1]))
-
-    # plt.xlabel('Number of Samples')
-    # plt.ylabel('log Ratio of Estimate with True Value')
-    # plt.title('Convergence of Estimate to True (trajectory length: {})'.format(num_steps))
-    # plt.legend()
-    # plt.savefig('/home/jsefas/linear-gaussian-model/traj_length_{}_event_convergence.png'.format(num_steps))
-
 def compare_y_event_dist(num_steps=10):
     y_saps = []
     for i in range(10000):
