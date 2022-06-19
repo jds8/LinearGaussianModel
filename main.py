@@ -8,8 +8,9 @@ import torch.nn as nn
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 from copy import deepcopy
-from generative_model import sample_y, generate_trajectory, \
+from generative_model import y_dist, sample_y, generate_trajectory, \
     gen_A, gen_Q, gen_C, gen_R, gen_mu_0, gen_Q_0, \
+    A, Q, C, R, mu_0, Q_0, \
     state_transition, score_state_transition
 from linear_gaussian_env import LinearGaussianEnv, LinearGaussianSingleYEnv
 
@@ -301,7 +302,7 @@ def load_rl_model(device):
     policy = model.policy.to(device)
     return model, policy
 
-def importance_estimate(ys, A, Q, env=None):
+def importance_estimate(ys, A=gen_A, Q=gen_Q, env=None):
     print('\nimportance estimate\n')
     pd = ProposalDist(A=A, Q=Q)
 
@@ -331,10 +332,10 @@ def test_importance_sampler(traj_length, A, Q):
 
     return importance_estimate(ys, A=A, Q=Q)
 
-def rl_estimate(ys):
+def rl_estimate(ys, env=None):
     print('\nrl_estimate\n')
     _, policy = load_rl_model(ys.device)
-    return evaluate(ys, policy)
+    return evaluate(ys, policy, env)
 
 def full_sweep(ys=None, train_model=False, traj_length=1, env_class=LinearGaussianSingleYEnv):
     if ys is None:
@@ -369,15 +370,25 @@ def full_sweep(ys=None, train_model=False, traj_length=1, env_class=LinearGaussi
     # print('\ntesting covariance')
     # test_covariance(ys)
 
-def compare_multiple_IS():
-    for traj_length in [10]:#[1, 10, 100]:
+def plot_log_diffs(log_values, log_true, label):
+    # compute log ratio of estimate to true value
+    diffs = torch.tensor(log_values) - log_true
+    plt.plot(torch.arange(1, len(diffs.squeeze())+1), diffs.squeeze(), label=label)
+
+    return diffs
+
+def plot_IS(env_gen, sample_fun, get_true_log_prob_fun, name, traj_lengths=[10], extra_fun=None): #traj_lengths=[1, 10, 50]):
+    for traj_length in traj_lengths:
         plt.figure(plt.gcf().number+1)
 
         # generate ys from gen_A, gen_Q params
-        ys, xs, priors, liks = generate_trajectory(traj_length, gen_A, gen_Q, gen_C, gen_R, gen_mu_0, gen_Q_0)
+        ys = sample_fun(traj_length)
 
         # get evidence estimate using true params
-        _, log_evidence_mc = importance_estimate(ys, A=gen_A, Q=gen_Q)
+        log_true = get_true_log_prob_fun(ys)
+
+        # generate environment
+        env = env_gen(ys)
 
         # get evidence estimates using IS with other params
         As = torch.arange(0.2, 0.6, 0.2)
@@ -385,52 +396,93 @@ def compare_multiple_IS():
         for _A in As:
             for _Q in Qs:
                 # get is estimate of evidence using _A and _Q params
-                _, log_evidence_estimates = importance_estimate(ys, A=_A.reshape(1, 1), Q=_Q.reshape(1, 1))
+                _, log_evidence_estimates = importance_estimate(ys, A=_A.reshape(1, 1), Q=_Q.reshape(1, 1), env=env)
 
-                # compute log ratio of IS estimate to MC value
-                diffs = torch.tensor(log_evidence_estimates) - log_evidence_mc[-1]
-                plt.plot(range(1, len(diffs)+1), diffs, label='A: {}, Q: {}'.format(round(_A.item(), 1), round(_Q.item(), 1)))
+                plot_log_diffs(log_evidence_estimates, log_evidence_mc[-1], label='A: {}, Q: {}'.format(round(_A.item(), 1), round(_Q.item(), 1)))
 
         # add RL plot
         try:
-            running_estimate, _, _, _, _, _ = rl_estimate(ys)
-            diffs = torch.tensor(running_estimate) - log_evidence_mc[-1]
-            plt.plot(range(1, len(diffs)+1), diffs, label='RL')
+            running_estimate, _, _, _, _, _ = rl_estimate(ys, env)
+            plot_log_diffs(running_estimate, log_evidence_mc[-1], label='RL')
         except:
             pass
+
+        if extra_fun is not None:
+            extra_fun(ys)
 
         plt.xlabel('Number of Samples')
         plt.ylabel('log Ratio of Evidence Estimate with True Evidence')
         plt.title('Convergence of Evidence Estimate to True Evidence (trajectory length: {})'.format(traj_length))
         plt.legend()
-        plt.savefig('/home/jsefas/linear-gaussian-model/trial_traj_length_{}_evidence_convergence.png'.format(traj_length))
+        plt.savefig('/home/jsefas/linear-gaussian-model/traj_length_{}_{}_convergence.png'.format(traj_length, name))
 
-def verify_single_y(num_steps=10, threshold=0.5):
-    ys, score, d = sample_y(num_steps=num_steps)
-    env = LinearGaussianSingleYEnv(A=gen_A, Q=gen_Q,
-                                   C=gen_C, R=gen_R,
-                                   mu_0=gen_mu_0,
-                                   Q_0=gen_Q_0, ys=ys,
-                                   traj_length=num_steps,
-                                   sample=False,
-                                   threshold=threshold)
-    ys, running_log_evidence_estimates = importance_estimate(ys>threshold, A=gen_A, Q=gen_Q, env=env)
-    print('estimate (samples = {}): {}'.format(len(running_log_evidence_estimates), running_log_evidence_estimates[-1]))
-    print('true: {}', dist.Bernoulli(1-d.cdf(threshold)).log_prob(ys>threshold))
+def plot_evidence_IS(env):
+    sample_fun = lambda num_steps: generate_trajectory(num_steps)[0]
+    get_true_log_prob_fun = lambda ys: importance_estimate(ys, A=gen_A, Q=gen_Q)[1]
 
-    # print('true dist: N({}, {})'.format(d.mean.item(), d.variance.item()))
-    # y_saps = []
-    # for i in range(10000):
-    #     ys, _, _, _ = generate_trajectory(num_steps=num_steps)
-    #     y_saps.append(ys[-1])
-    # y_saps = torch.tensor(y_saps)
-    # print('empirical dist: N({}, {})'.format(y_saps.mean(), y_saps.var()))
+    def env_gen(ys):
+        return LinearGaussianEnv(A=gen_A, Q=gen_Q,
+                                 C=gen_C, R=gen_R,
+                                 mu_0=gen_mu_0,
+                                 Q_0=gen_Q_0, ys=ys,
+                                 traj_length=len(ys),
+                                 sample=False)
+
+    plot_IS(env_gen=env_gen, sample_fun=sample_fun, get_true_log_prob_fun=get_true_log_prob_fun, name="Evidence")
+
+def plot_event_IS(num_steps=10, threshold=torch.tensor(0.5)):
+    d = y_dist(num_steps)
+    print('true dist: N({}, {})'.format(d.mean.item(), d.variance.item()))
+
+    def sample_ys_fun(num_steps):
+        ys, score, d = sample_y(num_steps=num_steps)
+        return (ys > threshold).type(ys.dtype)
+
+    def sample_true_fun(ys):
+        return dist.Bernoulli(1-d.cdf(threshold)).log_prob(ys)
+
+    def env_gen(ys):
+        return LinearGaussianSingleYEnv(A=gen_A, Q=gen_Q,
+                                        C=gen_C, R=gen_R,
+                                        mu_0=gen_mu_0,
+                                        Q_0=gen_Q_0, ys=ys,
+                                        traj_length=num_steps,
+                                        sample=False,
+                                        threshold=threshold)
+
+    def extra_fun(ys):
+        p_gt_h = dist.Bernoulli(1-d.cdf(threshold)).log_prob(ys)
+        print('true probability: {}', p_gt_h)
+
+    plot_IS(env_gen=env_gen, sample_fun=sample_ys_fun, get_true_log_prob_fun=sample_true_fun, name="Evidence", extra_fun=extra_fun)
+
+
+    # ys, running_log_evidence_estimates = importance_estimate(ys, A=A, Q=Q, env=env)
+    # print('IS estimate (samples = {}): {}'.format(len(running_log_evidence_estimates), running_log_evidence_estimates[-1]))
+    # plot_log_diffs(running_log_evidence_estimates, p_gt_h, label='IS')
+
+    # _, running_log_evidence_estimates, _, _, _, _ = rl_estimate(ys, env=env)
+    # print('RL estimate (samples = {}): {}'.format(len(running_log_evidence_estimates), running_log_evidence_estimates[-1]))
+
+    # plt.xlabel('Number of Samples')
+    # plt.ylabel('log Ratio of Estimate with True Value')
+    # plt.title('Convergence of Estimate to True (trajectory length: {})'.format(num_steps))
+    # plt.legend()
+    # plt.savefig('/home/jsefas/linear-gaussian-model/traj_length_{}_event_convergence.png'.format(num_steps))
+
+def compare_y_event_dist(num_steps=10):
+    y_saps = []
+    for i in range(10000):
+        ys, _, _, _ = generate_trajectory(num_steps=num_steps)
+        y_saps.append(ys[-1])
+    y_saps = torch.tensor(y_saps)
+    print('empirical dist: N({}, {})'.format(y_saps.mean(), y_saps.var()))
 
 
 if __name__ == "__main__":
-    # compare_multiple_IS()
+    # plot_evidence_IS()
 
-    verify_single_y()
+    plot_event_IS()
 
     # ys = None
     # traj_length=10

@@ -31,13 +31,13 @@ gen_R = torch.tensor(0.2).reshape(1, 1)
 gen_mu_0 = torch.tensor(0.).reshape(1, 1)
 gen_Q_0 = gen_Q
 
-# # test params
-# A = torch.tensor(1.).reshape(1, 1)
-# Q = torch.tensor(1.).reshape(1, 1)
-# C = torch.tensor(1).reshape(1, 1)
-# R = torch.tensor(1.).reshape(1, 1)
-# mu_0 = torch.tensor(0.).reshape(1, 1)
-# Q_0 = Q
+# test params
+A = torch.tensor(0.5).reshape(1, 1)
+Q = torch.tensor(0.4).reshape(1, 1)
+C = torch.tensor(1.2).reshape(1, 1)
+R = torch.tensor(0.9).reshape(1, 1)
+mu_0 = torch.tensor(0.).reshape(1, 1)
+Q_0 = Q
 
 # # verification params
 # ys = torch.rand(10, 1)
@@ -119,7 +119,11 @@ def y_dist(num_steps, A=gen_A,
            Q=gen_Q, C=gen_C, R=gen_R,
            mu_0=gen_mu_0, Q_0=gen_Q_0):
     var_x = A**(2*num_steps)*Q_0 + Q*(A**(2*num_steps)-1)/(A**2-1)
-    return dist.Normal(C*A**num_steps*mu_0, C**2*var_x + R)
+    d = dist.Normal(C*A**num_steps*mu_0, C**2*var_x + R)
+    # Note: I am transforming this distribution from MultivariateNormal to Normal so
+    # that I can compute the cdf. Moreover, the second parameter of a MultivariateNormal
+    # is the covariance whereas for a Normal, it's the standard deviation
+    return dist.Normal(d.mean, torch.sqrt(d.variance))
 
 def sample_y(num_steps, A=gen_A,
              Q=gen_Q, C=gen_C, R=gen_R,

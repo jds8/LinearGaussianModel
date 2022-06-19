@@ -131,12 +131,6 @@ class LinearGaussianSingleYEnv(AbstractLinearGaussianEnv):
     def __init__(self, A, Q, C, R, mu_0, Q_0, traj_length=1, ys=None, sample=False, threshold=0.5):
         super().__init__(A, Q, C, R, mu_0, Q_0, traj_length=traj_length, ys=ys, sample=sample)
 
-        d = y_dist(self.traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)
-        # Note: I am transforming this distribution from MultivariateNormal to Normal so
-        # that I can compute the cdf. Moreover, the second parameter of a MultivariateNormal
-        # is the covariance whereas for a Normal, it's the standard deviation
-        self.y_dist = dist.Normal(d.mean, torch.sqrt(d.variance))
-
         if isinstance(threshold, torch.Tensor):
             self.threshold = threshold
         else:
@@ -146,11 +140,12 @@ class LinearGaussianSingleYEnv(AbstractLinearGaussianEnv):
         if self.index < (self.traj_length - 1):
             return torch.zeros_like(self.ys)
         else:
-            return dist.Bernoulli(1-self.y_dist.cdf(self.threshold)).log_prob(self.ys)
+            d = dist.Normal(self.C*xt, torch.sqrt(self.R))
+            return dist.Bernoulli(1-d.cdf(self.threshold)).log_prob(self.ys)
 
     def get_next_y(self, done):
         return self.ys if not done else torch.zeros_like(self.ys)
 
     def generate(self):
         y, score, d = sample_y(self.traj_length)
-        return y>self.threshold
+        return (y > self.threshold).type(y.dtype)
