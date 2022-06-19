@@ -202,7 +202,7 @@ def evaluate(ys, d, env=None):
     evidence_est = torch.tensor(0.).reshape(1, -1)
     log_evidence_est = torch.tensor(0.).reshape(1, -1)
     # evaluate N times
-    N = torch.tensor(10000)
+    N = torch.tensor(100000)
     # collect log( p(x,y)/q(x) )
     log_p_y_over_qs = torch.zeros(N)
     # keep track of log evidence estimates up to N sample trajectories
@@ -395,16 +395,19 @@ def plot_IS(env_gen, sample_fun, get_true_log_prob_fun, name, traj_lengths=[10],
         Qs = torch.arange(0.2, 0.6, 0.2)
         for _A in As:
             for _Q in Qs:
+                rounded_A = round(_A.item(), 1)
+                rounded_Q = round(_Q.item(), 1)
+
                 # get is estimate of evidence using _A and _Q params
                 _, log_estimates = importance_estimate(ys, A=_A.reshape(1, 1), Q=_Q.reshape(1, 1), env=env)
-                print('IS estimate: {}', log_estimates[-1])
+                print('IS A: {}, Q: {} estimate: {}'.format(rounded_A, rounded_Q, log_estimates[-1]))
 
-                plot_log_diffs(log_estimates, log_true, label='A: {}, Q: {}'.format(round(_A.item(), 1), round(_Q.item(), 1)))
+                plot_log_diffs(log_estimates, log_true, label='A: {}, Q: {}'.format(rounded_A, rounded_Q))
 
         # add RL plot
         try:
             running_estimate, _, _, _, _, _ = rl_estimate(ys, env)
-            print('rl estimate: {}', running_estimate[-1])
+            print('rl estimate: ', running_estimate[-1])
             plot_log_diffs(running_estimate, log_true, label='RL')
         except:
             pass
@@ -416,7 +419,7 @@ def plot_IS(env_gen, sample_fun, get_true_log_prob_fun, name, traj_lengths=[10],
         plt.ylabel('log Ratio of Evidence Estimate with True Evidence')
         plt.title('Convergence of Evidence Estimate to True Evidence (trajectory length: {})'.format(traj_length))
         plt.legend()
-        plt.savefig('/home/jsefas/linear-gaussian-model/traj_length_{}_{}_convergence.png'.format(traj_length, name))
+        plt.savefig('./traj_length_{}_{}_convergence.png'.format(traj_length, name))
 
 def plot_evidence_IS(env):
     sample_fun = lambda num_steps: generate_trajectory(num_steps)[0]
