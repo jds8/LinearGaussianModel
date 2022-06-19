@@ -396,14 +396,16 @@ def plot_IS(env_gen, sample_fun, get_true_log_prob_fun, name, traj_lengths=[10],
         for _A in As:
             for _Q in Qs:
                 # get is estimate of evidence using _A and _Q params
-                _, log_evidence_estimates = importance_estimate(ys, A=_A.reshape(1, 1), Q=_Q.reshape(1, 1), env=env)
+                _, log_estimates = importance_estimate(ys, A=_A.reshape(1, 1), Q=_Q.reshape(1, 1), env=env)
+                print('IS estimate: {}', log_estimates[-1])
 
-                plot_log_diffs(log_evidence_estimates, log_evidence_mc[-1], label='A: {}, Q: {}'.format(round(_A.item(), 1), round(_Q.item(), 1)))
+                plot_log_diffs(log_estimates, log_true, label='A: {}, Q: {}'.format(round(_A.item(), 1), round(_Q.item(), 1)))
 
         # add RL plot
         try:
             running_estimate, _, _, _, _, _ = rl_estimate(ys, env)
-            plot_log_diffs(running_estimate, log_evidence_mc[-1], label='RL')
+            print('rl estimate: {}', running_estimate[-1])
+            plot_log_diffs(running_estimate, log_true, label='RL')
         except:
             pass
 
@@ -454,7 +456,7 @@ def plot_event_IS(num_steps=10, threshold=torch.tensor(0.5)):
         p_gt_h = dist.Bernoulli(1-d.cdf(threshold)).log_prob(ys)
         print('true probability: {}', p_gt_h)
 
-    plot_IS(env_gen=env_gen, sample_fun=sample_ys_fun, get_true_log_prob_fun=sample_true_fun, name="Evidence", extra_fun=extra_fun)
+    plot_IS(env_gen=env_gen, sample_fun=sample_ys_fun, get_true_log_prob_fun=sample_true_fun, name="event", extra_fun=extra_fun)
 
 
     # ys, running_log_evidence_estimates = importance_estimate(ys, A=A, Q=Q, env=env)
