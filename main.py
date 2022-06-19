@@ -416,7 +416,7 @@ def plot_IS(env_gen, sample_fun, get_true_log_prob_fun, name, traj_lengths=[10],
         plt.ylabel('log Ratio of Evidence Estimate with True Evidence')
         plt.title('Convergence of Evidence Estimate to True Evidence (trajectory length: {})'.format(traj_length))
         plt.legend()
-        plt.savefig('/home/jsefas/linear-gaussian-model/traj_length_{}_{}_convergence.png'.format(traj_length, name))
+        plt.savefig('./traj_length_{}_{}_convergence.png'.format(traj_length, name))
 
 def plot_evidence_IS(env):
     sample_fun = lambda num_steps: generate_trajectory(num_steps)[0]
