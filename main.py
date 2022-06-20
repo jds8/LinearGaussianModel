@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import scipy.stats
 import matplotlib.pyplot as plt
 import time
 import numpy as np
@@ -13,6 +14,7 @@ from generative_model import y_dist, sample_y, generate_trajectory, \
     A, Q, C, R, mu_0, Q_0, \
     state_transition, score_state_transition
 from linear_gaussian_env import LinearGaussianEnv, LinearGaussianSingleYEnv
+import wandb
 
 # model name
 MODEL = 'linear_gaussian_model'
@@ -150,7 +152,7 @@ def train(traj_length, env):
     model = PPO('MlpPolicy', env, ent_coef=0.01, policy_kwargs=dict(net_arch=[dict(pi=arch, vf=arch)]), device='cpu')
 
     # train policy
-    model.learn(total_timesteps=100000, callback=CustomCallback(env, verbose=1))
+    model.learn(total_timesteps=10000, callback=CustomCallback(env, verbose=1))
 
     # save model
     model.save(MODEL)
@@ -185,6 +187,17 @@ class ProposalDist:
         return state_transition(prev_xt, self.A, self.Q)
 
 
+class EvaluationObject:
+    def __init__(self, running_log_estimates, var_est, xts, states, actions, priors, liks):
+        self.running_log_estimates = running_log_estimates
+        self.var_est = var_est
+        self.xts = xts
+        self.states = states
+        self.actions = actions
+        self.priors = priors
+        self.liks = liks
+        self.ci = importance_sampled_confidence_interval(running_log_estimates[-1], var_est, len(running_log_estimates), epsilon=torch.tensor(0.05))
+
 def evaluate(ys, d, env=None):
     print('\nevaluating...')
     if env is None:
@@ -202,7 +215,7 @@ def evaluate(ys, d, env=None):
     evidence_est = torch.tensor(0.).reshape(1, -1)
     log_evidence_est = torch.tensor(0.).reshape(1, -1)
     # evaluate N times
-    N = torch.tensor(100000)
+    N = torch.tensor(1000)
     # collect log( p(x,y)/q(x) )
     log_p_y_over_qs = torch.zeros(N)
     # keep track of log evidence estimates up to N sample trajectories
@@ -217,6 +230,7 @@ def evaluate(ys, d, env=None):
         log_p_x = torch.tensor(0.).reshape(1, -1)
         log_p_y_given_x = torch.tensor(0.).reshape(1, -1)
         # collect actions, likelihoods
+        states = [obs]
         actions = []
         priors = []
         liks = []
@@ -225,6 +239,7 @@ def evaluate(ys, d, env=None):
             xt = d.predict(obs, deterministic=False)[0]
             xts.append(env.prev_xt)
             obs, reward, done, info = env.step(xt)
+            states.append(obs)
             priors.append(info['prior_reward'])
             liks.append(info['lik_reward'])
             log_p_x += info['prior_reward']
@@ -267,7 +282,11 @@ def evaluate(ys, d, env=None):
     # print('evidence true: {}'.format(evidence_true))
     # print('abs difference of evidence estimate and evidence: {}'.format(abs(evidence_true-evidence_estimate)))
 
-    return running_log_evidence_estimates, xts, env.states, actions, priors, liks
+    # calculate variance estmate as
+    # $\hat{\sigma}_{int}^2=(n(n-1))^{-1}\sum_{i=1}^n(f_iW_i-\overline{fW})^2$
+    sigma_sq = log_p_y_over_qs.var(unbiased=True) / len(log_p_y_over_qs)
+
+    return EvaluationObject(running_log_evidence_estimates, sigma_sq, xts, states, actions, priors, liks)
 
 def logp(ys, t, C=1, A=1, Q=1, R=1, mu=0):
     return dist.MultivariateNormal(C*A**t*mu, C**2*Q**2*t + R**2).log_prob(ys)
@@ -315,8 +334,7 @@ def importance_estimate(ys, A=gen_A, Q=gen_Q, env=None):
                                 traj_length=len(ys),
                                 sample=False)
 
-    running_log_evidence_estimates, xts, states, actions, priors, liks = evaluate(ys, pd, env)
-    return ys, running_log_evidence_estimates
+    return evaluate(ys, pd, env)
 
 def test_importance_sampler(traj_length, A, Q):
     """
@@ -331,6 +349,13 @@ def test_importance_sampler(traj_length, A, Q):
     print('ys: {}'.format(ys))
 
     return importance_estimate(ys, A=A, Q=Q)
+
+def importance_sampled_confidence_interval(mu, sigma, sample_size, epsilon=torch.tensor(0.05)):
+    t = scipy.stats.t.ppf(q=1-epsilon/2, df=sample_size-1)
+    return (round((mu - t*sigma).item(), 4), round((mu + t*sigma).item(), 4))
+
+def effective_sample_size(weights: torch.Tensor):
+    return weights.sum()**2 / (weights**2).sum()
 
 def rl_estimate(ys, env=None):
     print('\nrl_estimate\n')
@@ -375,57 +400,116 @@ def plot_log_diffs(log_values, log_true, label):
     diffs = torch.tensor(log_values) - log_true
     plt.plot(torch.arange(1, len(diffs.squeeze())+1), diffs.squeeze(), label=label)
 
-    return diffs
 
-def plot_IS(env_gen, sample_fun, get_true_log_prob_fun, name, traj_lengths=[10], extra_fun=None): #traj_lengths=[1, 10, 50]):
-    for traj_length in traj_lengths:
-        plt.figure(plt.gcf().number+1)
+class Estimator:
+    def __init__(self, ci):
+        self.ci = ci
 
-        # generate ys from gen_A, gen_Q params
-        ys = sample_fun(traj_length)
 
-        # get evidence estimate using true params
-        log_true = get_true_log_prob_fun(ys)
+class ISEstimator(Estimator):
+    def __init__(self, A, Q, ci):
+        super().__init__(ci)
+        self.A = A
+        self.Q = Q
 
-        # generate environment
-        env = env_gen(ys)
 
-        # get evidence estimates using IS with other params
-        As = torch.arange(0.2, 0.6, 0.2)
-        Qs = torch.arange(0.2, 0.6, 0.2)
-        for _A in As:
-            for _Q in Qs:
-                rounded_A = round(_A.item(), 1)
-                rounded_Q = round(_Q.item(), 1)
+class ImportanceOutput:
+    def __init__(self, traj_length, ys):
+        self.traj_length = traj_length
+        self.ys = ys
+        self.is_estimators = []
+        self.rl_estimators = []
 
-                # get is estimate of evidence using _A and _Q params
-                _, log_estimates = importance_estimate(ys, A=_A.reshape(1, 1), Q=_Q.reshape(1, 1), env=env)
-                print('IS A: {}, Q: {} estimate: {}'.format(rounded_A, rounded_Q, log_estimates[-1]))
+    def add_is_estimator(self, A, Q, ci):
+        self.is_estimators.append(ISEstimator(A, Q, ci))
 
-                plot_log_diffs(log_estimates, log_true, label='A: {}, Q: {}'.format(rounded_A, rounded_Q))
+    def add_rl_estimator(self, ci):
+        self.rl_estimators.append(Estimator(ci))
 
-        # add RL plot
-        try:
-            running_estimate, _, _, _, _, _ = rl_estimate(ys, env)
-            print('rl estimate: ', running_estimate[-1])
-            plot_log_diffs(running_estimate, log_true, label='RL')
-        except:
-            pass
+    def add_truth(self, truth):
+        self.truth = truth
 
-        if extra_fun is not None:
-            extra_fun(ys)
 
-        plt.xlabel('Number of Samples')
-        plt.ylabel('log Ratio of Evidence Estimate with True Evidence')
-        plt.title('Convergence of Evidence Estimate to True Evidence (trajectory length: {})'.format(traj_length))
-        plt.legend()
-        plt.savefig('./traj_length_{}_{}_convergence.png'.format(traj_length, name))
+class Plotter:
+    def __init__(self, name):
+        self.name = name
 
-def plot_evidence_IS(env):
-    sample_fun = lambda num_steps: generate_trajectory(num_steps)[0]
-    get_true_log_prob_fun = lambda ys: importance_estimate(ys, A=gen_A, Q=gen_Q)[1]
+    def generate_env(self, ys, traj_length):
+        raise NotImplementedError
 
-    def env_gen(ys):
+    def sample_trajectory(self, traj_length):
+        raise NotImplementedError
+
+    def get_true_score(self, ys):
+        raise NotImplementedError
+
+    def plot_IS(self, traj_lengths=[1, 10]):
+        outputs = []
+        for traj_length in traj_lengths:
+            plt.figure(plt.gcf().number+1)
+
+            # generate ys from gen_A, gen_Q params
+            ys = self.sample_trajectory(traj_length)
+
+            # collect output
+            output = ImportanceOutput(traj_length, ys)
+
+            # get evidence estimate using true params and add it to output
+            log_true = self.get_true_score(ys, traj_length)
+            output.add_truth(round(log_true.item(), 4))
+            print('true prob.: {}'.format(round(log_true.item(), 4)))
+
+            # generate environment
+            env = self.generate_env(ys, traj_length)
+
+            # get evidence estimates using IS with other params
+            As = torch.arange(0.2, 0.6, 0.2)
+            Qs = torch.arange(0.2, 0.6, 0.2)
+            for _A in As:
+                for _Q in Qs:
+                    rounded_A = round(_A.item(), 1)
+                    rounded_Q = round(_Q.item(), 1)
+
+                    # get is estimate of evidence using _A and _Q params
+                    eval_obj = importance_estimate(ys, A=_A.reshape(1, 1), Q=_Q.reshape(1, 1), env=env)
+                    print('IS A: {}, Q: {} estimate: {}'.format(rounded_A, rounded_Q, eval_obj.running_log_estimates[-1]))
+
+                    output.add_is_estimator(A=rounded_A, Q=rounded_Q, ci=eval_obj.ci)
+
+                    plot_log_diffs(eval_obj.running_log_estimates, log_true, label='A: {}, Q: {}'.format(rounded_A, rounded_Q))
+
+            # add RL plot
+            try:
+                eval_obj = rl_estimate(ys, env)
+                print('rl estimate: {}'.format(eval_obj.running_log_estimates[-1]))
+                plot_log_diffs(eval_obj.running_log_estimates, log_true, label='RL')
+                output.add_rl_estimator(eval_obj.ci)
+            except:
+                pass
+
+            outputs.append(output)
+
+            plt.xlabel('Number of Samples')
+            plt.ylabel('log Ratio of Evidence Estimate with True Evidence')
+            plt.title('Convergence of Evidence Estimate to True Evidence (trajectory length: {})'.format(traj_length))
+            plt.legend()
+            plt.savefig('./traj_length_{}_{}_convergence.png'.format(traj_length, self.name))
+        return outputs
+
+
+class EvidencePlotter(Plotter):
+    def __init__(self):
+        super().__init__('Evidence')
+
+    def sample_trajectory(self, traj_length):
+        return generate_trajectory(traj_length)[0]
+
+    def get_true_score(self, ys, traj_length):
+        # ignore traj_length
+        return importance_estimate(ys, A=gen_A, Q=gen_Q).running_log_estimates[-1]
+
+    def generate_env(self, ys, traj_length):
+        # ignore traj_length
         return LinearGaussianEnv(A=gen_A, Q=gen_Q,
                                  C=gen_C, R=gen_R,
                                  mu_0=gen_mu_0,
@@ -433,33 +517,47 @@ def plot_evidence_IS(env):
                                  traj_length=len(ys),
                                  sample=False)
 
-    plot_IS(env_gen=env_gen, sample_fun=sample_fun, get_true_log_prob_fun=get_true_log_prob_fun, name="Evidence")
 
-def plot_event_IS(num_steps=10, threshold=torch.tensor(0.5)):
-    d = y_dist(num_steps)
-    print('true dist: N({}, {})'.format(d.mean.item(), d.variance.item()))
+class EventPlotter(Plotter):
+    def __init__(self, threshold):
+        super().__init__('Event')
+        self.threshold = threshold
 
-    def sample_ys_fun(num_steps):
+    def sample_trajectory(self, num_steps):
         ys, score, d = sample_y(num_steps=num_steps)
-        return (ys > threshold).type(ys.dtype)
+        return (ys > self.threshold).type(ys.dtype)
 
-    def sample_true_fun(ys):
-        return dist.Bernoulli(1-d.cdf(threshold)).log_prob(ys)
+    def get_true_score(self, ys, traj_length):
+        d = y_dist(traj_length)
+        return dist.Bernoulli(1-d.cdf(self.threshold)).log_prob(ys)
 
-    def env_gen(ys):
+    def generate_env(self, ys, traj_length):
         return LinearGaussianSingleYEnv(A=gen_A, Q=gen_Q,
                                         C=gen_C, R=gen_R,
                                         mu_0=gen_mu_0,
                                         Q_0=gen_Q_0, ys=ys,
-                                        traj_length=num_steps,
+                                        traj_length=traj_length,
                                         sample=False,
-                                        threshold=threshold)
+                                        threshold=self.threshold)
 
-    def extra_fun(ys):
-        p_gt_h = dist.Bernoulli(1-d.cdf(threshold)).log_prob(ys)
-        print('true probability: {}', p_gt_h)
+    def plot_IS(self, traj_lengths=[1, 10]):
+        for t in traj_lengths:
+            d = y_dist(t)
+            print('true dist (for traj_length {}): N({}, {})'.format(t, d.mean.item(), d.variance.item()))
+        return super().plot_IS(traj_lengths)
 
-    plot_IS(env_gen=env_gen, sample_fun=sample_ys_fun, get_true_log_prob_fun=sample_true_fun, name="event", extra_fun=extra_fun)
+
+def calc_CI_from_mu_sigma(mu: torch.Tensor, sigma:torch.Tensor, N, alpha=torch.tensor(0.05)):
+    Z = -dist.Normal(0, 1).icdf(alpha/2)
+    std_err = sigma / np.sqrt(N)
+    margin = std_err * Z
+    return (mu + margin, mu - margin)
+
+def calc_CI(data: torch.Tensor, alpha=torch.tensor(0.05)):
+    N = len(data.squeeze())
+    mu = data.mean()
+    sigma = torch.sqrt(data.var())
+    return calc_CI_from_mu_sigma(mu, sigma, N, alpha)
 
 def compare_y_event_dist(num_steps=10):
     y_saps = []
@@ -469,11 +567,48 @@ def compare_y_event_dist(num_steps=10):
     y_saps = torch.tensor(y_saps)
     print('empirical dist: N({}, {})'.format(y_saps.mean(), y_saps.var()))
 
+def make_table_of_confidence_intervals(outputs, name='Event'):
+    columns = []
+    rows = []
+    cell_text = []
+    for i, output in enumerate(outputs):
+        cell_text.append([])
+        rows.append("Traj Length: {}".format(output.traj_length))
+        for is_est in output.is_estimators:
+            columns.append('IS (A: {}, Q: {})'.format(is_est.A, is_est.Q))
+            cell_text[i].append(is_est.ci)
+        for rl_est in output.rl_estimators:
+            columns.append('RL')
+            cell_text[i].append(rl_est.ci)
+        columns.append('truth')
+        cell_text[i].append(output.truth)
+    fig, axs = plt.subplots(2,1)
+    axs[0].axis('tight')
+    axs[0].axis('off')
+    axs[0].table(cellText=cell_text,
+              rowLabels=tuple(rows),
+              colLabels=tuple(columns),
+              loc='top')
+    plt.savefig('./{}_table_confidence_interval.png'.format(name))
+
 
 if __name__ == "__main__":
-    # plot_evidence_IS()
+    # ep = EvidencePlotter()
+    # outputs = ep.plot_IS()
 
-    plot_event_IS()
+    # traj_length = 10
+    # env = LinearGaussianSingleYEnv(A=gen_A, Q=gen_Q,
+    #                                C=gen_C, R=gen_R,
+    #                                mu_0=gen_mu_0,
+    #                                Q_0=gen_Q_0, ys=None,
+    #                                traj_length=traj_length,
+    #                                sample=True,
+    #                                threshold=0.5)
+    # train(traj_length, env)
+
+    ep = EventPlotter(threshold=torch.tensor(0.5))
+    outputs = ep.plot_IS()
+    make_table_of_confidence_intervals(outputs, name='Event')
 
     # ys = None
     # traj_length=10

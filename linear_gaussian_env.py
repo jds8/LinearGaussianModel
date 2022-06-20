@@ -17,7 +17,8 @@ class AbstractLinearGaussianEnv(gym.Env):
 
         # data
         self.ys = ys
-        self.traj_length = max(len(ys), traj_length)
+        y_len = len(ys) if ys else 0
+        self.traj_length = max(y_len, traj_length)
         self.sample = sample
 
         # current index into data and max index
