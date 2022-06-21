@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-import matplotlib.pyplot as plt
 from matplotlib.pyplot import cm
+import matplotlib.pyplot as plt
 import time
 import numpy as np
 import torch
@@ -16,6 +16,7 @@ from generative_model import y_dist, sample_y, generate_trajectory, \
 import wandb
 from linear_gaussian_env import LinearGaussianEnv, LinearGaussianSingleYEnv
 from math_utils import logvarexp, importance_sampled_confidence_interval, log_effective_sample_size, log_max_weight_proportion, log_mean
+from plot_utils import legend_without_duplicate_labels
 
 # model name
 MODEL = 'linear_gaussian_model'
@@ -189,9 +190,9 @@ class ProposalDist:
 
 
 class EvaluationObject:
-    def __init__(self, running_log_estimates, var_est, xts, states, actions, priors, liks, log_weights):
+    def __init__(self, running_log_estimates, sigma_est, xts, states, actions, priors, liks, log_weights):
         self.running_log_estimates = running_log_estimates
-        self.var_est = var_est
+        self.sigma_est = sigma_est
         self.xts = xts
         self.states = states
         self.actions = actions
@@ -202,17 +203,22 @@ class EvaluationObject:
         self._compute_statistics()
 
     def _compute_statistics(self):
-        self._compute_confidence_interval()
         self._compute_importance_weight_diagnostics()
+        self._compute_confidence_intervals()
 
-    def _compute_confidence_interval(self):
-        self.ci = importance_sampled_confidence_interval(torch.exp(self.running_log_estimates[-1]), self.var_est,
-                                                         len(self.running_log_estimates), epsilon=torch.tensor(0.05))
+    def _compute_confidence_intervals(self):
+        self.running_ci = importance_sampled_confidence_interval(self.running_log_estimates.exp(), self.sigma_est,
+                                                                 len(self.running_log_estimates), epsilon=torch.tensor(0.05))
+        self.running_ess_ci = importance_sampled_confidence_interval(self.running_log_estimates.exp(), self.ess_sigma_est,
+                                                                     self.log_effective_sample_size.exp(), epsilon=torch.tensor(0.05))
+        self.ci = (round(self.running_ci[0][-1].item(), 4), round(self.running_ci[1][-1].item(), 4))
+        self.ess_ci = (round(self.running_ess_ci[0][-1].item(), 4), round(self.running_ess_ci[1][-1].item(), 4))
 
     def _compute_importance_weight_diagnostics(self):
         self.log_weight_mean = log_mean(self.log_weights)
         self.log_max_weight_prop = log_max_weight_proportion(self.log_weights)
         self.log_effective_sample_size = log_effective_sample_size(self.log_weights)
+        self.ess_sigma_est = self.sigma_est / self.log_weight_mean.exp()
 
 
 def evaluate(ys, d, env=None):
@@ -232,7 +238,7 @@ def evaluate(ys, d, env=None):
     evidence_est = torch.tensor(0.).reshape(1, -1)
     log_evidence_est = torch.tensor(0.).reshape(1, -1)
     # evaluate N times
-    N = torch.tensor(1000)
+    N = torch.tensor(10000)
     # collect log( p(x,y)/q(x) )
     log_p_y_over_qs = torch.zeros(N)
     # keep track of log evidence estimates up to N sample trajectories
@@ -304,10 +310,10 @@ def evaluate(ys, d, env=None):
 
     # calculate variance estmate as
     # $\hat{\sigma}_{int}^2=(n(n-1))^{-1}\sum_{i=1}^n(f_iW_i-\overline{fW})^2$
-
-    sigma_sq = logvarexp(log_p_y_over_qs).exp()
-    return EvaluationObject(running_log_estimates=running_log_evidence_estimates, var_est=sigma_sq,
-                            xts=xts, states=states, actions=actions, priors=priors, liks=liks, log_weights=torch.tensor(log_weights))
+    sigma_est = torch.sqrt( (logvarexp(log_p_y_over_qs) - torch.log(torch.tensor(len(log_p_y_over_qs) - 1))).exp() )
+    return EvaluationObject(running_log_estimates=torch.tensor(running_log_evidence_estimates), sigma_est=sigma_est,
+                            xts=xts, states=states, actions=actions, priors=priors, liks=liks,
+                            log_weights=torch.tensor(log_weights))
 
 def load_rl_model(device):
     # load model
@@ -363,23 +369,22 @@ def full_sweep(ys=None, train_model=False, traj_length=1, env_class=LinearGaussi
             train(traj_length=traj_length, env=env)
     rl_estimate(ys=ys)
 
-def plot_log_diffs(log_values, log_true, label):
-    # compute log ratio of estimate to true value
-    diffs = torch.tensor(log_values) - log_true
-    plt.plot(torch.arange(1, len(diffs.squeeze())+1), diffs.squeeze(), label=label)
-
 
 class Estimator:
-    def __init__(self, ci, weight_mean, max_weight_prop, ess):
+    def __init__(self, running_log_estimates, ci,
+                 weight_mean, max_weight_prop, ess, ess_ci):
+        self.running_log_estimates =running_log_estimates
         self.ci = ci
         self.weight_mean = weight_mean
         self.max_weight_prop = max_weight_prop
         self.ess = ess
+        self.ess_ci = ess_ci
 
 
 class ISEstimator(Estimator):
-    def __init__(self, A, Q, ci, weight_mean, max_weight_prop, ess):
-        super().__init__(ci, weight_mean, max_weight_prop, ess)
+    def __init__(self, A, Q, running_log_estimates, ci,
+                 weight_mean, max_weight_prop, ess, ess_ci):
+        super().__init__(running_log_estimates, ci, weight_mean, max_weight_prop, ess, ess_ci)
         self.A = A
         self.Q = Q
         self.weight_mean = weight_mean
@@ -394,23 +399,48 @@ class ImportanceOutput(dict):
         self.is_estimators = {}
         self.rl_estimators = {}
 
-    def add_is_estimator(self, A, Q, ci, weight_mean, max_weight_prop, ess, idstr):
+    def add_is_estimator(self, A, Q, running_log_estimates, ci,
+                         weight_mean, max_weight_prop, ess,
+                         ess_ci, idstr):
         if idstr in self.is_estimators:
             raise NotImplementedError
-        self.is_estimators[idstr] = ISEstimator(A, Q, ci, weight_mean, max_weight_prop, ess)
+        self.is_estimators[idstr] = ISEstimator(A, Q, running_log_estimates,
+                                                ci, weight_mean, max_weight_prop, ess, ess_ci)
+        self[idstr] = self.is_estimators[idstr]
 
-    def add_rl_estimator(self, ci, weight_mean, max_weight_prop, ess, idstr):
+    def add_rl_estimator(self, running_log_estimates, ci, weight_mean, max_weight_prop, ess, ess_ci, idstr):
         if idstr in self.rl_estimators:
             raise NotImplementedError
-        self.rl_estimators[idstr] = RLEstimator(ci, weight_mean, max_weight_prop, ess)
+        self.rl_estimators[idstr] = Estimator(running_log_estimates, ci, weight_mean, max_weight_prop, ess, ess_ci)
+        self[idstr] = self.rl_estimators[idstr]
+
+    def set_truth(self, truth):
+        self.truth = truth
 
     def display_self(self):
-        for key, val in self.items():
-            print('{}: {}'.format(key, val))
+        for key, val in self.is_estimators.items():
+            print('A {}, Q {}: weight_mean: {}'.format(val.A, val.Q, val.weight_mean))
+            print('A {}, Q {}: max_weight_prop: {}'.format(val.A, val.Q, val.max_weight_prop))
+            print('A {}, Q {}: ess: {}\n'.format(val.A, val.Q, val.ess))
+        for key, val in self.rl_estimators.items():
+            print('RL: weight_mean: {}'.format(val.weight_mean))
+            print('RL: max_weight_prop: {}'.format(val.max_weight_prop))
+            print('RL: ess: {}\n'.format(val.ess))
+
+    def plot(self, idstr=None):
+        if idstr is None:
+            idstr = list(self.is_estimators.keys()) + list(self.rl_estimators.keys())
+        elif not isinstance(idstr, list):
+            idstr = [idstr]
+        for key in idstr:
+            x_vals = torch.arange(1, len(self[key].running_log_estimates.squeeze())+1)
+            plt.plot(x_vals, self[key].running_log_estimates.exp().squeeze(), label=key)
+            plt.fill_between(x_vals, y1=self[key].running_ess_ci[0], y2=self[key].running_ci[1], alpha=0.3)
 
 
 def make_ess_plot(outputs):
     plt.figure()
+    plt.gca().set_yscale('log')
     traj_lengths = []
     ess = {}
     true_vals = []
@@ -426,16 +456,85 @@ def make_ess_plot(outputs):
                 ess[key] = [val.ess]
             else:
                 ess[key].append(val.ess)
-        true_vals.append(output.traj_length)
+        true_vals.append(output.truth)
+
+    true_label_vals = []
     for key, val in ess.items():
         plt.scatter(traj_lengths, val, label=key)
-        plt.scatter(traj_lengths, true_vals, label=key, marker='x', color='r')
+        true_label_vals.append(min(val))
 
     plt.xlabel('Trajectory Length')
     plt.ylabel('Effective Sample Size')
     plt.title('Effective Sample Size Versus Trajectory Length')
-    plt.legend()
+    legend_without_duplicate_labels(plt.gca())
     plt.savefig('./ess_plot.png')
+
+
+def make_ci_plot(outputs):
+    plt.figure()
+    colors = iter(cm.rainbow(np.linspace(0, 1, len(outputs[0].is_estimators)+1)))
+    color_map = {}
+    traj_lengths = []
+    ci = {}
+    true_vals = []
+    for output in outputs:
+        traj_lengths.append(output.traj_length)
+        for key, val in output.is_estimators.items():
+            if key not in color_map:
+                color_map[key] = next(colors)
+            # plt.scatter(x=output.traj_length, y=val.ci[0], color=color_map[key], label=key)
+            # plt.scatter(x=output.traj_length, y=val.ci[1], color=color_map[key], label=key)
+            plt.axvline(x=output.traj_length, ymin=val.ci[0], ymax=val.ci[1], color=color_map[key], label=key)
+            break
+        # for key, val in output.rl_estimators.items():
+        #     if key not in color_map:
+        #         color_map[key] = next(colors)
+        #     plt.scatter(x=output.traj_length, y=val.ci[0], color=color_map[key], label=key)
+        #     plt.scatter(x=output.traj_length, y=val.ci[1], color=color_map[key], label=key)
+        #     break
+        true_vals.append(output.truth)
+
+    for traj_len, true_val in zip(traj_lengths, true_vals):
+        plt.scatter(traj_len, true_val, label='true prob.', marker='x', color='b')
+
+    plt.xlabel('Trajectory Length')
+    plt.ylabel('Confidence Interval')
+    plt.title('Confidence Interval (true sample size) Versus Trajectory Length')
+    legend_without_duplicate_labels(plt.gca())
+    plt.savefig('./ci_plot.png')
+
+def make_ess_ci_plot(outputs):
+    plt.figure()
+    colors = iter(cm.rainbow(np.linspace(0, 1, len(outputs[0].is_estimators)+1)))
+    color_map = {}
+    traj_lengths = []
+    ci = {}
+    true_vals = []
+    for output in outputs:
+        traj_lengths.append(output.traj_length)
+        for key, val in output.is_estimators.items():
+            if key not in color_map:
+                color_map[key] = next(colors)
+            # plt.scatter(x=output.traj_length, y=val.ess_ci[0], color=color_map[key], label=key)
+            # plt.scatter(x=output.traj_length, y=val.ess_ci[1], color=color_map[key], label=key)
+            plt.axvline(x=output.traj_length, ymin=val.ess_ci[0], ymax=val.ess_ci[1], color=color_map[key], label=key)
+            break
+        # for key, val in output.rl_estimators.items():
+        #     if key not in color_map:
+        #         color_map[key] = next(colors)
+        #     plt.scatter(x=output.traj_length, y=val.ess_ci[0], color=color_map[key], label=key)
+        #     plt.scatter(x=output.traj_length, y=val.ess_ci[1], color=color_map[key], label=key)
+        #     break
+        true_vals.append(output.truth)
+
+    for traj_len, true_val in zip(traj_lengths, true_vals):
+        plt.scatter(traj_len, true_val, label='true prob.', marker='x', color='b')
+
+    plt.xlabel('Trajectory Length')
+    plt.ylabel('Confidence Interval')
+    plt.title('Confidence Interval (effective sample size) Versus Trajectory Length')
+    legend_without_duplicate_labels(plt.gca())
+    plt.savefig('./ess_ci_plot.png')
 
 
 def display_diagnostics(outputs):
@@ -457,7 +556,7 @@ def make_table_of_confidence_intervals(outputs, name='Event'):
             columns.append('RL')
             cell_text[i].append(rl_est.ci)
         columns.append('truth')
-        cell_text[i].append(output['truth'])
+        cell_text[i].append(output.truth)
     fig, axs = plt.subplots(2,1)
     axs[0].axis('tight')
     axs[0].axis('off')
@@ -481,6 +580,11 @@ class Plotter:
     def get_true_score(self, ys):
         raise NotImplementedError
 
+    def _plot_log_diffs(log_values, log_true, label):
+        # compute log ratio of estimate to true value
+        diffs = torch.tensor(log_values) - log_true
+        plt.plot(torch.arange(1, len(diffs.squeeze())+1), diffs.squeeze(), label=label)
+
     def plot_IS(self, traj_lengths=[1, 10], As=torch.arange(0.2, 0.6, 0.2), Qs=torch.arange(0.2, 0.6, 0.2)):
         outputs = []
         for traj_length in traj_lengths:
@@ -492,10 +596,12 @@ class Plotter:
             # collect output
             output = ImportanceOutput(traj_length, ys)
 
-            # get evidence estimate using true params and add it to output
+            # get evidence estimate using true params, add it to output, and plot
             log_true = self.get_true_score(ys, traj_length)
-            output['truth'] = round(log_true.exp().item(), 4)
-            print('true prob.: {}'.format(round(log_true.exp().item(), 4)))
+            true = round(log_true.exp().item(), 4)
+            output.set_truth(true)
+            print('true prob.: {}'.format(true))
+            plt.axhline(y=true, color='b')
 
             # generate environment
             env = self.generate_env(ys, traj_length)
@@ -510,24 +616,34 @@ class Plotter:
                     eval_obj = importance_estimate(ys, A=_A.reshape(1, 1), Q=_Q.reshape(1, 1), env=env)
                     print('IS A: {}, Q: {} estimate: {}'.format(rounded_A, rounded_Q, eval_obj.running_log_estimates[-1].exp()))
 
-                    # plot differences
-                    plot_log_diffs(eval_obj.running_log_estimates, log_true, label='A: {}, Q: {}'.format(rounded_A, rounded_Q))
+                    # plot prob estimates
+                    x_vals = torch.arange(1, len(eval_obj.running_log_estimates.squeeze())+1)
+                    plt.plot(x_vals, eval_obj.running_log_estimates.exp().squeeze(), label='A: {}, Q: {}'.format(rounded_A, rounded_Q))
+                    plt.fill_between(x_vals, y1=eval_obj.running_ess_ci[0], y2=eval_obj.running_ci[1], alpha=0.3)
 
                     # add importance confidence interval
-                    output.add_is_estimator(A=rounded_A, Q=rounded_Q, ci=eval_obj.ci,
+                    output.add_is_estimator(A=rounded_A, Q=rounded_Q,
+                                            running_log_estimates=eval_obj.running_log_estimates,
+                                            ci=eval_obj.ci,
                                             weight_mean=eval_obj.log_weight_mean.exp(),
                                             max_weight_prop=eval_obj.log_max_weight_prop.exp(),
-                                            ess=eval_obj.log_effective_sample_size.exp(),
+                                            ess=eval_obj.log_effective_sample_size.exp(), ess_ci=eval_obj.ess_ci,
                                             idstr='A: {}, Q: {}'.format(rounded_A, rounded_Q))
 
             # add RL plot
             try:
                 eval_obj = rl_estimate(ys, env)
                 print('rl estimate: {}'.format(eval_obj.running_log_estimates[-1].exp()))
-                plot_log_diffs(eval_obj.running_log_estimates, log_true, label='RL')
-                output.add_rl_estimator(eval_obj.ci, weight_mean=eval_obj.log_weight_mean.exp(),
+                x_vals = torch.arange(1, len(eval_obj.running_log_estimates.squeeze())+1)
+                plt.plot(x_vals, eval_obj.running_log_estimates.exp().squeeze(), label='RL')
+                plt.fill_between(x_vals, y1=eval_obj.running_ess_ci[0], y2=eval_obj.running_ci[1], alpha=0.3)
+
+                # add rl confidence interval
+                output.add_rl_estimator(running_log_estimates=eval_obj.running_log_estimates,
+                                        ci=eval_obj.ci, weight_mean=eval_obj.log_weight_mean.exp(),
                                         max_weight_prop=eval_obj.log_max-weight_prop.exp(),
-                                        ess=eval_obj.log_effective_sample_size.exp(), idstr='rl1')
+                                        ess=eval_obj.log_effective_sample_size.exp(),
+                                        ess_ci=eval_obj.ess_ci, idstr='rl1')
 
             except:
                 pass
@@ -564,17 +680,20 @@ class EvidencePlotter(Plotter):
 
 
 class EventPlotter(Plotter):
-    def __init__(self, threshold):
+    def __init__(self, event_prob, fix_event=False):
         super().__init__('Event')
-        self.threshold = threshold
+        self.event_prob = event_prob
+        self.fix_event = fix_event
 
     def sample_trajectory(self, num_steps):
-        ys, score, d = sample_y(num_steps=num_steps)
-        return (ys > self.threshold).type(ys.dtype)
+        ys, _, d = sample_y(num_steps=num_steps)
+        if self.fix_event:
+            return torch.ones_like(ys)
+        threshold = d.icdf(1-self.event_prob)
+        return (ys > threshold).type(ys.dtype)
 
     def get_true_score(self, ys, traj_length):
-        d = y_dist(traj_length)
-        return dist.Bernoulli(1-d.cdf(self.threshold)).log_prob(ys)
+        return dist.Bernoulli(self.event_prob).log_prob(ys)
 
     def generate_env(self, ys, traj_length):
         return LinearGaussianSingleYEnv(A=gen_A, Q=gen_Q,
@@ -583,13 +702,13 @@ class EventPlotter(Plotter):
                                         Q_0=gen_Q_0, ys=ys,
                                         traj_length=traj_length,
                                         sample=False,
-                                        threshold=self.threshold)
+                                        event_prob=self.event_prob)
 
-    def plot_IS(self, traj_lengths=[1, 10]):
+    def plot_IS(self, traj_lengths=[1, 10], As=torch.arange(0.2, 0.6, 0.2), Qs=torch.arange(0.2, 0.6, 0.2)):
         for t in traj_lengths:
             d = y_dist(t)
             print('true dist (for traj_length {}): N({}, {})'.format(t, d.mean.item(), d.variance.item()))
-        return super().plot_IS(traj_lengths)
+        return super().plot_IS(traj_lengths, As, Qs)
 
 if __name__ == "__main__":
     # ep = EvidencePlotter()
@@ -602,12 +721,13 @@ if __name__ == "__main__":
     #                                Q_0=gen_Q_0, ys=None,
     #                                traj_length=traj_length,
     #                                sample=True,
-    #                                threshold=0.5)
+    #                                event_prob=0.5)
     # train(traj_length, env)
 
-    ep = EventPlotter(threshold=torch.tensor(0.5))
-    outputs = ep.plot_IS()
-    make_table_of_confidence_intervals(outputs, name='Event')
-    display_diagnostics(outputs)
-    import pdb; pdb.set_trace()
-    make_ess_plot(outputs)
+    ep = EventPlotter(event_prob=torch.tensor(0.2), fix_event=True)
+    outputs = ep.plot_IS(As=torch.arange(0.2, 0.4, 0.2), Qs=torch.arange(0.2, 0.4, 0.2))
+    # make_table_of_confidence_intervals(outputs, name='EventWithCI')
+    # display_diagnostics(outputs)
+    # make_ess_plot(outputs)
+    # make_ci_plot(outputs)
+    # make_ess_ci_plot(outputs)

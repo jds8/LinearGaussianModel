@@ -8,7 +8,7 @@ from generative_model import y_dist, sample_y, generate_trajectory, score_y, sco
 
 
 class AbstractLinearGaussianEnv(gym.Env):
-    def __init__(self, A, Q, C, R, mu_0, Q_0, traj_length=1, threshold=0.5, ys=None, sample=False):
+    def __init__(self, A, Q, C, R, mu_0, Q_0, traj_length=1, ys=None, sample=False):
         # define action space
         self.action_space = gym.spaces.Box(low=-math.inf, high=math.inf, shape=(mu_0.shape[0],), dtype=float)
 
@@ -129,24 +129,25 @@ class LinearGaussianEnv(AbstractLinearGaussianEnv):
 
 
 class LinearGaussianSingleYEnv(AbstractLinearGaussianEnv):
-    def __init__(self, A, Q, C, R, mu_0, Q_0, traj_length=1, ys=None, sample=False, threshold=0.5):
+    def __init__(self, A, Q, C, R, mu_0, Q_0, traj_length=1, ys=None, sample=False, event_prob=0.2):
         super().__init__(A, Q, C, R, mu_0, Q_0, traj_length=traj_length, ys=ys, sample=sample)
 
-        if isinstance(threshold, torch.Tensor):
-            self.threshold = threshold
+        if isinstance(event_prob, torch.Tensor):
+            self.event_prob =event_prob
         else:
-            self.threshold = torch.tensor(threshold)
+            self.event_prob = torch.tensor(event_prob)
 
     def compute_lik_reward(self, xt):
         if self.index < (self.traj_length - 1):
             return torch.zeros_like(self.ys)
         else:
             d = dist.Normal(self.C*xt, torch.sqrt(self.R))
-            return dist.Bernoulli(1-d.cdf(self.threshold)).log_prob(self.ys)
+            return dist.Bernoulli(self.event_prob).log_prob(self.ys)
 
     def get_next_y(self, done):
         return self.ys if not done else torch.zeros_like(self.ys)
 
     def generate(self):
         y, score, d = sample_y(self.traj_length)
-        return (y > self.threshold).type(y.dtype)
+        threshold = d.icdf(1-event_prob)
+        return (y > threshold).type(y.dtype)
