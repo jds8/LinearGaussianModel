@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-import scipy.stats
 import matplotlib.pyplot as plt
+from matplotlib.pyplot import cm
 import time
 import numpy as np
 import torch
@@ -13,8 +13,9 @@ from generative_model import y_dist, sample_y, generate_trajectory, \
     gen_A, gen_Q, gen_C, gen_R, gen_mu_0, gen_Q_0, \
     A, Q, C, R, mu_0, Q_0, \
     state_transition, score_state_transition
-from linear_gaussian_env import LinearGaussianEnv, LinearGaussianSingleYEnv
 import wandb
+from linear_gaussian_env import LinearGaussianEnv, LinearGaussianSingleYEnv
+from math_utils import logvarexp, importance_sampled_confidence_interval, log_effective_sample_size, log_max_weight_proportion, log_mean
 
 # model name
 MODEL = 'linear_gaussian_model'
@@ -188,7 +189,7 @@ class ProposalDist:
 
 
 class EvaluationObject:
-    def __init__(self, running_log_estimates, var_est, xts, states, actions, priors, liks):
+    def __init__(self, running_log_estimates, var_est, xts, states, actions, priors, liks, log_weights):
         self.running_log_estimates = running_log_estimates
         self.var_est = var_est
         self.xts = xts
@@ -196,7 +197,23 @@ class EvaluationObject:
         self.actions = actions
         self.priors = priors
         self.liks = liks
-        self.ci = importance_sampled_confidence_interval(running_log_estimates[-1], var_est, len(running_log_estimates), epsilon=torch.tensor(0.05))
+        self.log_weights = log_weights
+
+        self._compute_statistics()
+
+    def _compute_statistics(self):
+        self._compute_confidence_interval()
+        self._compute_importance_weight_diagnostics()
+
+    def _compute_confidence_interval(self):
+        self.ci = importance_sampled_confidence_interval(torch.exp(self.running_log_estimates[-1]), self.var_est,
+                                                         len(self.running_log_estimates), epsilon=torch.tensor(0.05))
+
+    def _compute_importance_weight_diagnostics(self):
+        self.log_weight_mean = log_mean(self.log_weights)
+        self.log_max_weight_prop = log_max_weight_proportion(self.log_weights)
+        self.log_effective_sample_size = log_effective_sample_size(self.log_weights)
+
 
 def evaluate(ys, d, env=None):
     print('\nevaluating...')
@@ -220,6 +237,8 @@ def evaluate(ys, d, env=None):
     log_p_y_over_qs = torch.zeros(N)
     # keep track of log evidence estimates up to N sample trajectories
     running_log_evidence_estimates = []
+    # keep track of (log) weights p(x) / q(x)
+    log_weights = []
     for i in range(N):
         done = False
         # get first obs
@@ -268,6 +287,7 @@ def evaluate(ys, d, env=None):
         log_q = torch.sum(log_qrobs)
         log_p_y_over_qs[i] = (log_p_y_x - log_q).item()
         running_log_evidence_estimates.append(torch.logsumexp(log_p_y_over_qs[0:i+1], -1) - torch.log(torch.tensor(i+1.)))
+        log_weights.append(log_p_x - log_q)
 
         # p(y)
         # evidence_est += torch.exp(log_num - p_x)/N
@@ -284,36 +304,10 @@ def evaluate(ys, d, env=None):
 
     # calculate variance estmate as
     # $\hat{\sigma}_{int}^2=(n(n-1))^{-1}\sum_{i=1}^n(f_iW_i-\overline{fW})^2$
-    sigma_sq = log_p_y_over_qs.var(unbiased=True) / len(log_p_y_over_qs)
 
-    return EvaluationObject(running_log_evidence_estimates, sigma_sq, xts, states, actions, priors, liks)
-
-def logp(ys, t, C=1, A=1, Q=1, R=1, mu=0):
-    return dist.MultivariateNormal(C*A**t*mu, C**2*Q**2*t + R**2).log_prob(ys)
-
-def create_iso_plot():
-    ys = torch.arange(-100, 100, 0.1)
-    A = torch.tensor(0.8).reshape(1, 1)
-    Q = torch.tensor(0.2).reshape(1, 1)
-    C = torch.tensor(0.8).reshape(1, 1)
-    R = torch.tensor(0.2).reshape(1, 1)
-    mu_0 = torch.ones_like(ys[0])
-    Q_0 = Q
-    time_steps = 1000
-    scores = None
-    # E[y1] = C*E[x1] = C*A*E[x0]
-    # Var[y1] = C**2*Var[x1] + R**2
-    # E[yt] = C*E[xt] = C*A*E[x_{t-1}] = C*A**t*E[x0]
-    # Var[yt] = C**2*Var[xt] + R**2 = C**2*(A**2*Var[x_{t-1}]+Q**2) + R**2 = C**2*(A**2*(A**2*Var[x_{t-2}] + Q**2) + Q**2)+R**2
-    # = C**2*(A**(2*t)*Var[x_0] + Q**2) + R**2 = C**2*Q**2*(A**(2t+2)-1)/(A**2-1) + R**2
-    for t in range(1, time_steps+1):
-        if scores is None:
-            scores = logp(ys, t, C=gen_C, A=gen_A, Q=gen_Q, R=gen_R, mu=gen_mu_0).reshape(-1,1)
-        else:
-            scores = torch.cat([scores, logp(ys, t, C=gen_C, A=gen_A, Q=gen_Q, R=gen_R, mu=gen_mu_0).reshape(-1,1)], dim=1)
-    plt.imshow(scores)#, cmap='hot', interpolation='nearest')
-    plt.show()
-    print(scores)
+    sigma_sq = logvarexp(log_p_y_over_qs).exp()
+    return EvaluationObject(running_log_estimates=running_log_evidence_estimates, var_est=sigma_sq,
+                            xts=xts, states=states, actions=actions, priors=priors, liks=liks, log_weights=torch.tensor(log_weights))
 
 def load_rl_model(device):
     # load model
@@ -350,13 +344,6 @@ def test_importance_sampler(traj_length, A, Q):
 
     return importance_estimate(ys, A=A, Q=Q)
 
-def importance_sampled_confidence_interval(mu, sigma, sample_size, epsilon=torch.tensor(0.05)):
-    t = scipy.stats.t.ppf(q=1-epsilon/2, df=sample_size-1)
-    return (round((mu - t*sigma).item(), 4), round((mu + t*sigma).item(), 4))
-
-def effective_sample_size(weights: torch.Tensor):
-    return weights.sum()**2 / (weights**2).sum()
-
 def rl_estimate(ys, env=None):
     print('\nrl_estimate\n')
     _, policy = load_rl_model(ys.device)
@@ -375,25 +362,6 @@ def full_sweep(ys=None, train_model=False, traj_length=1, env_class=LinearGaussi
             env = env_class(A, Q, C, R, mu_0, Q_0, traj_length=traj_length, sample=True)
             train(traj_length=traj_length, env=env)
     rl_estimate(ys=ys)
-    # _, policy = load_rl_model(ys.device)
-    # print('\nrl output')
-    # for s, x, y, prior, lik in zip(states, xs, ys, priors, liks):
-    #     print('s_t = {} a_t = {} y_t = {} where p(a_t|s_t) = N({}, {}) = {} and p(y_t|a_t) = N({}, {}) = {}'.format(
-    #         s.item(), x.item(), y.item(), (A*s).item(), Q.item(), prior.item(), (C*x).item(), R.item(), lik.item()))
-    # joint_p = torch.tensor(liks).sum() + torch.tensor(priors).sum()
-    # log_qrobs = torch.zeros(len(states))
-    # for j in range(len(states)):
-    #     state = states[j]
-    #     action = xs[j]
-    #     y = ys[j]
-    #     log_qrobs[j] = policy.evaluate_actions(obs=torch.cat([state, y]).reshape(1, -1), actions=action)[1].item()
-    #     print('log_qrob state: {}'.format(state))
-    #     print('log_qrob action: {}'.format(action))
-    # print('log qrobs: {}'.format(log_qrobs))
-    # print('evidence estimate: {}'.format(joint_p - torch.sum(log_qrobs)))
-
-    # print('\ntesting covariance')
-    # test_covariance(ys)
 
 def plot_log_diffs(log_values, log_true, label):
     # compute log ratio of estimate to true value
@@ -402,32 +370,102 @@ def plot_log_diffs(log_values, log_true, label):
 
 
 class Estimator:
-    def __init__(self, ci):
+    def __init__(self, ci, weight_mean, max_weight_prop, ess):
         self.ci = ci
+        self.weight_mean = weight_mean
+        self.max_weight_prop = max_weight_prop
+        self.ess = ess
 
 
 class ISEstimator(Estimator):
-    def __init__(self, A, Q, ci):
-        super().__init__(ci)
+    def __init__(self, A, Q, ci, weight_mean, max_weight_prop, ess):
+        super().__init__(ci, weight_mean, max_weight_prop, ess)
         self.A = A
         self.Q = Q
+        self.weight_mean = weight_mean
+        self.max_weight_prop = max_weight_prop
+        self.ess = ess
 
 
-class ImportanceOutput:
+class ImportanceOutput(dict):
     def __init__(self, traj_length, ys):
         self.traj_length = traj_length
         self.ys = ys
-        self.is_estimators = []
-        self.rl_estimators = []
+        self.is_estimators = {}
+        self.rl_estimators = {}
 
-    def add_is_estimator(self, A, Q, ci):
-        self.is_estimators.append(ISEstimator(A, Q, ci))
+    def add_is_estimator(self, A, Q, ci, weight_mean, max_weight_prop, ess, idstr):
+        if idstr in self.is_estimators:
+            raise NotImplementedError
+        self.is_estimators[idstr] = ISEstimator(A, Q, ci, weight_mean, max_weight_prop, ess)
 
-    def add_rl_estimator(self, ci):
-        self.rl_estimators.append(Estimator(ci))
+    def add_rl_estimator(self, ci, weight_mean, max_weight_prop, ess, idstr):
+        if idstr in self.rl_estimators:
+            raise NotImplementedError
+        self.rl_estimators[idstr] = RLEstimator(ci, weight_mean, max_weight_prop, ess)
 
-    def add_truth(self, truth):
-        self.truth = truth
+    def display_self(self):
+        for key, val in self.items():
+            print('{}: {}'.format(key, val))
+
+
+def make_ess_plot(outputs):
+    plt.figure()
+    traj_lengths = []
+    ess = {}
+    true_vals = []
+    for output in outputs:
+        traj_lengths.append(output.traj_length)
+        for key, val in output.is_estimators.items():
+            if key not in ess:
+                ess[key] = [val.ess]
+            else:
+                ess[key].append(val.ess)
+        for key, val in output.rl_estimators.items():
+            if key not in ess:
+                ess[key] = [val.ess]
+            else:
+                ess[key].append(val.ess)
+        true_vals.append(output.traj_length)
+    for key, val in ess.items():
+        plt.scatter(traj_lengths, val, label=key)
+        plt.scatter(traj_lengths, true_vals, label=key, marker='x', color='r')
+
+    plt.xlabel('Trajectory Length')
+    plt.ylabel('Effective Sample Size')
+    plt.title('Effective Sample Size Versus Trajectory Length')
+    plt.legend()
+    plt.savefig('./ess_plot.png')
+
+
+def display_diagnostics(outputs):
+    for output in outputs:
+        output.display_self()
+    
+
+def make_table_of_confidence_intervals(outputs, name='Event'):
+    columns = []
+    rows = []
+    cell_text = []
+    for i, output in enumerate(outputs):
+        cell_text.append([])
+        rows.append("Traj Length: {}".format(output.traj_length))
+        for key, is_est in output.is_estimators.items():
+            columns.append('IS (A: {}, Q: {})'.format(is_est.A, is_est.Q))
+            cell_text[i].append(is_est.ci)
+        for key, rl_est in output.rl_estimators.items():
+            columns.append('RL')
+            cell_text[i].append(rl_est.ci)
+        columns.append('truth')
+        cell_text[i].append(output['truth'])
+    fig, axs = plt.subplots(2,1)
+    axs[0].axis('tight')
+    axs[0].axis('off')
+    axs[0].table(cellText=cell_text,
+            rowLabels=tuple(rows),
+            colLabels=tuple(columns),
+            loc='top')
+    plt.savefig('./{}_table_confidence_interval.png'.format(name))
 
 
 class Plotter:
@@ -443,7 +481,7 @@ class Plotter:
     def get_true_score(self, ys):
         raise NotImplementedError
 
-    def plot_IS(self, traj_lengths=[1, 10]):
+    def plot_IS(self, traj_lengths=[1, 10], As=torch.arange(0.2, 0.6, 0.2), Qs=torch.arange(0.2, 0.6, 0.2)):
         outputs = []
         for traj_length in traj_lengths:
             plt.figure(plt.gcf().number+1)
@@ -456,34 +494,41 @@ class Plotter:
 
             # get evidence estimate using true params and add it to output
             log_true = self.get_true_score(ys, traj_length)
-            output.add_truth(round(log_true.item(), 4))
-            print('true prob.: {}'.format(round(log_true.item(), 4)))
+            output['truth'] = round(log_true.exp().item(), 4)
+            print('true prob.: {}'.format(round(log_true.exp().item(), 4)))
 
             # generate environment
             env = self.generate_env(ys, traj_length)
 
             # get evidence estimates using IS with other params
-            As = torch.arange(0.2, 0.6, 0.2)
-            Qs = torch.arange(0.2, 0.6, 0.2)
-            for _A in As:
-                for _Q in Qs:
-                    rounded_A = round(_A.item(), 1)
+            for i, _A in enumerate(As):
+                rounded_A = round(_A.item(), 1)
+                for j, _Q in enumerate(Qs):
                     rounded_Q = round(_Q.item(), 1)
 
                     # get is estimate of evidence using _A and _Q params
                     eval_obj = importance_estimate(ys, A=_A.reshape(1, 1), Q=_Q.reshape(1, 1), env=env)
-                    print('IS A: {}, Q: {} estimate: {}'.format(rounded_A, rounded_Q, eval_obj.running_log_estimates[-1]))
+                    print('IS A: {}, Q: {} estimate: {}'.format(rounded_A, rounded_Q, eval_obj.running_log_estimates[-1].exp()))
 
-                    output.add_is_estimator(A=rounded_A, Q=rounded_Q, ci=eval_obj.ci)
-
+                    # plot differences
                     plot_log_diffs(eval_obj.running_log_estimates, log_true, label='A: {}, Q: {}'.format(rounded_A, rounded_Q))
+
+                    # add importance confidence interval
+                    output.add_is_estimator(A=rounded_A, Q=rounded_Q, ci=eval_obj.ci,
+                                            weight_mean=eval_obj.log_weight_mean.exp(),
+                                            max_weight_prop=eval_obj.log_max_weight_prop.exp(),
+                                            ess=eval_obj.log_effective_sample_size.exp(),
+                                            idstr='A: {}, Q: {}'.format(rounded_A, rounded_Q))
 
             # add RL plot
             try:
                 eval_obj = rl_estimate(ys, env)
-                print('rl estimate: {}'.format(eval_obj.running_log_estimates[-1]))
+                print('rl estimate: {}'.format(eval_obj.running_log_estimates[-1].exp()))
                 plot_log_diffs(eval_obj.running_log_estimates, log_true, label='RL')
-                output.add_rl_estimator(eval_obj.ci)
+                output.add_rl_estimator(eval_obj.ci, weight_mean=eval_obj.log_weight_mean.exp(),
+                                        max_weight_prop=eval_obj.log_max-weight_prop.exp(),
+                                        ess=eval_obj.log_effective_sample_size.exp(), idstr='rl1')
+
             except:
                 pass
 
@@ -546,52 +591,6 @@ class EventPlotter(Plotter):
             print('true dist (for traj_length {}): N({}, {})'.format(t, d.mean.item(), d.variance.item()))
         return super().plot_IS(traj_lengths)
 
-
-def calc_CI_from_mu_sigma(mu: torch.Tensor, sigma:torch.Tensor, N, alpha=torch.tensor(0.05)):
-    Z = -dist.Normal(0, 1).icdf(alpha/2)
-    std_err = sigma / np.sqrt(N)
-    margin = std_err * Z
-    return (mu + margin, mu - margin)
-
-def calc_CI(data: torch.Tensor, alpha=torch.tensor(0.05)):
-    N = len(data.squeeze())
-    mu = data.mean()
-    sigma = torch.sqrt(data.var())
-    return calc_CI_from_mu_sigma(mu, sigma, N, alpha)
-
-def compare_y_event_dist(num_steps=10):
-    y_saps = []
-    for i in range(10000):
-        ys, _, _, _ = generate_trajectory(num_steps=num_steps)
-        y_saps.append(ys[-1])
-    y_saps = torch.tensor(y_saps)
-    print('empirical dist: N({}, {})'.format(y_saps.mean(), y_saps.var()))
-
-def make_table_of_confidence_intervals(outputs, name='Event'):
-    columns = []
-    rows = []
-    cell_text = []
-    for i, output in enumerate(outputs):
-        cell_text.append([])
-        rows.append("Traj Length: {}".format(output.traj_length))
-        for is_est in output.is_estimators:
-            columns.append('IS (A: {}, Q: {})'.format(is_est.A, is_est.Q))
-            cell_text[i].append(is_est.ci)
-        for rl_est in output.rl_estimators:
-            columns.append('RL')
-            cell_text[i].append(rl_est.ci)
-        columns.append('truth')
-        cell_text[i].append(output.truth)
-    fig, axs = plt.subplots(2,1)
-    axs[0].axis('tight')
-    axs[0].axis('off')
-    axs[0].table(cellText=cell_text,
-              rowLabels=tuple(rows),
-              colLabels=tuple(columns),
-              loc='top')
-    plt.savefig('./{}_table_confidence_interval.png'.format(name))
-
-
 if __name__ == "__main__":
     # ep = EvidencePlotter()
     # outputs = ep.plot_IS()
@@ -609,20 +608,6 @@ if __name__ == "__main__":
     ep = EventPlotter(threshold=torch.tensor(0.5))
     outputs = ep.plot_IS()
     make_table_of_confidence_intervals(outputs, name='Event')
-
-    # ys = None
-    # traj_length=10
-    # full_sweep(ys, train_model=True, traj_length=traj_length)
-
-    # importance estimate
-    # ys, log_evidence_estimates = test_importance_sampler(traj_length=traj_length, A=torch.tensor(0.6).reshape(1, -1), Q=torch.tensor(0.1).reshape(1, -1))
-
-    # monte carlo estimate
-    # _, log_evidence_mc = importance_estimate(ys, A=gen_A, Q=gen_Q)
-
-    # compute log ratio of IS estimate to MC value
-    # diffs = log_evidence_estimates - log_evidence_mc[-1]
-    # plt.plot(diffs, range(1, len(diffs)+1))
-
-    # # rl estimate
-    # rl_estimate(ys)
+    display_diagnostics(outputs)
+    import pdb; pdb.set_trace()
+    make_ess_plot(outputs)
