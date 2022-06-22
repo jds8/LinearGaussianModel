@@ -619,8 +619,6 @@ class Plotter:
                     # plot prob estimates
                     x_vals = torch.arange(1, len(eval_obj.running_log_estimates.squeeze())+1)
                     plt.plot(x_vals, eval_obj.running_log_estimates.exp().squeeze(), label='A: {}, Q: {}'.format(rounded_A, rounded_Q))
-                    import pdb; pdb.set_trace()
-
                     plt.fill_between(x_vals, y1=eval_obj.running_ess_ci[0], y2=eval_obj.running_ci[1], alpha=0.3)
 
                     # add importance confidence interval
