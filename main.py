@@ -238,7 +238,7 @@ def evaluate(ys, d, env=None):
     evidence_est = torch.tensor(0.).reshape(1, -1)
     log_evidence_est = torch.tensor(0.).reshape(1, -1)
     # evaluate N times
-    N = torch.tensor(10000)
+    N = torch.tensor(1000)
     # collect log( p(x,y)/q(x) )
     log_p_y_over_qs = torch.zeros(N)
     # keep track of log evidence estimates up to N sample trajectories
@@ -619,6 +619,8 @@ class Plotter:
                     # plot prob estimates
                     x_vals = torch.arange(1, len(eval_obj.running_log_estimates.squeeze())+1)
                     plt.plot(x_vals, eval_obj.running_log_estimates.exp().squeeze(), label='A: {}, Q: {}'.format(rounded_A, rounded_Q))
+                    import pdb; pdb.set_trace()
+
                     plt.fill_between(x_vals, y1=eval_obj.running_ess_ci[0], y2=eval_obj.running_ci[1], alpha=0.3)
 
                     # add importance confidence interval
