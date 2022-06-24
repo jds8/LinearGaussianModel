@@ -468,13 +468,13 @@ def make_ess_versus_dimension_plot(outputs):
         for key, val in output.rl_estimators.items():
             ess.append(val.ess)
 
-    plt.scatter(dims, ess, label=key)
+    plt.scatter(dims, ess)
 
     plt.xlabel('Dimension of X')
     plt.ylabel('Effective Sample Size')
     plt.title('Effective Sample Size Versus Hidden Dimension')
     legend_without_duplicate_labels(plt.gca())
-    plt.savefig('./ess_versus_dimension_(traj_len: {}).png'.format(traj_len))
+    plt.savefig('./ess_versus_dimension_(traj_len: {}).png'.format(traj_length))
 
 def make_ess_plot(outputs, dimension):
     plt.figure()
