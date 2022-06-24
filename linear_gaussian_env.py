@@ -106,7 +106,8 @@ class AbstractLinearGaussianEnv(gym.Env):
             self.ys = self.generate()
         first_y = self.ys[0]
 
-        self.prev_state = torch.cat([self.prev_xt, first_y.reshape(-1, 1)])
+        prev_state_shape = self.prev_xt.nelement()
+        self.prev_state = torch.cat([self.prev_xt.reshape(prev_state_shape, 1), first_y.reshape(-1, 1)])
 
         return self.prev_state
 
@@ -149,5 +150,5 @@ class LinearGaussianSingleYEnv(AbstractLinearGaussianEnv):
 
     def generate(self):
         y, score, d = sample_y(self.traj_length)
-        threshold = d.icdf(1-event_prob)
+        threshold = d.icdf(1-self.event_prob)
         return (y > threshold).type(y.dtype)
