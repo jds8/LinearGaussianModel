@@ -13,8 +13,8 @@ from generative_model import y_dist, sample_y, generate_trajectory, \
     gen_A, gen_Q, gen_C, gen_R, gen_mu_0, gen_Q_0, \
     single_gen_A, single_gen_Q, single_gen_C, single_gen_R, single_gen_mu_0, single_gen_Q_0, \
     test_A, test_Q, test_C, test_R, test_mu_0, test_Q_0, \
-    A, Q, C, R, mu_0, Q_0, \
     state_transition, score_state_transition, gen_covariance_matrix
+    # A, Q, C, R, mu_0, Q_0, \
 import wandb
 from linear_gaussian_env import LinearGaussianEnv, LinearGaussianSingleYEnv
 from math_utils import logvarexp, importance_sampled_confidence_interval, log_effective_sample_size, log_max_weight_proportion, log_mean
@@ -225,7 +225,7 @@ class EvaluationObject:
         self.ess_sigma_est = self.sigma_est / self.log_weight_mean.exp()
 
 
-def evaluate(ys, d, env=None):
+def evaluate(ys, d, env=None, N=10000):
     print('\nevaluating...')
     if env is None:
         # create env
@@ -239,14 +239,13 @@ def evaluate(ys, d, env=None):
     # evidence estimate
     evidence_est = torch.tensor(0.).reshape(1, -1)
     log_evidence_est = torch.tensor(0.).reshape(1, -1)
-    # evaluate N times
-    N = torch.tensor(10000)
     # collect log( p(x,y)/q(x) )
     log_p_y_over_qs = torch.zeros(N)
     # keep track of log evidence estimates up to N sample trajectories
     running_log_evidence_estimates = []
     # keep track of (log) weights p(x) / q(x)
     log_weights = []
+    # evaluate N times
     for i in range(N):
         done = False
         # get first obs
@@ -317,7 +316,7 @@ def load_rl_model(device):
     policy = model.policy.to(device)
     return model, policy
 
-def importance_estimate(ys, A=gen_A, Q=gen_Q, env=None):
+def importance_estimate(ys, A=gen_A, Q=gen_Q, env=None, N=10000):
     print('\nimportance estimate\n')
     pd = ProposalDist(A=A, Q=Q)
 
@@ -330,7 +329,7 @@ def importance_estimate(ys, A=gen_A, Q=gen_Q, env=None):
                                 traj_length=len(ys),
                                 sample=False)
 
-    return evaluate(ys, pd, env)
+    return evaluate(ys, pd, env, N)
 
 def test_importance_sampler(traj_length, A, Q):
     """
@@ -346,10 +345,10 @@ def test_importance_sampler(traj_length, A, Q):
 
     return importance_estimate(ys, A=A, Q=Q)
 
-def rl_estimate(ys, env=None):
+def rl_estimate(ys, env=None, N=10000):
     print('\nrl_estimate\n')
     _, policy = load_rl_model(ys.device)
-    return evaluate(ys, policy, env)
+    return evaluate(ys, d=policy, env=env, N=N)
 
 def full_sweep(ys=None, train_model=False, traj_length=1, env_class=LinearGaussianSingleYEnv):
     if ys is None:
@@ -400,11 +399,12 @@ class ISEstimator(Estimator):
 
 
 class ImportanceOutput(dict):
-    def __init__(self, traj_length, ys):
+    def __init__(self, traj_length, ys, dim):
         self.traj_length = traj_length
         self.ys = ys
         self.is_estimators = {}
         self.rl_estimators = {}
+        self.dimension = dim
 
     def add_is_estimator(self, A, Q, running_log_estimates, ci,
                          weight_mean, max_weight_prop, ess,
@@ -448,12 +448,39 @@ class ImportanceOutput(dict):
             plt.plot(x_vals, self[key].running_log_estimates.exp().squeeze(), label=key)
             plt.fill_between(x_vals, y1=self[key].running_ess_ci[0], y2=self[key].running_ci[1], alpha=0.3)
 
+def make_ess_versus_dimension_plot(outputs):
+    plt.figure()
+    plt.gca().set_yscale('log')
+    traj_length = None
+    dims = []
+    ess = []
+    for output in outputs:
+        # Ensure all outputs have same trajectory length
+        if traj_length is None:
+            traj_length = output.traj_length
+        else:
+            assert(traj_length == output.traj_length)
+
+        dims.append(output.dimension)
+
+        for key, val in output.is_estimators.items():
+            ess.append(val.ess)
+        for key, val in output.rl_estimators.items():
+            ess.append(val.ess)
+
+    plt.scatter(dims, ess, label=key)
+
+    plt.xlabel('Dimension of X')
+    plt.ylabel('Effective Sample Size')
+    plt.title('Effective Sample Size Versus Hidden Dimension')
+    legend_without_duplicate_labels(plt.gca())
+    plt.savefig('./ess_versus_dimension_(traj_len: {}).png'.format(traj_len))
+
 def make_ess_plot(outputs, dimension):
     plt.figure()
     plt.gca().set_yscale('log')
     traj_lengths = []
     ess = {}
-    true_vals = []
     for output in outputs:
         traj_lengths.append(output.traj_length)
         for key, val in output.is_estimators.items():
@@ -466,12 +493,9 @@ def make_ess_plot(outputs, dimension):
                 ess[key] = [val.ess]
             else:
                 ess[key].append(val.ess)
-        true_vals.append(output.truth)
 
-    true_label_vals = []
     for key, val in ess.items():
         plt.scatter(traj_lengths, val, label=key)
-        true_label_vals.append(min(val))
 
     plt.xlabel('Trajectory Length')
     plt.ylabel('Effective Sample Size')
@@ -603,6 +627,7 @@ class Plotter:
 
     def plot_IS(self, traj_lengths=[1, 10],
                 As=torch.arange(0.2, 0.6, 0.2), Qs=torch.arange(0.2, 0.6, 0.2),
+                num_samples=10000,
                 num_repeats=10):
         outputs = []
         for traj_length in traj_lengths:
@@ -612,7 +637,7 @@ class Plotter:
             ys = self.sample_trajectory(traj_length)
 
             # collect output
-            output = ImportanceOutput(traj_length, ys)
+            output = ImportanceOutput(traj_length, ys, dim=As[0].shape[0])
 
             # get evidence estimate using true params, add it to output, and plot
             log_true = self.get_true_score(ys, traj_length)
@@ -629,7 +654,7 @@ class Plotter:
                 for j, _Q in enumerate(Qs):
                     for _ in range(num_repeats):
                         # get is estimate of evidence using _A and _Q params
-                        eval_obj = importance_estimate(ys, A=_A, Q=_Q, env=env)
+                        eval_obj = importance_estimate(ys, A=_A, Q=_Q, env=env, N=num_samples)
                         print('IS A: {}, Q: {} estimate: {}'.format(_A, _Q, eval_obj.running_log_estimates[-1].exp()))
 
                         # add importance confidence interval
@@ -646,7 +671,7 @@ class Plotter:
 
             # add RL plot
             try:
-                # eval_obj = rl_estimate(ys, env)
+                # eval_obj = rl_estimate(ys, env, N=num_samples)
                 # print('rl estimate: {}'.format(eval_obj.running_log_estimates[-1].exp()))
                 # x_vals = torch.arange(1, len(eval_obj.running_log_estimates.squeeze())+1)
                 # plt.plot(x_vals, eval_obj.running_log_estimates.exp().squeeze(), label='RL')
@@ -718,11 +743,35 @@ class EventPlotter(Plotter):
                                         sample=False,
                                         event_prob=self.event_prob)
 
-    def plot_IS(self, traj_lengths=torch.arange(10, 12, 10), As=torch.arange(0.2, 0.6, 0.2), Qs=torch.arange(0.2, 0.6, 0.2)):
+    def plot_IS(self, traj_lengths=torch.arange(10, 12, 10), As=torch.arange(0.2, 0.6, 0.2), Qs=torch.arange(0.2, 0.6, 0.2),
+                num_samples=10000, num_repeats=10):
         for t in traj_lengths:
             d = y_dist(t)
-            print('true dist (for traj_length {}): N({}, {})'.format(t, d.mean.item(), d.variance.item()))
-        return super().plot_IS(traj_lengths, As, Qs)
+            print('true dist (for traj_length {}) (dim {}): N({}, {})'.format(t, self.dimension, d.mean.item(), d.variance.item()))
+        return super().plot_IS(traj_lengths, As, Qs, num_samples=num_samples, num_repeats=num_repeats)
+
+
+def collect_and_plot_dimension_outputs(traj_length=10, num_samples=100, num_repeats=10):
+    dim_outputs = []
+    for dimension in torch.arange(1, 15, 5):
+        ep = EventPlotter(event_prob=torch.tensor(0.2), fix_event=True, dim=dimension)
+        outputs = ep.plot_IS(traj_lengths=torch.tensor([traj_length]),
+                             As=[torch.rand(dimension, dimension)], Qs=[gen_covariance_matrix(dimension)],
+                             num_samples=num_samples, num_repeats=num_repeats)
+        dim_outputs.append(outputs[0])
+    make_ess_versus_dimension_plot(dim_outputs)
+
+
+def make_trajectory_plots(dimension=2, num_samples=10000, num_repeats=10):
+    ep = EventPlotter(event_prob=torch.tensor(0.2), fix_event=True, dim=dimension)
+    outputs = ep.plot_IS(As=[torch.rand(dimension, dimension)], Qs=[gen_covariance_matrix(dimension)],
+                         num_samples=num_samples, num_repeats=num_repeats)
+    make_table_of_confidence_intervals(outputs, name='EventWithCI')
+    display_diagnostics(outputs)
+    make_ess_plot(outputs, dimension)
+    make_ci_plot(outputs, dimension)
+    make_ess_ci_plot(outputs, dimension)
+
 
 if __name__ == "__main__":
     # ep = EvidencePlotter()
@@ -738,12 +787,4 @@ if __name__ == "__main__":
     #                                event_prob=0.5)
     # train(traj_length, env)
 
-    dimension = torch.tensor(2)
-    ep = EventPlotter(event_prob=torch.tensor(0.2), fix_event=True, dim=dimension)
-    # outputs = ep.plot_IS(As=torch.arange(0.2, 0.4, 0.2), Qs=torch.arange(0.2, 0.4, 0.2))
-    outputs = ep.plot_IS(As=[torch.rand(dimension, dimension)], Qs=[gen_covariance_matrix(dimension)])
-    # make_table_of_confidence_intervals(outputs, name='EventWithCI')
-    # display_diagnostics(outputs)
-    make_ess_plot(outputs, dimension)
-    # make_ci_plot(outputs, dimension)
-    make_ess_ci_plot(outputs, dimension)
+    collect_and_plot_dimension_outputs()
