@@ -16,12 +16,12 @@ def logvarexp(vec: torch.Tensor):
     # returns torch.log(torch.exp(vec).var())
     # sum[(e_i-bar(e))^2] = sum[e_i^2] - 2*bar(e)*sum[e_i] + n*bar(e)^2
     # sum(exp(x_i) - exp(bar(x)))
-    logn = torch.log(torch.tensor(vec.nelement()));
-    sample_avg = torch.logsumexp(vec, -1) - logn;
-    n_times_sample_avg_sq = 2*sample_avg + logn;
-    sq_sum_of_samples = torch.logsumexp(2*vec, -1);
-    sq_terms = torch.logsumexp(torch.tensor([sq_sum_of_samples, n_times_sample_avg_sq]), -1);
-    lse2 = torch.logsumexp(vec + sample_avg, -1) + torch.log(torch.tensor(2));
+    logn = torch.log(torch.tensor(vec.nelement(), dtype=torch.float32))
+    sample_avg = torch.logsumexp(vec, -1) - logn
+    n_times_sample_avg_sq = 2*sample_avg + logn
+    sq_sum_of_samples = torch.logsumexp(2*vec, -1)
+    sq_terms = torch.logsumexp(torch.tensor([sq_sum_of_samples, n_times_sample_avg_sq]), -1)
+    lse2 = torch.logsumexp(vec + sample_avg, -1) + torch.log(torch.tensor(2.))
     return logdiffexp(sq_terms, lse2) - logn
 
 # confidence intervals
