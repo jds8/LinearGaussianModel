@@ -134,7 +134,7 @@ class LinearGaussianSingleYEnv(AbstractLinearGaussianEnv):
         super().__init__(A, Q, C, R, mu_0, Q_0, traj_length=traj_length, ys=ys, sample=sample)
 
         if isinstance(event_prob, torch.Tensor):
-            self.event_prob =event_prob
+            self.event_prob = event_prob
         else:
             self.event_prob = torch.tensor(event_prob)
 
