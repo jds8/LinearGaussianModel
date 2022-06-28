@@ -39,7 +39,7 @@ def calc_CI(data: torch.Tensor, alpha=torch.tensor(0.05)):
 
 # diagnostic statistics for Importance Sampling
 def log_mean(log_vec: torch.Tensor):
-    return torch.logsumexp(log_vec, -1) - torch.log(torch.tensor(log_vec.nelement()))
+    return torch.logsumexp(log_vec, -1) - torch.log(torch.tensor(log_vec.nelement(), dtype=torch.float32))
 
 def max_weight_proportion(vec: torch.Tensor):
     return vec.max() / vec.sum()
