@@ -780,7 +780,7 @@ def collect_and_plot_dimension_outputs(ep, traj_length=10, num_samples=100, num_
     make_ess_versus_dimension_plot(outputs=dim_outputs, num_samples=num_samples)
 
 
-def make_trajectory_plots(plotter, event_prob, As, Qs, dimension, num_samples, num_repeats):
+def make_trajectory_plots(plotter, As, Qs, dimension, num_samples, num_repeats):
     outputs = plotter.plot_IS(As=As, Qs=Qs, num_samples=num_samples, num_repeats=num_repeats)
     # make_table_of_confidence_intervals(outputs, name='EventWithCI')
     display_diagnostics(outputs)
