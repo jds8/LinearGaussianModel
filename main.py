@@ -27,9 +27,9 @@ MODEL = 'linear_gaussian_model_{}'
 
 TODAY = date.today().strftime("%b-%d-%Y")
 
-RL_TIMESTEPS = 1000
-NUM_SAMPLES = 100
-NUM_REPEATS = 10
+RL_TIMESTEPS = 100000
+NUM_SAMPLES = 10000
+NUM_REPEATS = 100
 
 class CustomCallback(BaseCallback):
     """
