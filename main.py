@@ -671,7 +671,7 @@ class Plotter:
                 for j, _Q in enumerate(Qs):
                     for _ in range(num_repeats):
                         # get is estimate of evidence using _A and _Q params
-                        eval_obj = importance_estimate(ys, A=_A, Q=_Q, env=env, N=num_samples)
+                        eval_obj = importance_estimate(ys, A=_A, Q=_Q, C=self.C, R=self.R, mu_0=self.mu_0, Q_0=self.Q_0, env=env, N=num_samples)
                         print('IS A: {}, Q: {} estimate: {}'.format(_A, _Q, eval_obj.running_log_estimates[-1].exp()))
 
                         # add importance confidence interval
@@ -722,7 +722,7 @@ class EvidencePlotter(Plotter):
 
     def get_true_score(self, ys, traj_length):
         # ignore traj_length
-        return importance_estimate(ys, A=self.A, Q=self.Q).running_log_estimates[-1]
+        return importance_estimate(ys, A=self.A, Q=self.Q, C=self.C, R=self.R, mu_0=self.mu_0, Q_0=self.Q_0).running_log_estimates[-1]
 
     def generate_env(self, ys, traj_length):
         # ignore traj_length
@@ -769,7 +769,7 @@ class EventPlotter(Plotter):
 def kl_divergence(traj_length, p, q):
     return 0.
 
-def collect_and_plot_dimension_outputs(ep, traj_length=10, num_samples=100, num_repeats=10):
+def collect_and_plot_dimension_outputs(ep, As, Qs, traj_length, num_samples, num_repeats):
     dim_outputs = []
     for dimension in torch.arange(1, 25, 5):
         ep.dimension = dimension
@@ -807,7 +807,10 @@ def plot_event_stuff():
     num_samples = 10000
     num_repeats = 10
     ep = EventPlotter(event_prob=event_prob, fix_event=True, dim=dimension)
-    # collect_and_plot_dimension_outputs(ep=ep, traj_length=traj_length, num_samples=num_samples, num_repeats=num_repeats)
+    # collect_and_plot_dimension_outputs(ep=ep, As=[torch.rand(dimension, dimension)],
+    #                                    Qs=[gen_covariance_matrix(dimension)],
+    #                                    traj_length=traj_length, num_samples=num_samples,
+    #                                    num_repeats=num_repeats)
     ep.dimension = dimension
     make_trajectory_plots(plotter=ep, event_prob=event_prob, As=As, Qs=Qs, dimension=dimension, num_samples=num_samples, num_repeats=num_repeats)
 
