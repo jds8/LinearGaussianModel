@@ -812,6 +812,7 @@ def plot_event_stuff():
     make_trajectory_plots(plotter=ep, event_prob=event_prob, As=As, Qs=Qs, dimension=dimension, num_samples=num_samples, num_repeats=num_repeats)
 
 def plot_evidence_vs_trajectory():
+    os.mkdir(TODAY)
     traj_lengths = torch.arange(10, 121, 10)
     for traj_length in traj_lengths:
         env = LinearGaussianEnv(A=single_gen_A, Q=single_gen_Q,
