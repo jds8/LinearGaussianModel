@@ -12,7 +12,6 @@ class AbstractLinearGaussianEnv(gym.Env):
         # define action space
         self.action_space = gym.spaces.Box(low=-math.inf, high=math.inf, shape=(mu_0.shape[0],), dtype=float)
 
-        # define observation sapce
         self.observation_space = gym.spaces.Box(low=-math.inf, high=math.inf, shape=(mu_0.shape[0] + R.shape[0], 1), dtype=float)
 
         # data
@@ -114,6 +113,9 @@ class AbstractLinearGaussianEnv(gym.Env):
 
 class LinearGaussianEnv(AbstractLinearGaussianEnv):
     def __init__(self, A, Q, C, R, mu_0, Q_0, traj_length=1, ys=None, sample=False):
+        # define observation sapce
+        # self.observation_space = gym.spaces.Box(low=-math.inf, high=math.inf, shape=(traj_length+1, 1), dtype=float)
+
         super().__init__(A, Q, C, R, mu_0, Q_0, traj_length=traj_length, ys=ys, sample=sample)
 
     def compute_lik_reward(self, xt):
@@ -126,11 +128,14 @@ class LinearGaussianEnv(AbstractLinearGaussianEnv):
         return self.ys[self.index] if not done else torch.zeros_like(self.ys[0])
 
     def generate(self):
-        return generate_trajectory(self.traj_length)
+        return generate_trajectory(self.traj_length)[0]
 
 
 class LinearGaussianSingleYEnv(AbstractLinearGaussianEnv):
     def __init__(self, A, Q, C, R, mu_0, Q_0, traj_length=1, ys=None, sample=False, event_prob=0.2):
+        # define observation sapce
+        self.observation_space = gym.spaces.Box(low=-math.inf, high=math.inf, shape=(mu_0.shape[0] + R.shape[0], 1), dtype=float)
+
         super().__init__(A, Q, C, R, mu_0, Q_0, traj_length=traj_length, ys=ys, sample=sample)
 
         if isinstance(event_prob, torch.Tensor):

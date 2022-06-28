@@ -104,7 +104,7 @@ def generate_y(x_t, C, R):
 
 def score_y_from_dist(y_test, distribution):
     """ Scores y_test against a distribution object """
-    return distribution.log_prob(y_test)
+    return distribution.log_prob(y_test.reshape(distribution.mean.shape))
 
 def score_y(y_test, x_t, C, R):
     """
@@ -167,9 +167,9 @@ def generate_trajectory(num_steps, A=gen_A,
     for i in range(num_steps):
         yt = generate_y(xt, C, R)
         ys.append(yt)
-        liks.append(score_y(yt, xt, C, R))
+        liks.append(score_y(yt, xt, C, R).reshape(-1))
         prev_xt = xt.clone()
         xt = state_transition(xt, A, Q)
         xs.append(xt)
-        priors.append(score_state_transition(xt, prev_xt, A, Q))
+        priors.append(score_state_transition(xt, prev_xt, A, Q).reshape(-1))
     return torch.cat(ys), torch.cat(xs), torch.cat(priors), torch.cat(liks)
