@@ -714,8 +714,8 @@ class Plotter:
 
 
 class EvidencePlotter(Plotter):
-    def __init__(self, dim=torch.tensor(1)):
-        super().__init__('Evidence', dim=dim)
+    def __init__(self, A=None, Q=None, C=None, R=None, mu_0=None, Q_0=None, dim=torch.tensor(1)):
+        super().__init__('Evidence', A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, dim=dim)
 
     def sample_trajectory(self, traj_length):
         return generate_trajectory(traj_length, A=self.A, Q=self.Q, C=self.C, R=self.R, mu_0=self.mu_0, Q_0=self.Q_0)[0]
@@ -735,8 +735,8 @@ class EvidencePlotter(Plotter):
 
 
 class EventPlotter(Plotter):
-    def __init__(self, event_prob, fix_event=False, dim=torch.tensor(1)):
-        super().__init__('Event', dim=dim)
+    def __init__(self, event_prob, fix_event=False, A=None, Q=None, C=None, R=None, mu_0=None, Q_0=None, dim=torch.tensor(1)):
+        super().__init__('Event', A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, dim=dim)
         self.event_prob = event_prob
         self.fix_event = fix_event
 
