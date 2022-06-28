@@ -610,7 +610,7 @@ def make_table_of_confidence_intervals(outputs, name='Event'):
 class Plotter:
     def __init__(self, name, A=None, Q=None, C=None, R=None, mu_0=None, Q_0=None, dim=torch.tensor(1)):
         self.name = name
-        if self.A is None:
+        if A is None:
             self.A = A
             self.Q = Q
             self.C = C
