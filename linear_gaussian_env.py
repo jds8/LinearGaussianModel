@@ -36,6 +36,7 @@ class AbstractLinearGaussianEnv(gym.Env):
         self.prev_xt = None
 
         self.p_log_probs = []
+        self.liks = []
         self.states = []
         self.actions = []
 
@@ -56,6 +57,7 @@ class AbstractLinearGaussianEnv(gym.Env):
 
         # get liklihood score
         lik_reward = self.compute_lik_reward(xt)
+        self.liks.append(lik_reward)
 
         self.index += 1
 

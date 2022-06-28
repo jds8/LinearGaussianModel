@@ -149,7 +149,8 @@ class CustomCallback(BaseCallback):
 
         if self.env.states:
             q_log_prob = self.model.policy.to(self.env.states[-1].device).evaluate_actions(obs=self.env.states[-1].t(), actions=self.env.actions[-1])[1]
-            wandb.log({'log weights': self.env.p_log_probs[-1] - q_log_prob})
+            # note that in this case the weights are p(y|x)p(x)/q(x)
+            wandb.log({'log weights': self.env.liks[-1] + self.env.p_log_probs[-1] - q_log_prob})
 
         return True
 
@@ -295,7 +296,7 @@ def evaluate(ys, d, env=None, N=10000):
         log_q = torch.sum(log_qrobs)
         log_p_y_over_qs[i] = (log_p_y_x - log_q).item()
         running_log_evidence_estimates.append(torch.logsumexp(log_p_y_over_qs[0:i+1], -1) - torch.log(torch.tensor(i+1.)))
-        log_weights.append(log_p_x - log_q)
+        log_weights.append(log_p_x - log_q)  # ignore these since we consider the weights to be p(y|x)p(x)/q(x)
 
         # p(y)
         # evidence_est += torch.exp(log_num - p_x)/N
@@ -315,7 +316,7 @@ def evaluate(ys, d, env=None, N=10000):
     sigma_est = torch.sqrt( (logvarexp(log_p_y_over_qs) - torch.log(torch.tensor(len(log_p_y_over_qs) - 1, dtype=torch.float32))).exp() )
     return EvaluationObject(running_log_estimates=torch.tensor(running_log_evidence_estimates), sigma_est=sigma_est,
                             xts=xts, states=states, actions=actions, priors=priors, liks=liks,
-                            log_weights=torch.tensor(log_weights))
+                            log_weights=log_p_y_over_qs)
 
 def load_rl_model(device, traj_length):
     # load model
