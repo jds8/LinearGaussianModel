@@ -773,8 +773,7 @@ def collect_and_plot_dimension_outputs(ep, As, Qs, traj_length, num_samples, num
     dim_outputs = []
     for dimension in torch.arange(1, 25, 5):
         ep.dimension = dimension
-        outputs = ep.plot_IS(traj_lengths=torch.tensor([traj_length]),
-                             As=[torch.rand(dimension, dimension)], Qs=[gen_covariance_matrix(dimension)],
+        outputs = ep.plot_IS(traj_lengths=torch.tensor([traj_length]), As=As, Qs=Qs,
                              num_samples=num_samples, num_repeats=num_repeats)
         dim_outputs.append(outputs[0])
     make_ess_versus_dimension_plot(outputs=dim_outputs, num_samples=num_samples)
