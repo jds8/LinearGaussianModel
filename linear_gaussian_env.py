@@ -16,7 +16,7 @@ class AbstractLinearGaussianEnv(gym.Env):
 
         # data
         self.ys = ys
-        y_len = len(ys) if ys else 0
+        y_len = len(ys) if ys is not None else 0
         self.traj_length = max(y_len, traj_length)
         self.sample = sample
 
