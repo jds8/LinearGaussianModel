@@ -21,6 +21,7 @@ import wandb
 from linear_gaussian_env import LinearGaussianEnv, LinearGaussianSingleYEnv
 from math_utils import logvarexp, importance_sampled_confidence_interval, log_effective_sample_size, log_max_weight_proportion, log_mean
 from plot_utils import legend_without_duplicate_labels
+from linear_gaussian_prob_prog import GaussianRandomVariable, LinearGaussian
 
 # model name
 MODEL = 'linear_gaussian_model_{}'
@@ -199,7 +200,6 @@ class ProposalDist:
         # We can ignore the "y" part of obs
         prev_xt = obs.reshape(-1, 1)[0:self.prev_xt_shape, :]
         return (state_transition(prev_xt, self.A, self.Q), None)
-
 
 class EvaluationObject:
     def __init__(self, running_log_estimates, sigma_est, xts, states, actions, priors, liks, log_weights):
@@ -832,6 +832,7 @@ def plot_evidence_vs_trajectory():
     ep = EvidencePlotter(dim=dimension, A=single_gen_A, Q=single_gen_Q, C=single_gen_C, R=single_gen_R, mu_0=single_gen_mu_0, Q_0=single_gen_Q_0)
     make_trajectory_plots(plotter=ep, As=[], Qs=[], dimension=dimension, num_samples=num_samples, num_repeats=num_repeats)
     collect_and_plot_dimension_outputs(ep=ep, traj_length=10, num_samples=num_samples, num_repeats=num_repeats)
+
 
 if __name__ == "__main__":
     plot_evidence_vs_trajectory()

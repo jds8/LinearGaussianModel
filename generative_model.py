@@ -128,13 +128,39 @@ def mat_sum(A, num_steps, coef=torch.tensor(1.)):
         output += torch.matrix_power(A, coef*i)
     return output
 
-def y_dist(num_steps, A=gen_A,
-           Q=gen_Q, C=gen_C, R=gen_R,
-           mu_0=gen_mu_0, Q_0=gen_Q_0):
-    first_term = torch.mm(torch.matrix_power(A, 2*num_steps), Q_0)
+def y_dist2(num_steps, A=gen_A,
+            Q=gen_Q, C=gen_C, R=gen_R,
+            mu_0=gen_mu_0, Q_0=gen_Q_0):
+    """
+    This method, unlike the y_dist method below, assumes that Q, R, Q_0, represent *stddev* (as opposed to variances)
+    """
+    first_term = torch.mm(torch.matrix_power(A, 2*num_steps), torch.matrix_power(Q_0, 2))
 
     eye = torch.eye(A.shape[0])
     sum_of_a_sq = torch.mm(torch.matrix_power(A, 2*num_steps)-eye, torch.inverse(torch.matrix_power(A, 2)-eye))
+    second_term = torch.mm(torch.matrix_power(Q, 2), sum_of_a_sq)
+
+    var_x = first_term + second_term
+
+    var_y = torch.mm(torch.mm(C, var_x), C.t()) + torch.matrix_power(R, 2)
+    mean = torch.mm(C, torch.mm(torch.matrix_power(A, num_steps), mu_0.reshape(A.shape[1], 1)))
+
+    # Note: I am transforming this distribution to a Normal (as opposed to MultivariateNormal)
+    # so that I can compute the cdf. Moreover, the second parameter of a MultivariateNormal
+    # is the covariance whereas for a Normal, it's the standard deviation
+    return dist.Normal(mean, torch.sqrt(var_y))
+
+def y_dist(num_steps, A=gen_A,
+           Q=gen_Q, C=gen_C, R=gen_R,
+           mu_0=gen_mu_0, Q_0=gen_Q_0):
+    """
+    This method computes the distribution of y_t where t = num_steps
+    and assumes that Q, R, Q_0, represent *variances*
+    """
+    first_term = torch.mm(torch.matrix_power(A, 2*num_steps), Q_0)
+
+    eye = torch.eye(A.shape[0])
+    sum_of_a_sq = torch.mm(torch.matrix_power(A, 2*num_steps-1)-eye, torch.inverse(torch.matrix_power(A, 2)-eye))
     second_term = torch.mm(Q, sum_of_a_sq)
 
     var_x = first_term + second_term

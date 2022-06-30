@@ -40,6 +40,26 @@ class AbstractLinearGaussianEnv(gym.Env):
         self.states = []
         self.actions = []
 
+    def compute_conditionals(self):
+        self.w = GaussianRandomVariable(mu=0., sigma=self.env.Q, name='w')
+        self.v = GaussianRandomVariable(mu=0., sigma=self.env.R, name='v')
+        xt = GaussianRandomVariable(mu=self.env.mu_0, sigma=self.env.Q_0, name='x0')
+        self.xs = [xt]
+        self.ys = []
+        for i in range(self.traj_length):
+            yt = LinearGaussian(a=self.env.C, x=xt, b=self.v, name="y")
+            xt = LinearGaussian(a=self.env.A, x=xt, b=self.w, name='x')
+            xs.append(xt)
+            ys.append(yt)
+
+    def compute_joint(self):
+        self.compute_conditionals()
+        joint = self.xs[0].prior() * self.ys[0].likelihood()
+        for i in range(1, self.traj_length):
+            joint *= self.xs[i].likelihood()
+            joint *= self.ys[i].likelihood()
+        return joint
+
     def compute_lik_reward(self, xt):
         raise NotImplementedError
         return None
