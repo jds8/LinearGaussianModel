@@ -827,7 +827,7 @@ def plot_event_stuff():
                                    sample=True,
                                    event_prob=event_prob)
     dimension = 1
-    train(traj_length, env, dim=dimension.item())
+    train(traj_length, env, dim=dimension)
 
     os.makedirs(TODAY, exist_ok=True)
     As = [] #[torch.rand(dimension, dimension)]
@@ -870,7 +870,7 @@ def plot_evidence_vs_trajectory():
                                 Q_0=single_gen_Q_0, ys=None,
                                 traj_length=traj_length,
                                 sample=True)
-        train(traj_length, env, dim=dimension.item())
+        train(traj_length, env, dim=dimension)
 
     num_samples = NUM_SAMPLES
     num_repeats = NUM_REPEATS
