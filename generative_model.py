@@ -187,7 +187,7 @@ def generate_trajectory(num_steps, A=gen_A,
     ys = []
     xs = []
     xt = get_start_state(mu_0, Q_0)
-    xs.append(xt)
+    xs.append(xt.reshape(-1))
     priors = []
     liks = []
     for i in range(num_steps):
@@ -196,6 +196,6 @@ def generate_trajectory(num_steps, A=gen_A,
         liks.append(score_y(yt, xt, C, R).reshape(-1))
         prev_xt = xt.clone()
         xt = state_transition(xt, A, Q)
-        xs.append(xt)
+        xs.append(xt.reshape(-1))
         priors.append(score_state_transition(xt, prev_xt, A, Q).reshape(-1))
     return torch.cat(ys), torch.cat(xs), torch.cat(priors), torch.cat(liks)
