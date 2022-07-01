@@ -638,14 +638,17 @@ class Plotter:
             self.Q_0 = Q_0
             self.dimension = self.A.shape[0]
 
-    def reset_dimension(self, dim):
-        self.dimension = dim
-        self.A = torch.rand(dim, dim)
-        self.Q = gen_covariance_matrix(dim)
-        self.C = torch.rand(1, dim)
-        self.R = torch.rand(1, 1)
-        self.mu_0 = torch.zeros(dim)
-        self.Q_0 = self.Q
+    def reset(self, table, dimension):
+        try:
+            dim = dimension.item()
+        except:
+            dim = dimension
+        self.A = table[dim]['A']
+        self.Q = table[dim]['Q']
+        self.C = table[dim]['C']
+        self.R = table[dim]['R']
+        self.mu_0 = table[dim]['mu_0']
+        self.Q_0 = table[dim]['Q_0']
 
     def generate_env(self, ys, traj_length):
         raise NotImplementedError
@@ -734,7 +737,7 @@ class Plotter:
             plt.ylabel('Prob. {} Estimate'.format(self.name))
             plt.title('Convergence of Prob. {} Estimate to True Prob. {} \n(trajectory length: {}, dimension: {})'.format(self.name, self.name, traj_length, self.dimension))
             plt.legend()
-            plt.savefig('{}/new_traj_length_{}_dimension_{}_{}_convergence.png'.format(TODAY, traj_length, self.dimension, self.name))
+            plt.savefig('{}/traj_length_{}_dimension_{}_{}_convergence.png'.format(TODAY, traj_length, self.dimension, self.name))
         return outputs
 
 
@@ -797,10 +800,10 @@ class EventPlotter(Plotter):
 def kl_divergence(traj_length, p, q):
     return 0.
 
-def collect_and_plot_dimension_outputs(ep, As, Qs, traj_length, num_samples, num_repeats):
+def collect_and_plot_dimension_outputs(ep, dimensions, table, As, Qs, traj_length, num_samples, num_repeats):
     dim_outputs = []
-    for dimension in torch.arange(1, 25, 5):
-        ep.reset_dimension(dimension)
+    for dimension in dimensions:
+        ep.reset(table, dimension)
         outputs = ep.plot_IS(traj_lengths=torch.tensor([traj_length]), As=As, Qs=Qs,
                              num_samples=num_samples, num_repeats=num_repeats)
         dim_outputs.append(outputs[0])
@@ -842,44 +845,59 @@ def plot_event_stuff():
     ep.dimension = dimension
     make_trajectory_plots(plotter=ep, event_prob=event_prob, As=As, Qs=Qs, dimension=dimension, num_samples=num_samples, num_repeats=num_repeats)
 
-def train_dimensions(traj_length):
-    torch.manual_seed(traj_length)
+def train_dimensions(traj_length, dimensions, table):
     os.makedirs(TODAY, exist_ok=True)
-    dimensions = torch.arange(1, 11, 1)
-    for dimension in dimensions:
-        Q = gen_covariance_matrix(dimension)
-        env = LinearGaussianEnv(A=torch.rand(dimension, dimension),
-                                Q=Q,
-                                C=torch.rand(1, dimension), R=torch.rand(1, 1),
-                                mu_0=torch.zeros(dimension),
-                                Q_0=Q, ys=None,
-                                traj_length=traj_length,
-                                sample=True)
-        train(traj_length, env, dim=dimension.item())
+    for dim in dimensions:
+        dimension = dim.item()
+        A = table[dimension]['A']
+        Q = table[dimension]['Q']
+        R = table[dimension]['R']
+        C = table[dimension]['C']
+        mu_0 = table[dimension]['mu_0']
+        Q_0 = table[dimension]['Q_0']
+        env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0,
+                                ys=None, traj_length=traj_length, sample=True)
+        train(traj_length, env, dim=dimension)
 
+def create_dimension_table(dimensions):
+    table = {}
+    for dim in dimensions:
+        dimension = dim.item()
+        table[dimension] = {}
+        table[dimension]['A'] = torch.rand(dimension, dimension)
+        table[dimension]['Q'] = gen_covariance_matrix(dimension)
+        table[dimension]['C'] = torch.rand(1, dimension)
+        table[dimension]['R'] = torch.rand(1, 1)
+        table[dimension]['mu_0'] = torch.zeros(dimension)
+        table[dimension]['Q_0'] = table[dimension]['Q']
+    return table
 
 def plot_evidence_vs_trajectory():
     os.makedirs(TODAY, exist_ok=True)
-    # traj_lengths = torch.arange(1, 121, 10)
-    traj_lengths = torch.arange(1, 11, 1)
     dimension = 1
-    for traj_length in traj_lengths:
-        env = LinearGaussianEnv(A=single_gen_A, Q=single_gen_Q,
-                                C=single_gen_C, R=single_gen_R,
-                                mu_0=single_gen_mu_0,
-                                Q_0=single_gen_Q_0, ys=None,
-                                traj_length=traj_length,
-                                sample=True)
-        train(traj_length, env, dim=dimension)
+    # traj_lengths = torch.arange(1, 121, 10)
+    # traj_lengths = torch.arange(1, 11, 1)
+    # for traj_length in traj_lengths:
+    #     env = LinearGaussianEnv(A=single_gen_A, Q=single_gen_Q,
+    #                             C=single_gen_C, R=single_gen_R,
+    #                             mu_0=single_gen_mu_0,
+    #                             Q_0=single_gen_Q_0, ys=None,
+    #                             traj_length=traj_length,
+    #                             sample=True)
+    #     train(traj_length, env, dim=dimension)
 
     num_samples = NUM_SAMPLES
     num_repeats = NUM_REPEATS
     ep = EvidencePlotter(num_samples=num_samples, dim=dimension, A=single_gen_A, Q=single_gen_Q, C=single_gen_C, R=single_gen_R, mu_0=single_gen_mu_0, Q_0=single_gen_Q_0)
-    make_trajectory_plots(plotter=ep, traj_lengths=traj_lengths, As=[], Qs=[], dimension=dimension, num_samples=num_samples, num_repeats=num_repeats)
+    # make_trajectory_plots(plotter=ep, traj_lengths=traj_lengths, As=[], Qs=[], dimension=dimension, num_samples=num_samples, num_repeats=num_repeats)
 
     dim_traj_length = 10
-    train_dimensions(traj_length=dim_traj_length)
-    collect_and_plot_dimension_outputs(ep=ep, As=[], Qs=[], traj_length=dim_traj_length, num_samples=num_samples, num_repeats=num_repeats)
+    dimensions = torch.arange(5, 11, 1)
+
+    torch.manual_seed(dim_traj_length)
+    table = create_dimension_table(dimensions)
+    train_dimensions(traj_length=dim_traj_length, dimensions=dimensions, table=table)
+    collect_and_plot_dimension_outputs(ep=ep, dimensions=dimensions, table=table, As=[], Qs=[], traj_length=dim_traj_length, num_samples=num_samples, num_repeats=num_repeats)
 
 
 if __name__ == "__main__":
