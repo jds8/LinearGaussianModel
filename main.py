@@ -863,14 +863,14 @@ def plot_evidence_vs_trajectory():
     # traj_lengths = torch.arange(1, 121, 10)
     traj_lengths = torch.arange(1, 11, 1)
     dimension = 1
-    # for traj_length in traj_lengths:
-    #     env = LinearGaussianEnv(A=single_gen_A, Q=single_gen_Q,
-    #                             C=single_gen_C, R=single_gen_R,
-    #                             mu_0=single_gen_mu_0,
-    #                             Q_0=single_gen_Q_0, ys=None,
-    #                             traj_length=traj_length,
-    #                             sample=True)
-    #     train(traj_length, env, dim=dimension.item())
+    for traj_length in traj_lengths:
+        env = LinearGaussianEnv(A=single_gen_A, Q=single_gen_Q,
+                                C=single_gen_C, R=single_gen_R,
+                                mu_0=single_gen_mu_0,
+                                Q_0=single_gen_Q_0, ys=None,
+                                traj_length=traj_length,
+                                sample=True)
+        train(traj_length, env, dim=dimension.item())
 
     num_samples = NUM_SAMPLES
     num_repeats = NUM_REPEATS
