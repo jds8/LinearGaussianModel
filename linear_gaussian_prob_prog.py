@@ -15,7 +15,10 @@ from typing import List
 from generative_model import \
     single_gen_A, single_gen_Q,\
     single_gen_C, single_gen_R,\
-    single_gen_mu_0, single_gen_Q_0
+    single_gen_mu_0, single_gen_Q_0,\
+    gen_A, gen_Q,\
+    gen_C, gen_R,\
+    gen_mu_0, gen_Q_0
 
 class TorchDistributionInfo:
     def __init__(self, evaluate):
@@ -257,6 +260,9 @@ class GaussianDistribution:
 
     def sample(self, **kwargs):
         return self.get_dist(**kwargs).sample()
+
+    def log_prob(self, xs, **kwargs):
+        return self.get_dist(**kwargs).log_prob(xs)
 
     def mean(self, **kwargs):
         return self.get_dist(**kwargs).mean
@@ -684,7 +690,6 @@ def compute_block_posterior():
     # compute posterior
     posterior = ys.posterior_vec()
     posterior.mean(value=1)
-    import pdb; pdb.set_trace()
 
 
 if __name__ == "__main__":

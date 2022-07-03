@@ -15,20 +15,22 @@ from generative_model import y_dist, sample_y, generate_trajectory, \
     gen_A, gen_Q, gen_C, gen_R, gen_mu_0, gen_Q_0, \
     single_gen_A, single_gen_Q, single_gen_C, single_gen_R, single_gen_mu_0, single_gen_Q_0, \
     test_A, test_Q, test_C, test_R, test_mu_0, test_Q_0, \
-    state_transition, score_state_transition, gen_covariance_matrix
+    state_transition, score_state_transition, gen_covariance_matrix, \
+    score_initial_state, score_y
     # A, Q, C, R, mu_0, Q_0, \
 import wandb
 from linear_gaussian_env import LinearGaussianEnv, LinearGaussianSingleYEnv
 from math_utils import logvarexp, importance_sampled_confidence_interval, log_effective_sample_size, log_max_weight_proportion, log_mean
 from plot_utils import legend_without_duplicate_labels
-from linear_gaussian_prob_prog import GaussianRandomVariable, LinearGaussian
+from linear_gaussian_prob_prog import GaussianRandomVariable, LinearGaussian, VecLinearGaussian
 
 # model name
-MODEL = 'linear_gaussian_model_(traj_{}_dim_{})'
+MODEL = 'new_linear_gaussian_model_(traj_{}_dim_{})'
+# MODEL = 'from_borg/rl_agents/linear_gaussian_model_(traj_{}_dim_{})'
 
 TODAY = date.today().strftime("%b-%d-%Y")
 
-RL_TIMESTEPS = 1000000
+RL_TIMESTEPS = 100000
 NUM_SAMPLES = 10000
 NUM_REPEATS = 100
 
@@ -201,6 +203,8 @@ class ProposalDist:
         prev_xt = obs.reshape(-1, 1)[0:self.prev_xt_shape, :]
         return (state_transition(prev_xt, self.A, self.Q), None)
 
+
+
 class EvaluationObject:
     def __init__(self, running_log_estimates, sigma_est, xts, states, actions, priors, liks, log_weights):
         self.running_log_estimates = running_log_estimates
@@ -303,19 +307,6 @@ def evaluate(ys, d, N, env=None):
         log_weights.append(log_p_x - log_q)  # ignore these since we consider the weights to be p(y|x)p(x)/q(x)
         total_rewards.append(total_reward)
         wandb.log({'total_reward': total_reward})
-
-        # p(y)
-        # evidence_est += torch.exp(log_num - p_x)/N
-
-    # log_evidence_estimate = torch.logsumexp(log_p_y_over_qs, -1) - torch.log(N)
-    # log_evidence_true = analytical_score(true_ys=ys, A=A, Q=Q, C=C, R=R, mu0=mu_0, Q0=Q_0)
-    # evidence_estimate = torch.exp(log_evidence_estimate)
-    # evidence_true = torch.exp(log_evidence_true)
-    # print('log evidence estimate: {}'.format(log_evidence_estimate))
-    # print('log evidence true: {}'.format(log_evidence_true))
-    # print('evidence estimate: {}'.format(evidence_estimate))
-    # print('evidence true: {}'.format(evidence_true))
-    # print('abs difference of evidence estimate and evidence: {}'.format(abs(evidence_true-evidence_estimate)))
 
     # calculate variance estmate as
     # $\hat{\sigma}_{int}^2=(n(n-1))^{-1}\sum_{i=1}^n(f_iW_i-\overline{fW})^2$
@@ -666,7 +657,7 @@ class Plotter:
 
     def plot_IS(self, traj_lengths,
                 As=torch.arange(0.2, 0.6, 0.2), Qs=torch.arange(0.2, 0.6, 0.2),
-                num_samples=10000, num_repeats=10):
+                num_samples=10000, num_repeats=10, name=''):
         if len(As) > 0:
             assert self.dimension == As[0].shape[0]
         outputs = []
@@ -681,7 +672,8 @@ class Plotter:
 
             # get evidence estimate using true params, add it to output, and plot
             log_true = self.get_true_score(ys, traj_length)
-            true = round(log_true.exp().item(), 8)
+            # true = round(log_true.exp().item(), 8)
+            true = log_true.exp().item()
             output.set_truth(true)
             print('true prob.: {}'.format(true))
             plt.axhline(y=true, color='b')
@@ -737,7 +729,7 @@ class Plotter:
             plt.ylabel('Prob. {} Estimate'.format(self.name))
             plt.title('Convergence of Prob. {} Estimate to True Prob. {} \n(trajectory length: {}, dimension: {})'.format(self.name, self.name, traj_length, self.dimension))
             plt.legend()
-            plt.savefig('{}/traj_length_{}_dimension_{}_{}_convergence.png'.format(TODAY, traj_length, self.dimension, self.name))
+            plt.savefig('{}/{}traj_length_{}_dimension_{}_{}_convergence.png'.format(TODAY, name, traj_length, self.dimension, self.name))
         return outputs
 
 
@@ -891,14 +883,242 @@ def plot_evidence_vs_trajectory():
     ep = EvidencePlotter(num_samples=num_samples, dim=dimension, A=single_gen_A, Q=single_gen_Q, C=single_gen_C, R=single_gen_R, mu_0=single_gen_mu_0, Q_0=single_gen_Q_0)
     # make_trajectory_plots(plotter=ep, traj_lengths=traj_lengths, As=[], Qs=[], dimension=dimension, num_samples=num_samples, num_repeats=num_repeats)
 
-    dim_traj_length = 10
-    dimensions = torch.arange(5, 11, 1)
+    dim_traj_length = 5
+    dimensions = torch.arange(1, 11, 1)
 
     torch.manual_seed(dim_traj_length)
     table = create_dimension_table(dimensions)
     train_dimensions(traj_length=dim_traj_length, dimensions=dimensions, table=table)
     collect_and_plot_dimension_outputs(ep=ep, dimensions=dimensions, table=table, As=[], Qs=[], traj_length=dim_traj_length, num_samples=num_samples, num_repeats=num_repeats)
 
+def compute_posterior(num_observations):
+    w = GaussianRandomVariable(mu=0., sigma=single_gen_Q, name="w")
+    v = GaussianRandomVariable(mu=0., sigma=single_gen_R, name="v")
+    xt = GaussianRandomVariable(mu=single_gen_mu_0, sigma=single_gen_Q_0, name="x")
+    xs = [xt]
+    ys = []
+    posterior_xt_prev_given_yt_prev = None
+    for i in range(num_observations):
+        yt = LinearGaussian(a=single_gen_C, x=xt, b=v, name="y")
+        ys.append(yt)
+        xt = LinearGaussian(a=single_gen_A, x=xt, b=w, name="x")
+        xs.append(xt)
+
+    prior = xs[0].prior()
+    for i in range(1, num_observations):
+        prior *= xs[i].likelihood()
+
+    A = single_gen_A * torch.eye(num_observations)
+
+    noise = w.prior()**num_observations
+
+    # find full likelihood
+    ys = VecLinearGaussian(a=A, x=prior, b=noise)
+
+    # compute posterior
+    return ys.posterior_vec()
+
+def condition_posterior(td, obs):
+    return td.dist(arg={'value': obs})
+
+def evaluate_posterior(ys, N, td, env=None):
+    run = wandb.init(project='linear_gaussian_model evaluation', save_code=True, entity='iai')
+    print('\nevaluating...')
+    if env is None:
+        # create env
+        if env is None:
+            env = LinearGaussianEnv(A=gen_A, Q=gen_Q,
+                                    C=gen_C, R=gen_R,
+                                    mu_0=gen_mu_0,
+                                    Q_0=gen_Q_0, ys=ys,
+                                    sample=False)
+
+    # evidence estimate
+    evidence_est = torch.tensor(0.).reshape(1, -1)
+    log_evidence_est = torch.tensor(0.).reshape(1, -1)
+    total_rewards = []
+    # collect log( p(x,y)/q(x) )
+    log_p_y_over_qs = torch.zeros(N)
+    # keep track of log evidence estimates up to N sample trajectories
+    running_log_evidence_estimates = []
+    # keep track of (log) weights p(x) / q(x)
+    log_weights = []
+    # evaluate N times
+    for i in range(N):
+        done = False
+        # get first obs
+        obs = env.reset()
+        # keep track of xs
+        xs = td.sample()
+        # keep track of prior over actions p(x)
+        log_p_x = torch.tensor(0.).reshape(1, -1)
+        log_p_y_given_x = torch.tensor(0.).reshape(1, -1)
+        # collect actions, likelihoods
+        states = [obs]
+        actions = xs
+        priors = []
+        liks = []
+        xts = torch.cat([env.prev_xt.reshape(-1), xs[0:-1]])
+        prior_reward = score_initial_state(x0=xs[0].reshape(1), mu_0=env.mu_0, Q_0=env.Q_0)  # the reward for the initial state
+        lik_reward = score_y(y_test=ys[0], x_t=xs[0], C=env.C, R=env.R)  # the first likelihood reward
+        total_reward = prior_reward + lik_reward
+        for xt, prev_xt, y in zip(xs[1:], xts[1:], ys[1:]):
+            prior_reward = score_state_transition(xt=xt.reshape(1), prev_xt=prev_xt, A=env.A, Q=env.Q)
+            lik_reward = score_y(y_test=y, x_t=xt, C=env.C, R=env.R)  # the first likelihood reward
+            total_reward += prior_reward + lik_reward
+            states.append(obs)
+            priors.append(prior_reward)
+            liks.append(lik_reward)
+            log_p_x += prior_reward
+            log_p_y_given_x += lik_reward
+        # log p(x,y)
+        log_p_y_x = log_p_y_given_x + log_p_x
+        log_q = td.log_prob(xs)
+        log_p_y_over_qs[i] = (log_p_y_x - log_q).item()
+        running_log_evidence_estimates.append(torch.logsumexp(log_p_y_over_qs[0:i+1], -1) - torch.log(torch.tensor(i+1.)))
+        log_weights.append(log_p_x - log_q)  # ignore these since we consider the weights to be p(y|x)p(x)/q(x)
+        total_rewards.append(total_reward)
+        wandb.log({'total_reward': total_reward})
+
+
+    # calculate variance estmate as
+    # $\hat{\sigma}_{int}^2=(n(n-1))^{-1}\sum_{i=1}^n(f_iW_i-\overline{fW})^2$
+    sigma_est = torch.sqrt( (logvarexp(log_p_y_over_qs) - torch.log(torch.tensor(len(log_p_y_over_qs) - 1, dtype=torch.float32))).exp() )
+    return EvaluationObject(running_log_estimates=torch.tensor(running_log_evidence_estimates), sigma_est=sigma_est,
+                            xts=xts, states=states, actions=actions, priors=priors, liks=liks,
+                            log_weights=log_p_y_over_qs)
+
+def evaluate_joint(traj_length, N, env=None):
+    run = wandb.init(project='linear_gaussian_model evaluation', save_code=True, entity='iai')
+    print('\nevaluating...')
+    # evidence estimate
+    evidence_est = torch.tensor(0.).reshape(1, -1)
+    log_evidence_est = torch.tensor(0.).reshape(1, -1)
+    total_rewards = []
+    # collect log( p(x,y)/q(x) )
+    log_p_y_over_qs = torch.zeros(N)
+    # keep track of log evidence estimates up to N sample trajectories
+    running_log_evidence_estimates = []
+    # keep track of (log) weights p(x) / q(x)
+    log_weights = []
+    # evaluate N times
+    x_len = int(traj_length)
+    for i in range(N):
+        done = False
+
+        if env is None:
+            env = LinearGaussianEnv(traj_length=traj_length, A=single_gen_A,
+                                    Q=single_gen_Q,
+                                    C=single_gen_C, R=single_gen_R,
+                                    mu_0=single_gen_mu_0,
+                                    Q_0=single_gen_Q_0, ys=None,
+                                    sample=True)
+        td = env.compute_joint()
+        # keep track of xs
+        xsys = td.sample()
+        xs = xsys[0:x_len]
+        ys = xsys[x_len:]
+        env = LinearGaussianEnv(traj_length=traj_length, A=single_gen_A,
+                                Q=single_gen_Q,
+                                C=single_gen_C, R=single_gen_R,
+                                mu_0=single_gen_mu_0,
+                                Q_0=single_gen_Q_0, ys=ys,
+                                sample=False)
+
+        # get first obs
+        obs = env.reset()
+        # keep track of prior over actions p(x)
+        log_p_x = torch.tensor(0.).reshape(1, -1)
+        log_p_y_given_x = torch.tensor(0.).reshape(1, -1)
+        # collect actions, likelihoods
+        states = [obs]
+        actions = xs
+        xts = torch.cat([env.prev_xt.reshape(-1), xs[0:-1]])
+        prior_reward = score_initial_state(x0=xs[0].reshape(1), mu_0=env.mu_0, Q_0=env.Q_0)  # the reward for the initial state
+        lik_reward = score_y(y_test=ys[0], x_t=xs[0], C=env.C, R=env.R)  # the first likelihood reward
+        priors = [prior_reward]
+        liks = [lik_reward]
+        total_reward = prior_reward + lik_reward
+
+        for xt, prev_xt, y in zip(xs[1:], xts[1:], ys[1:]):
+            prior_reward = score_state_transition(xt=xt.reshape(1), prev_xt=prev_xt, A=env.A, Q=env.Q)
+            lik_reward = score_y(y_test=y, x_t=xt, C=env.C, R=env.R)  # the first likelihood reward
+            total_reward += prior_reward + lik_reward
+            states.append(obs)
+            priors.append(prior_reward)
+            liks.append(lik_reward)
+            log_p_x += prior_reward
+            log_p_y_given_x += lik_reward
+
+        # log p(x,y)
+        log_p_y_x = log_p_y_given_x + log_p_x
+        log_q = td.log_prob(xsys)
+        log_p_y_over_qs[i] = (log_p_y_x - log_q).item()
+        running_log_evidence_estimates.append(torch.logsumexp(log_p_y_over_qs[0:i+1], -1) - torch.log(torch.tensor(i+1.)))
+        log_weights.append(log_p_x - log_q)  # ignore these since we consider the weights to be p(y|x)p(x)/q(x)
+        total_rewards.append(total_reward)
+        wandb.log({'total_reward': total_reward})
+        import pdb; pdb.set_trace()
+
+    # calculate variance estmate as
+    # $\hat{\sigma}_{int}^2=(n(n-1))^{-1}\sum_{i=1}^n(f_iW_i-\overline{fW})^2$
+    sigma_est = torch.sqrt( (logvarexp(log_p_y_over_qs) - torch.log(torch.tensor(len(log_p_y_over_qs) - 1, dtype=torch.float32))).exp() )
+    return EvaluationObject(running_log_estimates=torch.tensor(running_log_evidence_estimates), sigma_est=sigma_est,
+                            xts=xts, states=states, actions=actions, priors=priors, liks=liks,
+                            log_weights=log_p_y_over_qs)
+
+def test_posterior(traj_length):
+    ys = generate_trajectory(traj_length, A=single_gen_A, Q=single_gen_Q, C=single_gen_C, R=single_gen_R, mu_0=single_gen_mu_0, Q_0=single_gen_Q_0)[0]
+    env = LinearGaussianEnv(A=single_gen_A, Q=single_gen_Q,
+                            C=single_gen_C, R=single_gen_R,
+                            mu_0=single_gen_mu_0,
+                            Q_0=single_gen_Q_0, ys=ys,
+                            sample=False)
+
+    posterior = compute_posterior(len(ys))
+    td = condition_posterior(posterior, ys)
+    eval_object_posterior = evaluate_posterior(ys=ys, N=NUM_REPEATS, td=td, env=env)
+
+    eval_object_joint = evaluate_joint(traj_length=5, N=NUM_REPEATS, env=None)
+    import pdb; pdb.set_trace()
+
+def plot_dim(traj_length, dim):
+    dimensions = torch.arange(5, 11, 1)
+    assert dim in dimensions
+    torch.manual_seed(traj_length)
+    table = create_dimension_table(dimensions)
+
+    A = table[dim]['A']
+    Q = table[dim]['Q']
+    C = table[dim]['C']
+    R = table[dim]['R']
+    mu_0 = table[dim]['mu_0']
+    Q_0 = table[dim]['Q_0']
+    ys = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0]
+    ep = EvidencePlotter(num_samples=100, dim=dim, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)
+
+    outputs = ep.plot_IS(traj_lengths=torch.tensor([traj_length]), As=[], Qs=[], num_samples=100, num_repeats=10, name='extra')
+
+def plot_traj():
+    traj_lengths = [7, 8, 9, 10]
+    for traj_length in traj_lengths:
+        env = LinearGaussianEnv(A=single_gen_A, Q=single_gen_Q,
+                                C=single_gen_C, R=single_gen_R,
+                                mu_0=single_gen_mu_0,
+                                Q_0=single_gen_Q_0, ys=None,
+                                traj_length=traj_length,
+                                sample=True)
+        train(traj_length, env=env, dim=1)
+        ys = generate_trajectory(traj_length, A=single_gen_A, Q=single_gen_Q, C=single_gen_C, R=single_gen_R, mu_0=single_gen_mu_0, Q_0=single_gen_Q_0)[0]
+        ep = EvidencePlotter(num_samples=NUM_SAMPLES, dim=1, A=single_gen_A, Q=single_gen_Q, C=single_gen_C, R=single_gen_R, mu_0=single_gen_mu_0, Q_0=single_gen_Q_0)
+
+    outputs = ep.plot_IS(traj_lengths=traj_lengths, As=[], Qs=[], num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, name='extra')
+    make_ess_plot(outputs, dimension=1, num_samples=NUM_SAMPLES)
+
 
 if __name__ == "__main__":
-    plot_evidence_vs_trajectory()
+    # plot_evidence_vs_trajectory()
+    # test_posterior(5)
+
+    plot_traj()
+    # plot_evidence_vs_trajectory()

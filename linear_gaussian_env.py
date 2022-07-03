@@ -5,6 +5,7 @@ import torch
 import torch.distributions as dist
 import numpy as np
 from generative_model import y_dist, sample_y, generate_trajectory, score_y, score_initial_state, score_state_transition
+from linear_gaussian_prob_prog import GaussianRandomVariable, LinearGaussian
 
 
 class AbstractLinearGaussianEnv(gym.Env):
@@ -41,16 +42,16 @@ class AbstractLinearGaussianEnv(gym.Env):
         self.actions = []
 
     def compute_conditionals(self):
-        self.w = GaussianRandomVariable(mu=0., sigma=self.env.Q, name='w')
-        self.v = GaussianRandomVariable(mu=0., sigma=self.env.R, name='v')
-        xt = GaussianRandomVariable(mu=self.env.mu_0, sigma=self.env.Q_0, name='x0')
+        self.w = GaussianRandomVariable(mu=0., sigma=torch.sqrt(self.Q), name='w')
+        self.v = GaussianRandomVariable(mu=0., sigma=torch.sqrt(self.R), name='v')
+        xt = GaussianRandomVariable(mu=self.mu_0, sigma=torch.sqrt(self.Q_0), name='x0')
         self.xs = [xt]
         self.ys = []
         for i in range(self.traj_length):
-            yt = LinearGaussian(a=self.env.C, x=xt, b=self.v, name="y")
-            xt = LinearGaussian(a=self.env.A, x=xt, b=self.w, name='x')
-            xs.append(xt)
-            ys.append(yt)
+            yt = LinearGaussian(a=self.C, x=xt, b=self.v, name="y")
+            xt = LinearGaussian(a=self.A, x=xt, b=self.w, name='x')
+            self.xs.append(xt)
+            self.ys.append(yt)
 
     def compute_joint(self):
         self.compute_conditionals()
@@ -150,7 +151,7 @@ class LinearGaussianEnv(AbstractLinearGaussianEnv):
         return self.ys[self.index] if not done else torch.zeros_like(self.ys[0])
 
     def generate(self):
-        return generate_trajectory(self.traj_length)[0]
+        return generate_trajectory(self.traj_length, A=self.A, Q=self.Q, C=self.C, R=self.R, mu_0=self.mu_0, Q_0=self.Q_0)[0]
 
 
 class LinearGaussianSingleYEnv(AbstractLinearGaussianEnv):
