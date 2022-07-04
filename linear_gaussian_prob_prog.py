@@ -651,11 +651,11 @@ class VecLinearGaussian:
         inv_sigma_x = torch.inverse(x.covariance())
         inv_sigma_y = torch.inverse(b.covariance())
 
-        inv_sigma_x_given_y = inv_sigma_x + torch.mm(torch.mm(a, inv_sigma_y), a)
+        inv_sigma_x_given_y = inv_sigma_x + torch.mm(torch.mm(a.t(), inv_sigma_y), a)
         sigma_x_given_y = torch.inverse(inv_sigma_x_given_y)
 
         def post(value):
-            mu_x_given_y = torch.mm(sigma_x_given_y, torch.mm(torch.mm(a, inv_sigma_y), (value - b.mean()).reshape(-1, 1)) + torch.mm(inv_sigma_x, x.mean().reshape(-1, 1)))
+            mu_x_given_y = torch.mm(sigma_x_given_y, torch.mm(torch.mm(a.t(), inv_sigma_y), (value - b.mean()).reshape(-1, 1)) + torch.mm(inv_sigma_x, x.mean().reshape(-1, 1)))
             if sigma_x_given_y.nelement() > 1:
                 return dist.MultivariateNormal(mu_x_given_y.squeeze(-1), sigma_x_given_y)
             return dist.Normal(mu_x_given_y.squeeze(-1), torch.sqrt(sigma_x_given_y))
@@ -690,6 +690,7 @@ def compute_block_posterior():
     # compute posterior
     posterior = ys.posterior_vec()
     posterior.mean(value=1)
+    import pdb; pdb.set_trace()
 
 
 if __name__ == "__main__":
