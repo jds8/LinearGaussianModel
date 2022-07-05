@@ -33,7 +33,7 @@ TODAY = date.today().strftime("%b-%d-%Y")
 
 RL_TIMESTEPS = 100000
 NUM_SAMPLES = 100
-NUM_REPEATS = 10
+NUM_REPEATS = 20
 
 class CustomCallback(BaseCallback):
     """
@@ -167,12 +167,13 @@ class CustomCallback(BaseCallback):
 
 
 def train(traj_length, env, dim):
-    run = wandb.init(project='linear_gaussian_model training', save_code=True, entity='iai')
+    params = {}
+    run = wandb.init(project='linear_gaussian_model training', save_code=True, config=params, entity='iai')
 
     # network archictecture
     arch = [1024 for _ in range(3)]
     # create policy
-    model = PPO('MlpPolicy', env, ent_coef=0.01, policy_kwargs=dict(net_arch=[dict(pi=arch, vf=arch)]), device='cpu')
+    model = PPO('MlpPolicy', env, ent_coef=0.01, policy_kwargs=dict(net_arch=[dict(pi=arch, vf=arch)]), device='cpu', verbose=1)
 
     # train policy
     model.learn(total_timesteps=RL_TIMESTEPS, callback=CustomCallback(env, verbose=1))
@@ -363,21 +364,6 @@ def rl_estimate(ys, dim, N, env=None):
     _, policy = load_rl_model(ys.device, traj_length=len(ys), dim=dim)
     return evaluate(ys, d=policy, N=N, env=env)
 
-def full_sweep(ys=None, train_model=False, traj_length=1, env_class=LinearGaussianSingleYEnv):
-    if ys is None:
-        ys, xs, priors, liks = generate_trajectory(traj_length, gen_A, gen_Q, gen_C, gen_R, gen_mu_0, gen_Q_0)
-        states = torch.cat([torch.zeros(1, 1), xs[0:-1]])
-        print('\ngenerated trajs\n')
-        for s, x, y, lik, prior in zip(states, xs, ys, liks, priors):
-            print('s_t = {} a_t = {} y_t = {} where p(a_t|s_t) = N({}, {}) = {} and p(y_t|a_t) = N({}, {}) = {}'.format(s.item(), x.item(), y.item(), (A*s).item(), Q.item(), prior, (C*x).item(), R.item(), lik))
-        print('\nys: {}'.format(ys))
-        if train_model:
-            # create env
-            env = env_class(A, Q, C, R, mu_0, Q_0, traj_length=traj_length, sample=True)
-            train(traj_length=traj_length, env=env)
-    rl_estimate(ys=ys, N=NUM_SAMPLES, dim=gen_A.shape[0])
-
-
 class Estimator:
     def __init__(self, running_log_estimates, ci,
                  weight_mean, max_weight_prop, ess, ess_ci, label='RL'):
@@ -403,8 +389,9 @@ class Estimator:
 
 class ISEstimator(Estimator):
     def __init__(self, A, Q, running_log_estimates, ci,
-                 weight_mean, max_weight_prop, ess, ess_ci):
-        super().__init__(running_log_estimates, ci, weight_mean, max_weight_prop, ess, ess_ci, label="_A {}\n_Q {}".format(A, Q))
+                 weight_mean, max_weight_prop, ess, ess_ci, label=''):
+        label = label if label else "_A {}\n_Q {}".format(A, Q)
+        super().__init__(running_log_estimates, ci, weight_mean, max_weight_prop, ess, ess_ci, label=label)
         self.A = A
         self.Q = Q
         self.weight_mean = weight_mean
@@ -426,8 +413,14 @@ class ImportanceOutput(dict):
         if idstr in self.is_estimators:
             self.is_estimators[idstr].add_repeat(running_log_estimates, ess)
         else:
-            self.is_estimators[idstr] = ISEstimator(A, Q, running_log_estimates,
-                                                    ci, weight_mean, max_weight_prop, ess, ess_ci)
+            try:
+                self.is_estimators[idstr] = ISEstimator(A, Q, running_log_estimates,
+                                                        ci, weight_mean, max_weight_prop, ess, ess_ci, label=idstr)
+            except:
+                import pdb; pdb.set_trace()
+                self.is_estimators[idstr] = ISEstimator(A, Q, running_log_estimates,
+                                                        ci, weight_mean, max_weight_prop, ess, ess_ci, label=idstr)
+
             self[idstr] = self.is_estimators[idstr]
         return self.is_estimators[idstr]
 
@@ -435,7 +428,7 @@ class ImportanceOutput(dict):
         if idstr in self.rl_estimators:
             self.rl_estimators[idstr].add_repeat(running_log_estimates, ess)
         else:
-            self.rl_estimators[idstr] = Estimator(running_log_estimates, ci, weight_mean, max_weight_prop, ess, ess_ci)
+            self.rl_estimators[idstr] = Estimator(running_log_estimates, ci, weight_mean, max_weight_prop, ess, ess_ci, label=idstr)
             self[idstr] = self.rl_estimators[idstr]
         return self.rl_estimators[idstr]
 
@@ -515,6 +508,7 @@ def make_ess_plot(outputs, dimension, num_samples):
     for traj_length, (k, e) in zip(traj_lengths, ess.items()):
         lower, upper = torch.quantile(torch.tensor(e), torch.tensor([0.05, 0.95]), dim=0)
         plt.vlines(x=traj_length, ymin=lower.item(), ymax=upper.item())
+        num_repeats = len(e)
 
     # plt.scatter(traj_lengths, ess.values())
     # for key, val in ess.items():
@@ -522,7 +516,7 @@ def make_ess_plot(outputs, dimension, num_samples):
 
     plt.xlabel('Trajectory Length')
     plt.ylabel('Effective Sample Size')
-    plt.title('Effective Sample Size Versus Trajectory Length\n (num samples: {})'.format(num_samples))
+    plt.title('Effective Sample Size Versus Trajectory Length\n (num samples: {}, num repeats: {})'.format(num_samples, num_repeats))
     legend_without_duplicate_labels(plt.gca())
     plt.savefig('{}/ess_plot_dimension_{}.png'.format(TODAY, dimension))
 
@@ -624,7 +618,9 @@ def make_table_of_confidence_intervals(outputs, name='Event'):
 
 
 class Plotter:
-    def __init__(self, name, A=None, Q=None, C=None, R=None, mu_0=None, Q_0=None, dim=torch.tensor(1)):
+    def __init__(self, name, A=None, Q=None, C=None,
+                 R=None, mu_0=None, Q_0=None, dim=torch.tensor(1),
+                 sample=True):
         self.name = name
         if A is None:
             try:
@@ -645,6 +641,8 @@ class Plotter:
             self.mu_0 = mu_0
             self.Q_0 = Q_0
             self.dimension = self.A.shape[0]
+
+        self.sample = sample
 
     def reset(self, table, dimension):
         try:
@@ -682,46 +680,45 @@ class Plotter:
         for traj_length in traj_lengths:
             plt.figure(plt.gcf().number+1)
 
-            # generate ys from gen_A, gen_Q params
-            ys = self.sample_trajectory(traj_length)
+            for _ in range(num_repeats):
+                # generate ys from gen_A, gen_Q params
+                ys = self.sample_trajectory(traj_length)
 
-            # collect output
-            output = ImportanceOutput(traj_length, ys, dim=self.dimension)
+                # collect output
+                output = ImportanceOutput(traj_length, ys, dim=self.dimension)
 
-            # get evidence estimate using true params, add it to output, and plot
-            log_true = self.get_true_score(ys, traj_length)
-            # true = round(log_true.exp().item(), 8)
-            true = log_true.exp().item()
-            output.set_truth(true)
-            print('true prob.: {}'.format(true))
-            plt.axhline(y=true, color='b')
+                # get evidence estimate using true params, add it to output, and plot
+                log_true = self.get_true_score(ys, traj_length)
+                # true = round(log_true.exp().item(), 8)
+                true = log_true.exp().item()
+                output.set_truth(true)
+                print('true prob.: {}'.format(true))
+                plt.axhline(y=true, color='b')
 
-            # generate environment
-            env = self.generate_env(ys, traj_length)
+                # generate environment
+                env = self.generate_env(ys, traj_length)
 
-            # get evidence estimates using IS with other params
-            for i, _A in enumerate(As):
-                for j, _Q in enumerate(Qs):
-                    for _ in range(num_repeats):
+                # get evidence estimates using IS with other params
+                for i, _A in enumerate(As):
+                    for j, _Q in enumerate(Qs):
                         # get is estimate of evidence using _A and _Q params
                         eval_obj = importance_estimate(ys, A=_A, Q=_Q, C=self.C, R=self.R, mu_0=self.mu_0, Q_0=self.Q_0, env=env, N=num_samples)
                         print('IS A: {}, Q: {} estimate: {}'.format(_A, _Q, eval_obj.running_log_estimates[-1].exp()))
 
                         # add importance confidence interval
                         is_estimator = output.add_is_estimator(A=_A, Q=_Q,
-                                                               running_log_estimates=eval_obj.running_log_estimates,
-                                                               ci=eval_obj.ci,
-                                                               weight_mean=eval_obj.log_weight_mean.exp(),
-                                                               max_weight_prop=eval_obj.log_max_weight_prop.exp(),
-                                                               ess=eval_obj.log_effective_sample_size.exp(), ess_ci=eval_obj.ess_ci,
-                                                               idstr='A: {}, Q: {}'.format(_A, _Q))
+                                                            running_log_estimates=eval_obj.running_log_estimates,
+                                                            ci=eval_obj.ci,
+                                                            weight_mean=eval_obj.log_weight_mean.exp(),
+                                                            max_weight_prop=eval_obj.log_max_weight_prop.exp(),
+                                                            ess=eval_obj.log_effective_sample_size.exp(), ess_ci=eval_obj.ess_ci,
+                                                            idstr='A: {}, Q: {}'.format(_A, _Q))
 
                     # plot mean and empirical confidence interval
                     is_estimator.plot()
 
-            # add RL plot
-            try:
-                for _ in range(num_repeats):
+                # add RL plot
+                try:
                     eval_obj = rl_estimate(ys, dim=self.dimension, N=num_samples, env=env)
                     print('rl estimate: {}'.format(eval_obj.running_log_estimates[-1].exp()))
                     x_vals = torch.arange(1, len(eval_obj.running_log_estimates.squeeze())+1)
@@ -735,11 +732,15 @@ class Plotter:
                                                         max_weight_prop=eval_obj.log_max_weight_prop.exp(),
                                                         ess=eval_obj.log_effective_sample_size.exp(),
                                                         ess_ci=eval_obj.ess_ci, idstr='rl_{}'.format(traj_length))
+
+                except:
+                    print('error could not load: {}'.format(MODEL.format(traj_length, self.dimension)+'.zip'))
+
+            try:
                 # plot em
                 rl_estimator.plot()
-
             except:
-                print('error could not load: {}'.format(MODEL.format(traj_length, self.dimension)+'.zip'))
+                pass
 
             outputs.append(output)
 
@@ -752,9 +753,11 @@ class Plotter:
 
 
 class EvidencePlotter(Plotter):
-    def __init__(self, num_samples, A=None, Q=None, C=None, R=None, mu_0=None, Q_0=None, dim=torch.tensor(1)):
+    def __init__(self, num_samples, A=None, Q=None, C=None,
+                 R=None, mu_0=None, Q_0=None,
+                 dim=torch.tensor(1), sample=True):
         self.num_samples = num_samples
-        super().__init__('Evidence', A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, dim=dim)
+        super().__init__('Evidence', A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, dim=dim, sample=sample)
 
     def sample_trajectory(self, traj_length):
         # print('warning, outputting only zeros as trajectory')
@@ -772,12 +775,13 @@ class EvidencePlotter(Plotter):
                                  mu_0=self.mu_0,
                                  Q_0=self.Q_0, ys=ys,
                                  traj_length=len(ys),
-                                 sample=False)
+                                 sample=self.sample)
 
 
 class EventPlotter(Plotter):
-    def __init__(self, event_prob, fix_event=False, A=None, Q=None, C=None, R=None, mu_0=None, Q_0=None, dim=torch.tensor(1)):
-        super().__init__('Event', A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, dim=dim)
+    def __init__(self, event_prob, fix_event=False, A=None, Q=None, C=None,
+                 R=None, mu_0=None, Q_0=None, dim=torch.tensor(1), sample=True):
+        super().__init__('Event', A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, dim=dim, sample=sample)
         self.event_prob = event_prob
         self.fix_event = fix_event
 
@@ -797,7 +801,7 @@ class EventPlotter(Plotter):
                                         mu_0=self.mu_0,
                                         Q_0=self.Q_0, ys=ys,
                                         traj_length=traj_length,
-                                        sample=False,
+                                        sample=self.sample,
                                         event_prob=self.event_prob)
 
     def plot_IS(self, traj_lengths=torch.arange(10, 121, 10), As=torch.arange(0.2, 0.6, 0.2), Qs=torch.arange(0.2, 0.6, 0.2),
@@ -896,16 +900,16 @@ def create_dimension_table(dimensions, random=False):
 def plot_evidence_vs_trajectory():
     os.makedirs(TODAY, exist_ok=True)
     dimension = 1
-    # traj_lengths = torch.arange(1, 121, 10)
-    traj_lengths = torch.arange(10, 31, 10)
-    for traj_length in traj_lengths:
-        env = LinearGaussianEnv(A=single_gen_A, Q=single_gen_Q,
-                                C=single_gen_C, R=single_gen_R,
-                                mu_0=single_gen_mu_0,
-                                Q_0=single_gen_Q_0, ys=None,
-                                traj_length=traj_length,
-                                sample=True)
-        train(traj_length, env, dim=dimension)
+    traj_lengths = torch.arange(3, 7, 1)
+    # traj_lengths = torch.arange(10, 31, 10)
+    # for traj_length in traj_lengths:
+    #     env = LinearGaussianEnv(A=single_gen_A, Q=single_gen_Q,
+    #                             C=single_gen_C, R=single_gen_R,
+    #                             mu_0=single_gen_mu_0,
+    #                             Q_0=single_gen_Q_0, ys=None,
+    #                             traj_length=traj_length,
+    #                             sample=True)
+    #     train(traj_length, env, dim=dimension)
 
     num_samples = NUM_SAMPLES
     num_repeats = NUM_REPEATS
@@ -913,14 +917,15 @@ def plot_evidence_vs_trajectory():
     make_trajectory_plots(plotter=ep, traj_lengths=traj_lengths, As=[], Qs=[], dimension=dimension, num_samples=num_samples, num_repeats=num_repeats)
 
 def plot_evidence_vs_dim():
+    os.makedirs(TODAY, exist_ok=True)
     dim_traj_length = 5
     ep = EvidencePlotter(num_samples=NUM_SAMPLES, dim=1, A=single_gen_A, Q=single_gen_Q, C=single_gen_C, R=single_gen_R, mu_0=single_gen_mu_0, Q_0=single_gen_Q_0)
-    # dimensions = torch.arange(1, 5, 1)
-    dimensions = [torch.tensor(3)]
+    dimensions = torch.arange(1, 10, 1)
+    # dimensions = [torch.tensor(3)]
 
     torch.manual_seed(dim_traj_length)
     table = create_dimension_table(dimensions, random=False)
-    train_dimensions(traj_length=dim_traj_length, dimensions=dimensions, table=table)
+    # train_dimensions(traj_length=dim_traj_length, dimensions=dimensions, table=table)
     collect_and_plot_dimension_outputs(ep=ep, dimensions=dimensions, table=table, As=[], Qs=[], traj_length=dim_traj_length, num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS)
 
 def compute_posterior(num_observations):
@@ -953,7 +958,7 @@ def compute_posterior(num_observations):
 def condition_posterior(td, obs):
     return td.dist(arg={'value': obs})
 
-def evaluate_posterior(ys, td, env=None):
+def evaluate_posterior(ys, N, td, env=None):
     run = wandb.init(project='linear_gaussian_model evaluation', save_code=True, entity='iai')
     print('\nevaluating...')
     if env is None:
@@ -970,126 +975,53 @@ def evaluate_posterior(ys, td, env=None):
     log_evidence_est = torch.tensor(0.).reshape(1, -1)
     total_rewards = []
     # collect log( p(x,y)/q(x) )
-    log_p_y_over_qs = torch.zeros(1)
-    # keep track of log evidence estimates up to N sample trajectories
-    running_log_evidence_estimates = []
-    # keep track of (log) weights p(x) / q(x)
-    log_weights = []
-    done = False
-    # get first obs
-    obs = env.reset()
-    # keep track of xs
-    xs = td.sample()
-    # keep track of prior over actions p(x)
-    log_p_x = torch.tensor(0.).reshape(1, -1)
-    log_p_y_given_x = torch.tensor(0.).reshape(1, -1)
-    # collect actions, likelihoods
-    states = [obs]
-    actions = xs
-    if len(xs) > 1:
-        xts = torch.cat([env.prev_xt.reshape(-1), xs[0:-1]])
-    else:
-        xts = env.prev_xt.reshape(-1)
-    prior_reward = score_initial_state(x0=xs[0].reshape(1), mu_0=env.mu_0, Q_0=env.Q_0)  # the reward for the initial state
-    lik_reward = score_y(y_test=ys[0], x_t=xs[0], C=env.C, R=env.R)  # the first likelihood reward
-    priors = [prior_reward]
-    log_p_x += prior_reward
-    liks = [lik_reward]
-    log_p_y_given_x += lik_reward
-    total_reward = prior_reward + lik_reward
-    if len(xts) > 1:
-        for xt, prev_xt, y in zip(xs[1:], xts[1:], ys[1:]):
-            prior_reward = score_state_transition(xt=xt.reshape(1), prev_xt=prev_xt, A=env.A, Q=env.Q)
-            lik_reward = score_y(y_test=y, x_t=xt, C=env.C, R=env.R)  # the first likelihood reward
-            total_reward += prior_reward + lik_reward
-            states.append(obs)
-            priors.append(prior_reward)
-            liks.append(lik_reward)
-            log_p_x += prior_reward
-            log_p_y_given_x += lik_reward
-    # log p(x,y)
-    log_p_y_x = log_p_y_given_x + log_p_x
-    log_q = td.log_prob(xs)
-    log_p_y_over_qs[0] = (log_p_y_x - log_q).item()
-    running_log_evidence_estimates.append(torch.logsumexp(log_p_y_over_qs, -1) - torch.log(torch.tensor(1.)))
-    log_weights.append(log_p_x - log_q)  # ignore these since we consider the weights to be p(y|x)p(x)/q(x)
-    total_rewards.append(total_reward)
-    wandb.log({'total_reward': total_reward})
-
-    # calculate variance estmate as
-    # $\hat{\sigma}_{int}^2=(n(n-1))^{-1}\sum_{i=1}^n(f_iW_i-\overline{fW})^2$
-    sigma_est = torch.sqrt( (logvarexp(log_p_y_over_qs) - torch.log(torch.tensor(len(log_p_y_over_qs) - 1, dtype=torch.float32))).exp() )
-    return EvaluationObject(running_log_estimates=torch.tensor(running_log_evidence_estimates), sigma_est=sigma_est,
-                            xts=xts, states=states, actions=actions, priors=priors, liks=liks,
-                            log_weights=log_p_y_over_qs)
-
-def evaluate_joint(traj_length, N, env=None):
-    run = wandb.init(project='linear_gaussian_model evaluation', save_code=True, entity='iai')
-    print('\nevaluating...')
-    # evidence estimate
-    evidence_est = torch.tensor(0.).reshape(1, -1)
-    log_evidence_est = torch.tensor(0.).reshape(1, -1)
-    total_rewards = []
-    # collect log( p(x,y)/q(x) )
     log_p_y_over_qs = torch.zeros(N)
     # keep track of log evidence estimates up to N sample trajectories
     running_log_evidence_estimates = []
     # keep track of (log) weights p(x) / q(x)
     log_weights = []
-    # evaluate N times
-    x_len = int(traj_length)
     for i in range(N):
         done = False
-
-        if env is None:
-            env = LinearGaussianEnv(traj_length=traj_length, A=single_gen_A,
-                                    Q=single_gen_Q,
-                                    C=single_gen_C, R=single_gen_R,
-                                    mu_0=single_gen_mu_0,
-                                    Q_0=single_gen_Q_0, ys=None,
-                                    sample=True)
-        td = env.compute_joint()
-        # keep track of xs
-        xsys = td.sample()
-        xs = xsys[0:x_len]
-        ys = xsys[x_len:]
-        env = LinearGaussianEnv(traj_length=traj_length, A=single_gen_A,
-                                Q=single_gen_Q,
-                                C=single_gen_C, R=single_gen_R,
-                                mu_0=single_gen_mu_0,
-                                Q_0=single_gen_Q_0, ys=ys,
-                                sample=False)
-
         # get first obs
         obs = env.reset()
+        # keep track of xs
+        xs = td.sample()
         # keep track of prior over actions p(x)
         log_p_x = torch.tensor(0.).reshape(1, -1)
         log_p_y_given_x = torch.tensor(0.).reshape(1, -1)
         # collect actions, likelihoods
         states = [obs]
         actions = xs
-        xts = torch.cat([env.prev_xt.reshape(-1), xs[0:-1]])
+        if len(xs) > 1:
+            xts = torch.cat([env.prev_xt.reshape(-1), xs[0:-1]])
+        else:
+            xts = env.prev_xt.reshape(-1)
         prior_reward = score_initial_state(x0=xs[0].reshape(1), mu_0=env.mu_0, Q_0=env.Q_0)  # the reward for the initial state
         lik_reward = score_y(y_test=ys[0], x_t=xs[0], C=env.C, R=env.R)  # the first likelihood reward
         priors = [prior_reward]
+        log_p_x += prior_reward
         liks = [lik_reward]
+        log_p_y_given_x += lik_reward
         total_reward = prior_reward + lik_reward
-
-        for xt, prev_xt, y in zip(xs[1:], xts[1:], ys[1:]):
-            prior_reward = score_state_transition(xt=xt.reshape(1), prev_xt=prev_xt, A=env.A, Q=env.Q)
-            lik_reward = score_y(y_test=y, x_t=xt, C=env.C, R=env.R)  # the first likelihood reward
-            total_reward += prior_reward + lik_reward
-            states.append(obs)
-            priors.append(prior_reward)
-            liks.append(lik_reward)
-            log_p_x += prior_reward
-            log_p_y_given_x += lik_reward
-
+        if len(xts) > 1:
+            for xt, prev_xt, y in zip(xs[1:], xts[1:], ys[1:]):
+                prior_reward = score_state_transition(xt=xt.reshape(1), prev_xt=prev_xt, A=env.A, Q=env.Q)
+                lik_reward = score_y(y_test=y, x_t=xt, C=env.C, R=env.R)  # the first likelihood reward
+                total_reward += prior_reward + lik_reward
+                states.append(obs)
+                priors.append(prior_reward)
+                liks.append(lik_reward)
+                log_p_x += prior_reward
+                log_p_y_given_x += lik_reward
         # log p(x,y)
         log_p_y_x = log_p_y_given_x + log_p_x
-        log_q = td.log_prob(xsys)
-        log_p_y_over_qs[i] = (log_p_y_x - log_q).item()
-        running_log_evidence_estimates.append(torch.logsumexp(log_p_y_over_qs[0:i+1], -1) - torch.log(torch.tensor(i+1.)))
+        log_q = td.log_prob(xs)
+        if N == 1:
+            log_p_y_over_qs[i] = (log_p_y_x - log_q).item()
+            running_log_evidence_estimates.append(log_p_y_over_qs[0])
+        else:
+            log_p_y_over_qs[i] = (log_p_y_x - log_q).item()
+            running_log_evidence_estimates.append(torch.logsumexp(log_p_y_over_qs[0:i+1], -1) - torch.log(torch.tensor(i+1.)))
         log_weights.append(log_p_x - log_q)  # ignore these since we consider the weights to be p(y|x)p(x)/q(x)
         total_rewards.append(total_reward)
         wandb.log({'total_reward': total_reward})
@@ -1101,43 +1033,108 @@ def evaluate_joint(traj_length, N, env=None):
                             xts=xts, states=states, actions=actions, priors=priors, liks=liks,
                             log_weights=log_p_y_over_qs)
 
-def test_posterior(traj_length, dim):
+
+class PosteriorEvidence:
+    def __init__(self, td, ys, evidence, env):
+        self.td = td
+        self.ys =ys
+        self.evidence = evidence
+        self.env =env
+
+
+def compute_evidence(traj_length, dim):
+    os.makedirs(TODAY, exist_ok=True)
+    table = create_dimension_table(torch.tensor([dim]), random=False)
+
     ys = generate_trajectory(traj_length, A=single_gen_A, Q=single_gen_Q, C=single_gen_C, R=single_gen_R, mu_0=single_gen_mu_0, Q_0=single_gen_Q_0)[0]
     env = LinearGaussianEnv(A=single_gen_A, Q=single_gen_Q,
                             C=single_gen_C, R=single_gen_R,
                             mu_0=single_gen_mu_0,
                             Q_0=single_gen_Q_0, ys=ys,
-                            sample=False)
+                            sample=True)
+
+    # A = table[dim]['A']
+    # Q = table[dim]['Q']
+    # C = table[dim]['C']
+    # R = table[dim]['R']
+    # mu_0 = table[dim]['mu_0']
+    # Q_0 = table[dim]['Q_0']
+
+    # ys = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0]
+    # env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, ys=ys, sample=False)
 
     posterior = compute_posterior(len(ys))
     td = condition_posterior(posterior, ys)
 
-    output = ImportanceOutput(traj_length, ys, dim=dim)
-
-    eval_obj = evaluate_posterior(ys=ys, td=td, env=env)
-    rl_estimator = output.add_rl_estimator(running_log_estimates=eval_obj.running_log_estimates,
-                                        ci=eval_obj.ci, weight_mean=eval_obj.log_weight_mean.exp(),
-                                        max_weight_prop=eval_obj.log_max_weight_prop.exp(),
-                                        ess=eval_obj.log_effective_sample_size.exp(),
-                                        ess_ci=eval_obj.ess_ci, idstr='rl_{}'.format(traj_length))
-
-    true = rl_estimator.running_log_estimate_repeats[0].exp()
+    eval_obj = evaluate_posterior(ys=ys, N=1, td=td, env=env)
+    true = eval_obj.running_log_estimates[0].exp()
     print('True evidence: {}'.format(true))
 
-    # get importance weighted score for comparison
+    return PosteriorEvidence(td, ys, true, env)
+
+def get_prior_output(ys, dim):
+    prior_output = ImportanceOutput(traj_length=len(ys), ys=ys, dim=dim)
+    name = 'prior (A: {}, Q: {})'.format(single_gen_A, single_gen_Q)
     for _ in range(NUM_REPEATS):
         eval_obj = importance_estimate(ys, A=single_gen_A, Q=single_gen_Q, C=single_gen_C, R=single_gen_R, mu_0=single_gen_mu_0, Q_0=single_gen_Q_0, N=NUM_SAMPLES)
-        is_estimator = output.add_is_estimator(A=single_gen_A, Q=single_gen_Q,
-                                            running_log_estimates=eval_obj.running_log_estimates,
-                                            ci=eval_obj.ci,
-                                            weight_mean=eval_obj.log_weight_mean.exp(),
-                                            max_weight_prop=eval_obj.log_max_weight_prop.exp(),
-                                            ess=eval_obj.log_effective_sample_size.exp(), ess_ci=eval_obj.ess_ci,
-                                            idstr='A: {}, Q: {}'.format(single_gen_A, single_gen_Q))
-    is_estimator.plot()
+        is_estimator = prior_output.add_is_estimator(A=single_gen_A, Q=single_gen_Q,
+                                                     running_log_estimates=eval_obj.running_log_estimates,
+                                                     ci=eval_obj.ci,
+                                                     weight_mean=eval_obj.log_weight_mean.exp(),
+                                                     max_weight_prop=eval_obj.log_max_weight_prop.exp(),
+                                                     ess=eval_obj.log_effective_sample_size.exp(), ess_ci=eval_obj.ess_ci,
+                                                     name=name)
+    return OutputWithName(prior_output, name)
+
+def get_perturbed_posterior_output(posterior_evidence, dim, epsilon, name):
+    ys = posterior_evidence.ys
+    true_posterior = posterior_evidence.td
+    env = posterior_evidence.env
+
+    posterior_output = ImportanceOutput(traj_length=len(ys), ys=ys, dim=dim)
+    # get importance weighted score for comparison
+    td = dist.MultivariateNormal(true_posterior.mean, true_posterior.covariance_matrix + epsilon * true_posterior.mean.shape[0])
+    for _ in range(NUM_REPEATS):
+        eval_obj = evaluate_posterior(ys=ys, N=NUM_SAMPLES, td=td, env=env)
+        posterior_estimator = posterior_output.add_rl_estimator(running_log_estimates=eval_obj.running_log_estimates,
+                                                                      ci=eval_obj.ci, weight_mean=eval_obj.log_weight_mean.exp(),
+                                                                      max_weight_prop=eval_obj.log_max_weight_prop.exp(),
+                                                                      ess=eval_obj.log_effective_sample_size.exp(),
+                                                                      ess_ci=eval_obj.ess_ci, idstr=name)
+    return OutputWithName(posterior_output, name)
+
+
+class OutputWithName:
+    def __init__(self, output, name):
+        self.output = output
+        self.name = name
+
+
+def get_perturbed_posterior_outputs(posterior_evidence, dim, epsilons):
+    outputs = []
+    for epsilon in epsilons:
+        name = 'posterior: {}'.format(epsilon)
+        output = get_perturbed_posterior_output(posterior_evidence, dim, epsilon, name)
+        outputs.append(output)
+    return outputs
+
+def plot_estimators(outputs_with_names):
+    for output in outputs_with_names:
+        estimator = output.output[output.name]
+        estimator.plot()
+
+def compare_ess(traj_length, dim, epsilons):
+    posterior_evidence = compute_evidence(traj_length, dim)
+
+    posterior_outputs_with_names = get_perturbed_posterior_outputs(posterior_evidence, dim, epsilons)
+    prior_outputs_with_names = get_prior_output(posterior_evidence.ys, dim)
+    import pdb; pdb.set_trace()
+
+    outputs_with_names = posterior_outputs_with_names + prior_outputs_with_names
+    plot_estimators(outputs_with_names, traj_length, dim)
 
     # plot em
-    plt.scatter(x=1, y=true, label='True', color='r')
+    plt.scatter(x=NUM_SAMPLES, y=posterior_evidence.true, label='True: {}'.format(posterior_evidence.true.item()), color='r')
     plt.xlabel('Number of Samples')
     plt.ylabel('Prob. {} Estimate'.format('Evidence'))
     plt.title('Convergence of Prob. {} Estimate to True Prob. {} \n(trajectory length: {}, dimension: {})'.format('Evidence', 'Evidence', traj_length, dim))
@@ -1180,7 +1177,7 @@ def plot_traj():
 
 
 if __name__ == "__main__":
-    test_posterior(traj_length=10, dim=1)
+    compare_ess(traj_length=5, dim=1, epsilons=[-1e-3, 1e-3])
 
     # plot_traj()
     # plot_evidence_vs_trajectory()

@@ -83,10 +83,7 @@ class AbstractLinearGaussianEnv(gym.Env):
         self.index += 1
 
         # score next state against prior
-        if self.index == 1:
-            prior_reward = score_initial_state(xt, self.mu_0, self.Q_0)
-        else:
-            prior_reward = score_state_transition(xt, self.prev_xt, self.A, self.Q)
+        prior_reward = score_state_transition(xt, self.prev_xt, self.A, self.Q)
         self.p_log_probs.append(prior_reward)
         self.actions.append(xt)
         self.states.append(self.prev_state)
