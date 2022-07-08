@@ -379,7 +379,8 @@ class Estimator:
         self.running_log_estimate_repeats.append(running_log_estimates)
         self.ess.append(ess)
 
-    def plot(self):
+    def plot(self, ax=None):
+        ax = ax if ax is not None else plt
         # plot prob estimates
         x_vals = torch.arange(1, self.running_log_estimate_repeats[0].squeeze().nelement()+1)
         lower_ci, med, upper_ci = torch.quantile(torch.stack(self.running_log_estimate_repeats).exp(), torch.tensor([0.05, 0.5, 0.95]), dim=0)
@@ -486,23 +487,25 @@ def make_ess_versus_dimension_plot(outputs, num_samples):
     legend_without_duplicate_labels(plt.gca())
     plt.savefig('{}/ess_versus_dimension_(traj_len: {}).png'.format(TODAY, traj_length))
 
-def make_ess_plot(outputs, dimension, num_samples):
+def make_ess_plot(outputs, dimension, num_samples, name=''):
     plt.figure()
     plt.gca().set_yscale('log')
     traj_lengths = []
     ess = {}
     for output in outputs:
         traj_lengths.append(output.traj_length)
-        # for key, val in output.is_estimators.items():
-        #     if key not in ess:
-        #         ess[output.traj_length] = val.ess
-        #     else:
-        #         ess[output.traj_length] += val.ess
-        for key, val in output.rl_estimators.items():
-            if key not in ess:
-                ess[output.traj_length] = val.ess
-            else:
-                ess[output.traj_length] += val.ess
+        if output.is_estimators:
+            for key, val in output.is_estimators.items():
+                if key not in ess:
+                    ess[output.traj_length] = val.ess
+                else:
+                    ess[output.traj_length] += val.ess
+        else:
+            for key, val in output.rl_estimators.items():
+                if key not in ess:
+                    ess[output.traj_length] = val.ess
+                else:
+                    ess[output.traj_length] += val.ess
 
     plt.scatter(traj_lengths, [torch.median(torch.tensor(e)) for k, e in ess.items()])
     for traj_length, (k, e) in zip(traj_lengths, ess.items()):
@@ -518,7 +521,7 @@ def make_ess_plot(outputs, dimension, num_samples):
     plt.ylabel('Effective Sample Size')
     plt.title('Effective Sample Size Versus Trajectory Length\n (num samples: {}, num repeats: {})'.format(num_samples, num_repeats))
     legend_without_duplicate_labels(plt.gca())
-    plt.savefig('{}/ess_plot_dimension_{}.png'.format(TODAY, dimension))
+    plt.savefig('{}/{}_ess_plot_dimension_{}.png'.format(TODAY, name, dimension))
 
 def make_ci_plot(outputs, dimension):
     plt.figure()
@@ -1037,7 +1040,7 @@ def evaluate_posterior(ys, N, td, env=None):
 class PosteriorEvidence:
     def __init__(self, td, ys, evidence, env):
         self.td = td
-        self.ys =ys
+        self.ys = ys
         self.evidence = evidence
         self.env =env
 
@@ -1083,7 +1086,7 @@ def get_prior_output(ys, dim):
                                                      weight_mean=eval_obj.log_weight_mean.exp(),
                                                      max_weight_prop=eval_obj.log_max_weight_prop.exp(),
                                                      ess=eval_obj.log_effective_sample_size.exp(), ess_ci=eval_obj.ess_ci,
-                                                     name=name)
+                                                     idstr=name)
     return OutputWithName(prior_output, name)
 
 def get_perturbed_posterior_output(posterior_evidence, dim, epsilon, name):
@@ -1093,7 +1096,12 @@ def get_perturbed_posterior_output(posterior_evidence, dim, epsilon, name):
 
     posterior_output = ImportanceOutput(traj_length=len(ys), ys=ys, dim=dim)
     # get importance weighted score for comparison
-    td = dist.MultivariateNormal(true_posterior.mean, true_posterior.covariance_matrix + epsilon * true_posterior.mean.shape[0])
+    try:
+        td = dist.MultivariateNormal(true_posterior.mean, true_posterior.covariance_matrix + epsilon * true_posterior.mean.shape[0])
+    except:
+        import pdb; pdb.set_trace()
+        td = dist.MultivariateNormal(true_posterior.mean, true_posterior.covariance_matrix + epsilon * true_posterior.mean.shape[0])
+
     for _ in range(NUM_REPEATS):
         eval_obj = evaluate_posterior(ys=ys, N=NUM_SAMPLES, td=td, env=env)
         posterior_estimator = posterior_output.add_rl_estimator(running_log_estimates=eval_obj.running_log_estimates,
@@ -1113,33 +1121,36 @@ class OutputWithName:
 def get_perturbed_posterior_outputs(posterior_evidence, dim, epsilons):
     outputs = []
     for epsilon in epsilons:
-        name = 'posterior: {}'.format(epsilon)
+        name = 'posterior {}'.format(epsilon)
         output = get_perturbed_posterior_output(posterior_evidence, dim, epsilon, name)
         outputs.append(output)
     return outputs
 
-def plot_estimators(outputs_with_names):
+def plot_estimators(outputs_with_names, ax=None):
     for output in outputs_with_names:
         estimator = output.output[output.name]
-        estimator.plot()
+        estimator.plot(ax)
 
-def compare_ess(traj_length, dim, epsilons):
-    posterior_evidence = compute_evidence(traj_length, dim)
-
-    posterior_outputs_with_names = get_perturbed_posterior_outputs(posterior_evidence, dim, epsilons)
-    prior_outputs_with_names = get_prior_output(posterior_evidence.ys, dim)
-    import pdb; pdb.set_trace()
-
-    outputs_with_names = posterior_outputs_with_names + prior_outputs_with_names
-    plot_estimators(outputs_with_names, traj_length, dim)
+def plot_convergence(outputs_with_names, traj_length, dim, true, name):
+    plot_estimators(outputs_with_names)
 
     # plot em
-    plt.scatter(x=NUM_SAMPLES, y=posterior_evidence.true, label='True: {}'.format(posterior_evidence.true.item()), color='r')
+    plt.scatter(x=NUM_SAMPLES, y=true, label='True: {}'.format(true.item()), color='r')
     plt.xlabel('Number of Samples')
     plt.ylabel('Prob. {} Estimate'.format('Evidence'))
     plt.title('Convergence of Prob. {} Estimate to True Prob. {} \n(trajectory length: {}, dimension: {})'.format('Evidence', 'Evidence', traj_length, dim))
     legend_without_duplicate_labels(plt.gca())
-    plt.savefig('{}/{}traj_length_{}_dimension_{}_{}_convergence.png'.format(TODAY, 'posterior_', traj_length, dim, 'Evidence'))
+    plt.savefig('{}/{}_traj_length_{}_dimension_{}_{}_convergence.png'.format(TODAY, name, traj_length, dim, 'Evidence'))
+
+def posterior_convergence(posterior_evidence, dim, epsilons):
+    posterior_outputs_with_names = get_perturbed_posterior_outputs(posterior_evidence, dim, epsilons)
+    traj_length = len(posterior_evidence.ys)
+    plot_convergence(posterior_outputs_with_names, traj_length, dim, posterior_evidence.evidence, 'posterior')
+
+def prior_convergence(posterior_evidence, dim):
+    prior_outputs_with_name = get_prior_output(posterior_evidence.ys, dim)
+    traj_length = len(posterior_evidence.ys)
+    plot_convergence([prior_outputs_with_name], traj_length, dim, posterior_evidence.evidence, 'prior')
 
 def plot_dim(traj_length, dim):
     dimensions = torch.arange(5, 11, 1)
@@ -1175,9 +1186,45 @@ def plot_traj():
     outputs = ep.plot_IS(traj_lengths=traj_lengths, As=[], Qs=[], num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, name='extra')
     make_ess_plot(outputs, dimension=1, num_samples=NUM_SAMPLES)
 
+def compare_convergence(traj_length, dim, epsilons):
+    posterior_evidence = compute_evidence(traj_length, dim)
+    posterior_convergence(posterior_evidence, dim, epsilons)
+    prior_convergence(posterior_evidence, dim)
+
+def posterior_ess(traj_lengths, dim, epsilons):
+    for epsilon in epsilons:
+        outputs = []
+        for traj_length in traj_lengths:
+            posterior_evidence = compute_evidence(traj_length, dim)
+            posterior_outputs_with_names = get_perturbed_posterior_outputs(posterior_evidence, dim, [epsilon])
+            outputs += [o.output for o in posterior_outputs_with_names]
+        make_ess_plot(outputs, dim, NUM_SAMPLES, name='posterior_{}'.format(epsilon))
+        plt.figure()
+
+def prior_ess(traj_lengths, dim):
+    outputs = []
+    for traj_length in traj_lengths:
+        ys = generate_trajectory(traj_length, A=single_gen_A, Q=single_gen_Q, C=single_gen_C, R=single_gen_R, mu_0=single_gen_mu_0, Q_0=single_gen_Q_0)[0]
+        prior_output_with_name = get_prior_output(ys, dim)
+        outputs += [prior_output_with_name.output]
+    make_ess_plot(outputs, dim, NUM_SAMPLES, name='prior')
+    plt.figure()
+
+def execute_posterior_ess():
+    os.makedirs(TODAY, exist_ok=True)
+    # epsilons = [-1e-3, 0., 1e-3]
+    epsilons = [1e-3]
+    posterior_ess(traj_lengths=torch.arange(2, 17, 1), dim=1, epsilons=epsilons)
+
+def execute_compare_convergence():
+    epsilons = [-1e-3, 1e-3]
+    compare_convergence(traj_length=5, dim=1, epsilons=epsilons)
+
 
 if __name__ == "__main__":
-    compare_ess(traj_length=5, dim=1, epsilons=[-1e-3, 1e-3])
+    # execute_compare_convergence()
+    # prior_ess(traj_lengths=torch.arange(2, 17, 1), dim=1)
+    execute_posterior_ess()
 
     # plot_traj()
     # plot_evidence_vs_trajectory()

@@ -59,7 +59,14 @@ class GaussianDistribution:
                 y_cv = other.covariance()
                 x_cv = self.covariance()
                 right_id = self.left.index(other.right)
-                a_mat = torch.tensor([x.get_coef_wrt(other.right) for x in other.left]).view(1,-1)
+                try:
+                    # a_mat = torch.tensor([x.get_coef_wrt(other.right) for x in other.left])
+                    # a_mat = a_mat.view(a_mat.shape[1], -1)
+                    a_mat = other.left[0].get_coef_wrt(other.right)
+                    a_mat = a_mat.view(a_mat.shape[1], -1)
+                except:
+                    import pdb; pdb.set_trace()
+
 
             y_precision = torch.inverse(y_cv)
             x_precision = torch.inverse(x_cv)
@@ -272,7 +279,8 @@ class GaussianDistribution:
         Computes covariance of this distribution
         (Note that the variance does *not* depend on parameter values in linear gaussian setting)
         """
-        dummy = 1.  # don't need a value in order to call covariance
+        # don't need a value in order to call covariance
+        dummy = None if self.right is None else self.right.mu
         prob_dist = self.get_dist(value=dummy)
         if isinstance(prob_dist, dist.MultivariateNormal):
             return prob_dist.covariance_matrix
@@ -368,8 +376,6 @@ class GaussianRandomVariable:
 
 class LinearGaussian(GaussianRandomVariable):
     def __init__(self, a, x: GaussianRandomVariable, b: GaussianRandomVariable, name):
-        assert isinstance(x, GaussianRandomVariable)
-        assert isinstance(b, GaussianRandomVariable)
         var = a * x + b
         super(LinearGaussian, self).__init__(var.mu, var.sigma, name=name)
         self.a = a
@@ -393,37 +399,11 @@ class LinearGaussian(GaussianRandomVariable):
         a = self.a
         x = self.x
         b = self.b
-        var = a * x.observe(1.) + b
         def lik(value):
             var = a * x.observe(value) + b
             return dist.Normal(var.mu, var.sigma)
         prob_dist = GaussianDistribution(TorchDistributionInfo(lik), left=[self], right=x)
         return prob_dist
-
-    def posterior_vec(self):
-        """
-        The posterior function for this variable P(X|Y).
-        Note that this function returns a distribution object which
-        can be evaluated at a particular value of Y=y but can also
-        be used to compute joint distributions.
-        """
-        if (self.x.sigma <= torch.tensor(0.)).all() or (self.b.sigma <= torch.tensor(0.)).all():
-            raise Exception("Cannot compute posterior if either x or y are deterministic.")
-
-        a = self.a
-        x = self.x
-        b = self.b
-
-        inv_sigma_x = torch.inverse(x.covariance())
-        inv_sigma_y = torch.inverse(b.covariance())
-
-        inv_sigma_x_given_y = inv_sigma_x + torch.mm(torch.mm(a, inv_sigma_y), a)
-        sigma_x_given_y = torch.inverse(inv_sigma_x_given_y)
-
-        def post(value):
-            mu_x_given_y = torch.mm(sigma_x_given_y, torch.mm(torch.mm(a, inv_sigma_y), value - b.mean()) + torch.mm(inv_sigma_x, x.mean()))
-            return dist.MultivariateNormal(mu_x_given_y, sigma_term)
-        return GaussianDistribution(TorchDistributionInfo(post), left=[x], right=self, is_posterior=True)
 
     def posterior(self):
         """
@@ -625,10 +605,157 @@ def compute_joint():
         joint *= ys[i].likelihood()
 
 
-class GV:
-    def __init__(self, mu, covariance):
-        self.mu = mu
-        self.covariance = covariance
+class MultiGaussianRandomVariable:
+    x_ids = 0
+    y_ids = 0
+    def __init__(self, mu, sigma, observed=False, name=""):
+        """ Mu represents the mean and Sigma the covariance matrix of a Gaussian distribution """
+        self.sigma = torch.tensor(sigma) if not isinstance(sigma, torch.Tensor) else sigma
+        self.mu = torch.tensor(mu) if not isinstance(mu, torch.Tensor) else mu
+        self.observed = observed
+        if name == "x":
+            self.name = 'x{}'.format(MultiGaussianRandomVariable.x_ids)
+            MultiGaussianRandomVariable.x_ids += 1
+        elif name == "y":
+            self.name = 'y{}'.format(MultiGaussianRandomVariable.y_ids)
+            MultiGaussianRandomVariable.y_ids += 1
+        else:
+            self.name = name + ' intermediate'
+
+    def __rmul__(self, a):
+        if isinstance(a, torch.Tensor):
+            return MultiGaussianRandomVariable(torch.mm(a, self.mu.reshape(a.shape[1], -1)), torch.mm(torch.mm(a, self.sigma), a.t()), observed=self.observed, name=self.name)
+        raise NotImplementedError
+
+    def __add__(self, b):
+        if isinstance(b, torch.Tensor):
+            return MultiGaussianRandomVariable(self.mu + b, self.sigma)
+        if isinstance(b, MultiGaussianRandomVariable):
+            if b.observed:
+                return self + b.mu
+            # assuming independent summands
+            print('WARNING: assuming independence between {} and {}'.format(self.name, b.name))
+            return MultiGaussianRandomVariable(self.mu + b.mu, self.sigma + b.sigma, name=self.name)
+        raise NotImplementedError
+
+    def __radd__(self, b):
+        return self + b
+
+    def observe(self, value: torch.Tensor):
+        dim = value.nelement()
+        mu = value
+        sigma = torch.zeros(dim, dim)
+        observed = True
+        return MultiGaussianRandomVariable(mu, sigma, observed)
+
+    def prior(self):
+        return GaussianDistribution(dist=dist.MultivariateNormal(self.mu, self.sigma), left=[self])
+
+    def conditional_variance(self, var=None):
+        if var is None:
+            return self.sigma
+        raise NotImplementedError
+
+    def is_dependent_on(self, var):
+        return False
+
+    def get_coef_wrt(self, var):
+        if self == var:
+            return torch.tensor(self == var, dtype=torch.float32).reshape(1, -1)
+        raise NotImplementedError
+
+    def covariance(self, var):
+        if self == var:
+            return self.sigma
+        try:
+            return var.a * self.covariance(var.x) + self.covariance(var.b)
+        except:
+            return torch.tensor(0.).reshape(1, -1)
+
+    def covariance_str(self, var):
+        if self == var:
+            return '{}'.format(self.sigma.item())
+        try:
+            return '{} * ({}) + {}'.format(var.a.item(), self.covariance_str(var.x), self.covariance_str(var.b))
+        except:
+            return '{}'.format(torch.tensor(0.).reshape(1, -1).item())
+
+class MultiLinearGaussian(MultiGaussianRandomVariable):
+    def __init__(self, a, x: MultiGaussianRandomVariable, b: MultiGaussianRandomVariable, name):
+        var = a * x + b
+        super(MultiLinearGaussian, self).__init__(var.mu, var.sigma, name=name)
+        self.a = a
+        self.x = x
+        self.b = b
+
+    def is_dependent_on(self, var: MultiGaussianRandomVariable):
+        if var == self.x or var == self:
+            return True
+        return self.x.is_dependent_on(var)
+
+    def get_coef_wrt(self, var: MultiGaussianRandomVariable):
+        if var == self:
+            return torch.tensor(1.)
+        if var == self.x:
+            return self.a
+        return self.a * self.x.get_coef_wrt(var)
+
+    def likelihood(self):
+        """"""
+        a = self.a
+        x = self.x
+        b = self.b
+        def lik(value):
+            if not isinstance(value, torch.Tensor):
+                value = torch.tensor(value).reshape(b.mu.shape)
+            var = a * x.observe(value) + b
+            return dist.MultivariateNormal(var.mu, var.sigma)
+        prob_dist = GaussianDistribution(TorchDistributionInfo(lik), left=[self], right=x)
+        return prob_dist
+
+    def posterior(self):
+        """
+        The posterior function for this variable P(X|Y).
+        Note that this function returns a distribution object which
+        can be evaluated at a particular value of Y=y but can also
+        be used to compute joint distributions.
+        """
+        if (self.x.sigma <= torch.tensor(0.)).all() or (self.b.sigma <= torch.tensor(0.)).all():
+            raise Exception("Cannot compute posterior if either x or y are deterministic.")
+
+        a = self.a
+        x = self.x
+        b = self.b.mu
+        sigma = self.b.sigma
+
+        inv_sigma_x = torch.inverse(x.sigma**2)
+        inv_sigma_y = torch.inverse(sigma**2)
+
+        inv_sigma_x_given_y = inv_sigma_x + a * inv_sigma_y * a
+        sigma_x_given_y = torch.inverse(inv_sigma_x_given_y)
+        sigma_term = torch.sqrt(sigma_x_given_y).reshape(1, 1) if sigma_x_given_y.nelement() == 1 else sigma_x_given_y
+
+        mu_x_given_y = sigma_x_given_y * (a * inv_sigma_y * (1. - b) + inv_sigma_x * x.mu)
+
+        def post(value):
+            mu_x_given_y = sigma_x_given_y * (a * inv_sigma_y * (value - b) + inv_sigma_x * x.mu)
+            prob_dist = dist.MultivariateNormal(mu_x_given_y, sigma_term)
+            return prob_dist
+        return GaussianDistribution(TorchDistributionInfo(post), left=[x], right=self, is_posterior=True)
+
+    def conditional_variance(self, var):
+        if self.x == var:
+            return self.b.sigma**2
+        if self.is_dependent_on(var) or var is None:
+            return torch.mm(torch.mm(self.a.t(), self.x.conditional_variance(var)), self.a) + self.b.sigma
+        else:
+            raise NotImplementedError
+
+    def covariance(self, var):
+        return torch.mm(self.a, self.x.covariance(var)) + self.b.covariance(var)
+
+    def covariance_str(self, var):
+        return '{} * ({}) + {}'.format(self.a.item(), self.x.covariance_str(var), self.b.covariance_str(var))
 
 
 class VecLinearGaussian:
@@ -662,23 +789,32 @@ class VecLinearGaussian:
         return GaussianDistribution(TorchDistributionInfo(post), left=[x], right=self, is_posterior=True)
 
 
-def compute_block_posterior():
-    w = GaussianRandomVariable(mu=0., sigma=single_gen_Q, name="w")
-    v = GaussianRandomVariable(mu=0., sigma=single_gen_R, name="v")
-    xt = GaussianRandomVariable(mu=single_gen_mu_0, sigma=single_gen_Q_0, name="x")
+def compute_block_posterior(dim):
+    w = MultiGaussianRandomVariable(mu=torch.zeros(dim), sigma=torch.eye(dim, dim), name="w")
+    v = MultiGaussianRandomVariable(mu=torch.zeros(1), sigma=torch.eye(1, 1), name="v")
+    xt = MultiGaussianRandomVariable(mu=torch.zeros(dim), sigma=torch.eye(dim, dim), name="x")
     xs = [xt]
     ys = []
     posterior_xt_prev_given_yt_prev = None
     num_observations = 2
     for i in range(num_observations):
-        yt = LinearGaussian(a=single_gen_C, x=xt, b=v, name="y")
+        yt = MultiLinearGaussian(a=torch.eye(1, dim), x=xt, b=v, name="y")
         ys.append(yt)
-        xt = LinearGaussian(a=single_gen_A, x=xt, b=w, name="x")
+        xt = MultiLinearGaussian(a=torch.eye(dim, dim), x=xt, b=w, name="x")
         xs.append(xt)
 
     prior = xs[0].prior()
+
     for i in range(1, num_observations):
-        prior *= xs[i].likelihood()
+        import pdb; pdb.set_trace()
+
+        lik = xs[i].likelihood()
+        try:
+            prior *= lik
+        except:
+            import pdb; pdb.set_trace()
+            prior *= lik
+
 
     A = single_gen_A * torch.eye(num_observations)
 
@@ -689,9 +825,8 @@ def compute_block_posterior():
 
     # compute posterior
     posterior = ys.posterior_vec()
-    posterior.mean(value=1)
     import pdb; pdb.set_trace()
 
 
 if __name__ == "__main__":
-    compute_block_posterior()
+    compute_block_posterior(dim=2)
