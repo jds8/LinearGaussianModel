@@ -1089,6 +1089,28 @@ def get_prior_output(ys, dim):
                                                      idstr=name)
     return OutputWithName(prior_output, name)
 
+def get_rl_output(ys, dim):
+    traj_length = len(ys)
+    rl_output = ImportanceOutput(traj_length=traj_length, ys=ys, dim=dim)
+    name = 'rl (traj_len {} dim {})'.format(traj_length, dim)
+    for _ in range(NUM_REPEATS):
+        env = LinearGaussianEnv(A=single_gen_A, Q=single_gen_Q,
+                                C=single_gen_C, R=single_gen_R,
+                                mu_0=single_gen_mu_0,
+                                Q_0=single_gen_Q_0, ys=ys,
+                                traj_length=len(ys),
+                                sample=False)
+
+        eval_obj = rl_estimate(ys, dim=dim, N=NUM_SAMPLES, env=env)
+        # add rl confidence interval
+        rl_estimator = rl_output.add_rl_estimator(running_log_estimates=eval_obj.running_log_estimates,
+                                                  ci=eval_obj.ci, weight_mean=eval_obj.log_weight_mean.exp(),
+                                                  max_weight_prop=eval_obj.log_max_weight_prop.exp(),
+                                                  ess=eval_obj.log_effective_sample_size.exp(),
+                                                  ess_ci=eval_obj.ess_ci, idstr=name)
+
+    return OutputWithName(rl_output, name)
+
 def get_perturbed_posterior_output(posterior_evidence, dim, epsilon, name):
     ys = posterior_evidence.ys
     true_posterior = posterior_evidence.td
@@ -1147,10 +1169,15 @@ def posterior_convergence(posterior_evidence, dim, epsilons):
     traj_length = len(posterior_evidence.ys)
     plot_convergence(posterior_outputs_with_names, traj_length, dim, posterior_evidence.evidence, 'posterior')
 
-def prior_convergence(posterior_evidence, dim):
-    prior_outputs_with_name = get_prior_output(posterior_evidence.ys, dim)
-    traj_length = len(posterior_evidence.ys)
-    plot_convergence([prior_outputs_with_name], traj_length, dim, posterior_evidence.evidence, 'prior')
+def prior_convergence(ys, truth, dim):
+    prior_outputs_with_name = get_prior_output(ys, dim)
+    traj_length = len(ys)
+    plot_convergence([prior_outputs_with_name], traj_length, dim, truth, 'prior')
+
+def rl_convergence(ys, truth, dim):
+    rl_outputs_with_name = get_rl_output(ys, dim)
+    traj_length = len(ys)
+    plot_convergence([rl_outputs_with_name], traj_length, dim, truth, 'prior')
 
 def plot_dim(traj_length, dim):
     dimensions = torch.arange(5, 11, 1)
@@ -1189,7 +1216,8 @@ def plot_traj():
 def compare_convergence(traj_length, dim, epsilons):
     posterior_evidence = compute_evidence(traj_length, dim)
     posterior_convergence(posterior_evidence, dim, epsilons)
-    prior_convergence(posterior_evidence, dim)
+    prior_convergence(posterior_evidence.ys, posterior_evidence.evidence, dim)
+    rl_convergence(posterior_evidence.ys, posterior_evidence.evidence, dim)
 
 def posterior_ess(traj_lengths, dim, epsilons):
     for epsilon in epsilons:
@@ -1217,14 +1245,15 @@ def execute_posterior_ess():
     posterior_ess(traj_lengths=torch.arange(2, 17, 1), dim=1, epsilons=epsilons)
 
 def execute_compare_convergence():
+    os.makedirs(TODAY, exist_ok=True)
     epsilons = [-1e-3, 1e-3]
-    compare_convergence(traj_length=5, dim=1, epsilons=epsilons)
+    compare_convergence(traj_length=8, dim=1, epsilons=epsilons)
 
 
 if __name__ == "__main__":
-    # execute_compare_convergence()
+    execute_compare_convergence()
     # prior_ess(traj_lengths=torch.arange(2, 17, 1), dim=1)
-    execute_posterior_ess()
+    # execute_posterior_ess()
 
     # plot_traj()
     # plot_evidence_vs_trajectory()

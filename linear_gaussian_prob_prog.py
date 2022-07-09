@@ -624,7 +624,8 @@ class MultiGaussianRandomVariable:
 
     def __rmul__(self, a):
         if isinstance(a, torch.Tensor):
-            return MultiGaussianRandomVariable(torch.mm(a, self.mu.reshape(a.shape[1], -1)), torch.mm(torch.mm(a, self.sigma), a.t()), observed=self.observed, name=self.name)
+            mgrv = MultiGaussianRandomVariable(torch.mm(a, self.mu.reshape(a.shape[1], -1)).squeeze(), torch.mm(torch.mm(a, self.sigma), a.t()), observed=self.observed, name=self.name)
+            return mgrv
         raise NotImplementedError
 
     def __add__(self, b):
@@ -682,7 +683,8 @@ class MultiGaussianRandomVariable:
 
 class MultiLinearGaussian(MultiGaussianRandomVariable):
     def __init__(self, a, x: MultiGaussianRandomVariable, b: MultiGaussianRandomVariable, name):
-        var = a * x + b
+        ax = a * x
+        var = ax + b
         super(MultiLinearGaussian, self).__init__(var.mu, var.sigma, name=name)
         self.a = a
         self.x = x
@@ -798,6 +800,8 @@ def compute_block_posterior(dim):
     posterior_xt_prev_given_yt_prev = None
     num_observations = 2
     for i in range(num_observations):
+        import pdb; pdb.set_trace()
+
         yt = MultiLinearGaussian(a=torch.eye(1, dim), x=xt, b=v, name="y")
         ys.append(yt)
         xt = MultiLinearGaussian(a=torch.eye(dim, dim), x=xt, b=w, name="x")
@@ -814,7 +818,6 @@ def compute_block_posterior(dim):
         except:
             import pdb; pdb.set_trace()
             prior *= lik
-
 
     A = single_gen_A * torch.eye(num_observations)
 
