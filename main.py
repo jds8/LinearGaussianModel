@@ -1270,6 +1270,7 @@ def execute_compare_convergence(traj_lengths):
         compare_convergence(traj_length=traj_length, dim=1, epsilons=epsilons)
 
 def execute_ess(traj_lengths, dim):
+    os.makedirs(TODAY, exist_ok=True)
     posterior_ess(traj_lengths, dim, epsilons)
     prior_ess(traj_lengths, dim)
     rl_ess(traj_lengths, dim)
