@@ -1157,6 +1157,7 @@ def get_perturbed_posterior_outputs(posterior_evidence, dim, epsilons):
     return outputs
 
 def plot_estimators(outputs_with_names, ax=None):
+    plt.figure()
     for output in outputs_with_names:
         estimator = output.output[output.name]
         estimator.plot(ax)
@@ -1280,8 +1281,8 @@ if __name__ == "__main__":
     os.makedirs(TODAY, exist_ok=True)
     # execute_compare_convergence(torch.arange(2, 10, 1))
     # prior_ess(traj_lengths=torch.arange(2, 17, 1), dim=1)
-    # execute_posterior_ess()
-    rl_ess(traj_lengths=torch.arange(1, 10, 1), dim=1)
+    execute_posterior_ess()
+    # rl_ess(traj_lengths=torch.arange(1, 10, 1), dim=1)
 
     # plot_traj()
     # plot_evidence_vs_trajectory()
