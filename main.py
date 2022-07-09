@@ -1260,9 +1260,8 @@ def rl_ess(traj_lengths, dim):
 
 def execute_posterior_ess():
     os.makedirs(TODAY, exist_ok=True)
-    # epsilons = [-1e-3, 0., 1e-3]
-    epsilons = [1e-3]
-    posterior_ess(traj_lengths=torch.arange(2, 17, 1), dim=1, epsilons=epsilons)
+    epsilons = [-1e-3, 0., 1e-3]
+    posterior_ess(traj_lengths=torch.arange(16, 30, 1), dim=1, epsilons=epsilons)
 
 def execute_compare_convergence(traj_lengths):
     os.makedirs(TODAY, exist_ok=True)
@@ -1270,13 +1269,18 @@ def execute_compare_convergence(traj_lengths):
     for traj_length in traj_lengths:
         compare_convergence(traj_length=traj_length, dim=1, epsilons=epsilons)
 
+def execute_ess(traj_lengths, dim):
+    posterior_ess(traj_lengths, dim, epsilons)
+    prior_ess(traj_lengths, dim)
+    rl_ess(traj_lengths, dim)
+
 
 if __name__ == "__main__":
     os.makedirs(TODAY, exist_ok=True)
     # execute_compare_convergence(torch.arange(2, 10, 1))
     # prior_ess(traj_lengths=torch.arange(2, 17, 1), dim=1)
     # execute_posterior_ess()
-    rl_ess(traj_lengths=torch.arange(3, 5, 1), dim=1)
+    rl_ess(traj_lengths=torch.arange(1, 10, 1), dim=1)
 
     # plot_traj()
     # plot_evidence_vs_trajectory()
