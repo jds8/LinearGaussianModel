@@ -330,7 +330,9 @@ def load_rl_model(device, traj_length, dim):
     policy = model.policy.to(device)
     return model, policy
 
-def importance_estimate(ys, A, Q, C, R, mu_0, Q_0, N, env=None):
+def importance_estimate(ys, A, Q, C, R, mu_0, Q_0, N, env=None, sample=False, traj_length=0):
+    if ys is not None:
+        traj_length = len(ys)
     print('\nimportance estimate\n')
     pd = ProposalDist(A=A, Q=Q)
 
@@ -340,8 +342,8 @@ def importance_estimate(ys, A, Q, C, R, mu_0, Q_0, N, env=None):
                                 C=C, R=R,
                                 mu_0=mu_0,
                                 Q_0=Q_0, ys=ys,
-                                traj_length=len(ys),
-                                sample=False)
+                                traj_length=traj_length,
+                                sample=sample)
 
     return evaluate(ys, pd, N, env)
 
@@ -359,9 +361,12 @@ def test_importance_sampler(traj_length, A, Q):
 
     return importance_estimate(ys, A=A, Q=Q, C=gen_C, R=gen_R, mu_0=gen_mu_0, Q_0=gen_Q_0, N=NUM_SAMPLES)
 
-def rl_estimate(ys, dim, N, env=None):
+def rl_estimate(ys, dim, N, env=None, traj_length=0, device='cpu'):
+    if ys is not None:
+        traj_length = len(ys)
+        device = ys.device
     print('\nrl_estimate\n')
-    _, policy = load_rl_model(ys.device, traj_length=len(ys), dim=dim)
+    _, policy = load_rl_model(device, traj_length=traj_length, dim=dim)
     return evaluate(ys, d=policy, N=N, env=env)
 
 class Estimator:
@@ -1075,11 +1080,13 @@ def compute_evidence(traj_length, dim):
 
     return PosteriorEvidence(td, ys, true, env)
 
-def get_prior_output(ys, dim):
-    prior_output = ImportanceOutput(traj_length=len(ys), ys=ys, dim=dim)
+def get_prior_output(ys, dim, sample, traj_length=0):
+    if ys is not None:
+        traj_length = len(ys)
+    prior_output = ImportanceOutput(traj_length=traj_length, ys=ys, dim=dim)
     name = 'prior (A: {}, Q: {})'.format(single_gen_A, single_gen_Q)
     for _ in range(NUM_REPEATS):
-        eval_obj = importance_estimate(ys, A=single_gen_A, Q=single_gen_Q, C=single_gen_C, R=single_gen_R, mu_0=single_gen_mu_0, Q_0=single_gen_Q_0, N=NUM_SAMPLES)
+        eval_obj = importance_estimate(ys, A=single_gen_A, Q=single_gen_Q, C=single_gen_C, R=single_gen_R, mu_0=single_gen_mu_0, Q_0=single_gen_Q_0, N=NUM_SAMPLES, sample=sample, traj_length=traj_length)
         is_estimator = prior_output.add_is_estimator(A=single_gen_A, Q=single_gen_Q,
                                                      running_log_estimates=eval_obj.running_log_estimates,
                                                      ci=eval_obj.ci,
@@ -1089,8 +1096,9 @@ def get_prior_output(ys, dim):
                                                      idstr=name)
     return OutputWithName(prior_output, name)
 
-def get_rl_output(ys, dim):
-    traj_length = len(ys)
+def get_rl_output(ys, dim, sample, traj_length=0):
+    if ys is not None:
+        traj_length = len(ys)
     rl_output = ImportanceOutput(traj_length=traj_length, ys=ys, dim=dim)
     name = 'rl (traj_len {} dim {})'.format(traj_length, dim)
     for _ in range(NUM_REPEATS):
@@ -1098,10 +1106,10 @@ def get_rl_output(ys, dim):
                                 C=single_gen_C, R=single_gen_R,
                                 mu_0=single_gen_mu_0,
                                 Q_0=single_gen_Q_0, ys=ys,
-                                traj_length=len(ys),
-                                sample=False)
+                                traj_length=traj_length,
+                                sample=sample)
 
-        eval_obj = rl_estimate(ys, dim=dim, N=NUM_SAMPLES, env=env)
+        eval_obj = rl_estimate(ys, dim=dim, N=NUM_SAMPLES, env=env, traj_length=traj_length)
         # add rl confidence interval
         rl_estimator = rl_output.add_rl_estimator(running_log_estimates=eval_obj.running_log_estimates,
                                                   ci=eval_obj.ci, weight_mean=eval_obj.log_weight_mean.exp(),
@@ -1170,14 +1178,14 @@ def posterior_convergence(posterior_evidence, dim, epsilons):
     plot_convergence(posterior_outputs_with_names, traj_length, dim, posterior_evidence.evidence, 'posterior')
 
 def prior_convergence(ys, truth, dim):
-    prior_outputs_with_name = get_prior_output(ys, dim)
+    prior_outputs_with_name = get_prior_output(ys, dim, sample=False)
     traj_length = len(ys)
     plot_convergence([prior_outputs_with_name], traj_length, dim, truth, 'prior')
 
 def rl_convergence(ys, truth, dim):
-    rl_outputs_with_name = get_rl_output(ys, dim)
+    rl_outputs_with_name = get_rl_output(ys, dim, sample=False)
     traj_length = len(ys)
-    plot_convergence([rl_outputs_with_name], traj_length, dim, truth, 'prior')
+    plot_convergence([rl_outputs_with_name], traj_length, dim, truth, 'rl (traj_length {} dim {})'.format(traj_length, dim))
 
 def plot_dim(traj_length, dim):
     dimensions = torch.arange(5, 11, 1)
@@ -1220,6 +1228,7 @@ def compare_convergence(traj_length, dim, epsilons):
     rl_convergence(posterior_evidence.ys, posterior_evidence.evidence, dim)
 
 def posterior_ess(traj_lengths, dim, epsilons):
+    os.makedirs(TODAY, exist_ok=True)
     for epsilon in epsilons:
         outputs = []
         for traj_length in traj_lengths:
@@ -1230,12 +1239,23 @@ def posterior_ess(traj_lengths, dim, epsilons):
         plt.figure()
 
 def prior_ess(traj_lengths, dim):
+    os.makedirs(TODAY, exist_ok=True)
     outputs = []
     for traj_length in traj_lengths:
-        ys = generate_trajectory(traj_length, A=single_gen_A, Q=single_gen_Q, C=single_gen_C, R=single_gen_R, mu_0=single_gen_mu_0, Q_0=single_gen_Q_0)[0]
-        prior_output_with_name = get_prior_output(ys, dim)
+        # ys = generate_trajectory(traj_length, A=single_gen_A, Q=single_gen_Q, C=single_gen_C, R=single_gen_R, mu_0=single_gen_mu_0, Q_0=single_gen_Q_0)[0]
+        prior_output_with_name = get_prior_output(ys=None, dim=dim, sample=True, traj_length=traj_length)
         outputs += [prior_output_with_name.output]
     make_ess_plot(outputs, dim, NUM_SAMPLES, name='prior')
+    plt.figure()
+
+def rl_ess(traj_lengths, dim):
+    os.makedirs(TODAY, exist_ok=True)
+    outputs = []
+    for traj_length in traj_lengths:
+        # ys = generate_trajectory(traj_length, A=single_gen_A, Q=single_gen_Q, C=single_gen_C, R=single_gen_R, mu_0=single_gen_mu_0, Q_0=single_gen_Q_0)[0]
+        rl_output_with_name = get_rl_output(ys=None, dim=dim, sample=True, traj_length=traj_length)
+        outputs += [rl_output_with_name.output]
+    make_ess_plot(outputs, dim, NUM_SAMPLES, name='rl (traj_length {} dim {})'.format(traj_length, dim))
     plt.figure()
 
 def execute_posterior_ess():
@@ -1251,9 +1271,11 @@ def execute_compare_convergence():
 
 
 if __name__ == "__main__":
-    execute_compare_convergence()
+    os.makedirs(TODAY, exist_ok=True)
+    # execute_compare_convergence()
     # prior_ess(traj_lengths=torch.arange(2, 17, 1), dim=1)
     # execute_posterior_ess()
+    rl_ess(traj_lengths=torch.arange(3, 5, 1), dim=1)
 
     # plot_traj()
     # plot_evidence_vs_trajectory()
