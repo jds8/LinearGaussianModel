@@ -1126,11 +1126,7 @@ def get_perturbed_posterior_output(posterior_evidence, dim, epsilon, name):
 
     posterior_output = ImportanceOutput(traj_length=len(ys), ys=ys, dim=dim)
     # get importance weighted score for comparison
-    try:
-        td = dist.MultivariateNormal(true_posterior.mean, true_posterior.covariance_matrix + epsilon * true_posterior.mean.shape[0])
-    except:
-        import pdb; pdb.set_trace()
-        td = dist.MultivariateNormal(true_posterior.mean, true_posterior.covariance_matrix + epsilon * true_posterior.mean.shape[0])
+    td = dist.MultivariateNormal(true_posterior.mean, true_posterior.covariance_matrix + epsilon * torch.eye(true_posterior.mean.shape[0]))
 
     for _ in range(NUM_REPEATS):
         eval_obj = evaluate_posterior(ys=ys, N=NUM_SAMPLES, td=td, env=env)
