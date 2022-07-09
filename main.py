@@ -1264,15 +1264,16 @@ def execute_posterior_ess():
     epsilons = [1e-3]
     posterior_ess(traj_lengths=torch.arange(2, 17, 1), dim=1, epsilons=epsilons)
 
-def execute_compare_convergence():
+def execute_compare_convergence(traj_lengths):
     os.makedirs(TODAY, exist_ok=True)
     epsilons = [-1e-3, 1e-3]
-    compare_convergence(traj_length=8, dim=1, epsilons=epsilons)
+    for traj_length in traj_lengths:
+        compare_convergence(traj_length=traj_length, dim=1, epsilons=epsilons)
 
 
 if __name__ == "__main__":
     os.makedirs(TODAY, exist_ok=True)
-    # execute_compare_convergence()
+    # execute_compare_convergence(torch.arange(2, 10, 1))
     # prior_ess(traj_lengths=torch.arange(2, 17, 1), dim=1)
     # execute_posterior_ess()
     rl_ess(traj_lengths=torch.arange(3, 5, 1), dim=1)
