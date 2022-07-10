@@ -491,6 +491,7 @@ def make_ess_versus_dimension_plot(outputs, num_samples):
     plt.title('Effective Sample Size Versus Hidden Dimension\n(num samples: {} trajectory length: {})'.format(num_samples, traj_length))
     legend_without_duplicate_labels(plt.gca())
     plt.savefig('{}/ess_versus_dimension_(traj_len: {}).png'.format(TODAY, traj_length))
+    plt.gcf().close()
 
 def make_ess_plot(outputs, dimension, num_samples, name=''):
     plt.figure()
@@ -527,6 +528,7 @@ def make_ess_plot(outputs, dimension, num_samples, name=''):
     plt.title('Effective Sample Size Versus Trajectory Length\n (num samples: {}, num repeats: {})'.format(num_samples, num_repeats))
     legend_without_duplicate_labels(plt.gca())
     plt.savefig('{}/{}_ess_plot_dimension_{}.png'.format(TODAY, name, dimension))
+    plt.gcf().close()
 
 def make_ci_plot(outputs, dimension):
     plt.figure()
@@ -560,6 +562,7 @@ def make_ci_plot(outputs, dimension):
     plt.title('Confidence Interval (true sample size) Versus Trajectory Length')
     legend_without_duplicate_labels(plt.gca())
     plt.savefig('{}/ci_plot_dimension_{}.png'.format(TODAY, dimension))
+    plt.gcf().close()
 
 def make_ess_ci_plot(outputs, dimension):
     plt.figure()
@@ -593,6 +596,7 @@ def make_ess_ci_plot(outputs, dimension):
     plt.title('Confidence Interval (effective sample size) Versus Trajectory Length')
     legend_without_duplicate_labels(plt.gca())
     plt.savefig('{}/ess_ci_plot_dimension_{}.png'.format(TODAY, dimension))
+    plt.gcf().close()
 
 
 def display_diagnostics(outputs):
@@ -623,6 +627,7 @@ def make_table_of_confidence_intervals(outputs, name='Event'):
             colLabels=tuple(columns),
             loc='top')
     plt.savefig('{}/{}_table_confidence_interval.png'.format(TODAY, name))
+    plt.gcf().close()
 
 
 class Plotter:
@@ -757,6 +762,7 @@ class Plotter:
             plt.title('Convergence of Prob. {} Estimate to True Prob. {} \n(trajectory length: {}, dimension: {})'.format(self.name, self.name, traj_length, self.dimension))
             plt.legend()
             plt.savefig('{}/{}traj_length_{}_dimension_{}_{}_convergence.png'.format(TODAY, name, traj_length, self.dimension, self.name))
+            plt.gcf().close()
         return outputs
 
 
@@ -1168,6 +1174,7 @@ def plot_convergence(outputs_with_names, traj_length, dim, true, name):
     plt.title('Convergence of Prob. {} Estimate to True Prob. {} \n(trajectory length: {}, dimension: {})'.format('Evidence', 'Evidence', traj_length, dim))
     legend_without_duplicate_labels(plt.gca())
     plt.savefig('{}/{}_traj_length_{}_dimension_{}_{}_convergence.png'.format(TODAY, name, traj_length, dim, 'Evidence'))
+    plt.gcf().close()
 
 def posterior_convergence(posterior_evidence, dim, epsilons):
     posterior_outputs_with_names = get_perturbed_posterior_outputs(posterior_evidence, dim, epsilons)
@@ -1255,14 +1262,12 @@ def rl_ess(traj_lengths, dim):
     make_ess_plot(outputs, dim, NUM_SAMPLES, name='rl (traj_length {} dim {})'.format(traj_length, dim))
     plt.figure()
 
-def execute_posterior_ess():
+def execute_posterior_ess(epsilons):
     os.makedirs(TODAY, exist_ok=True)
-    epsilons = [-1e-3, 0., 1e-3]
-    posterior_ess(traj_lengths=torch.arange(16, 30, 1), dim=1, epsilons=epsilons)
+    posterior_ess(traj_lengths=torch.arange(30, 51, 1), dim=1, epsilons=epsilons)
 
-def execute_compare_convergence(traj_lengths):
+def execute_compare_convergence(traj_lengths, epsilons):
     os.makedirs(TODAY, exist_ok=True)
-    epsilons = [-1e-3, 1e-3]
     for traj_length in traj_lengths:
         compare_convergence(traj_length=traj_length, dim=1, epsilons=epsilons)
 
@@ -1275,9 +1280,10 @@ def execute_ess(traj_lengths, dim):
 
 if __name__ == "__main__":
     os.makedirs(TODAY, exist_ok=True)
-    # execute_compare_convergence(torch.arange(2, 10, 1))
+    epsilons = [-5e-2, 5e-2]
+    # execute_compare_convergence(torch.arange(2, 10, 1), epsilons)
     # prior_ess(traj_lengths=torch.arange(2, 17, 1), dim=1)
-    execute_posterior_ess()
+    execute_posterior_ess(epsilons)
     # rl_ess(traj_lengths=torch.arange(1, 10, 1), dim=1)
 
     # plot_traj()
