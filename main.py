@@ -888,7 +888,7 @@ def create_dimension_table(dimensions, random=False):
     table = {}
     if random:
         for dim in dimensions:
-            dimension = dim.item()
+            dimension = dim.item() if isinstance(dim, torch.Tensor) else dim
             table[dimension] = {}
             table[dimension]['A'] = torch.rand(dimension, dimension)
             table[dimension]['Q'] = gen_covariance_matrix(dimension)
@@ -898,7 +898,7 @@ def create_dimension_table(dimensions, random=False):
             table[dimension]['Q_0'] = table[dimension]['Q']
     else:
         for dim in dimensions:
-            dimension = dim.item()
+            dimension = dim.item() if isinstance(dim, torch.Tensor) else dim
             table[dimension] = {}
             table[dimension]['A'] = torch.eye(dimension, dimension)
             table[dimension]['Q'] = torch.eye(dimension)
@@ -945,16 +945,18 @@ def compute_posterior(A, Q, R, C, num_observations, dim):
     xt = MultiGaussianRandomVariable(mu=torch.zeros(dim), sigma=torch.sqrt(Q), name="x")
     xs = [xt]
     ys = []
-    posterior_xt_prev_given_yt_prev = None
     for i in range(num_observations):
         yt = MultiLinearGaussian(a=C, x=xt, b=v, name="y")
         ys.append(yt)
         xt = MultiLinearGaussian(a=A, x=xt, b=w, name="x")
         xs.append(xt)
 
-    prior = xs[0].prior()
-    for i in range(1, num_observations):
-        prior *= xs[i].likelihood()
+    prior = xs[num_observations-1].likelihood()
+    for i in range(num_observations-2, 0, -1):
+        lik = xs[i].likelihood()
+        prior *= lik
+    p_x_0 = xs[0].prior()
+    prior *= p_x_0
 
     noise = v.prior()**num_observations
 
@@ -998,7 +1000,9 @@ def evaluate_posterior(ys, N, td, env=None):
         # get first obs
         obs = env.reset()
         # keep track of xs
-        xs = td.sample().reshape(d, -1)
+        xs = td.sample()
+        if d > 1:
+            xs = xs.reshape(-1, d)
         # keep track of prior over actions p(x)
         log_p_x = torch.tensor(0.).reshape(1, -1)
         log_p_y_given_x = torch.tensor(0.).reshape(1, -1)
@@ -1006,10 +1010,10 @@ def evaluate_posterior(ys, N, td, env=None):
         states = [obs]
         actions = xs
         if len(xs) > 1:
-            xts = torch.cat([env.prev_xt.reshape(-1), xs[0:-1].squeeze()])
+            xts = torch.cat([env.prev_xt.reshape(-1), xs[0:-1].reshape(-1)])
         else:
             xts = env.prev_xt.reshape(-1)
-        xts = xts.reshape(d, -1)
+        xts = xts.reshape(-1, d)
         prior_reward = score_initial_state(x0=xs[0].reshape(-1), mu_0=env.mu_0, Q_0=env.Q_0)  # the reward for the initial state
         lik_reward = score_y(y_test=ys[0], x_t=xs[0], C=env.C, R=env.R)  # the first likelihood reward
         priors = [prior_reward]
@@ -1235,23 +1239,45 @@ def compare_convergence(table, traj_length, dim, epsilons):
     posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
     posterior_convergence(posterior_evidence=posterior_evidence, dim=dim, epsilons=epsilons)
     prior_convergence(table=table, ys=posterior_evidence.ys, truth=posterior_evidence.evidence, dim=dim)
-    rl_convergence(posterior_evidence.ys, posterior_evidence.evidence, dim=dim)
+    try:
+        rl_convergence(posterior_evidence.ys, posterior_evidence.evidence, dim=dim)
+    except:
+        pass
 
-def posterior_ess(table, traj_lengths, dim, epsilons):
-    os.makedirs(TODAY, exist_ok=True)
-    for epsilon in epsilons:
-        outputs = []
-        for traj_length in traj_lengths:
-            posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
-            posterior_outputs_with_names = get_perturbed_posterior_outputs(posterior_evidence, dim, [epsilon])
-            outputs += [o.output for o in posterior_outputs_with_names]
-        make_ess_plot(outputs, dim, NUM_SAMPLES, name='posterior_{}'.format(epsilon))
-        plt.figure()
+def get_posterior_ess_outputs(table, traj_length, dim, epsilon):
+    posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
+    posterior_outputs_with_names = get_perturbed_posterior_outputs(posterior_evidence, dim, [epsilon])
+    return [o.output for o in posterior_outputs_with_names]
 
-def prior_ess(table, traj_lengths, dim):
+def posterior_ess_traj(table, traj_lengths, dim, epsilon):
     os.makedirs(TODAY, exist_ok=True)
     outputs = []
     for traj_length in traj_lengths:
+        outputs += get_posterior_ess_outputs(table, traj_length, dim, epsilon)
+    make_ess_plot(outputs, dim, NUM_SAMPLES, name='posterior_{}'.format(epsilon))
+    plt.figure()
+
+def posterior_ess_dim(table, traj_length, dims, epsilon):
+    os.makedirs(TODAY, exist_ok=True)
+    outputs = []
+    for dim in dims:
+        outputs += get_posterior_ess_outputs(table, traj_length, dim, epsilon)
+    make_ess_plot(outputs, dim, NUM_SAMPLES, name='posterior_{}'.format(epsilon))
+    plt.figure()
+
+def prior_ess_traj(table, traj_lengths, dim):
+    os.makedirs(TODAY, exist_ok=True)
+    outputs = []
+    for traj_length in traj_lengths:
+        prior_output_with_name = get_prior_output(table=table, ys=None, dim=dim, sample=True, traj_length=traj_length)
+        outputs += [prior_output_with_name.output]
+    make_ess_plot(outputs, dim, NUM_SAMPLES, name='prior')
+    plt.figure()
+
+def prior_ess_dim(table, traj_length, dims):
+    os.makedirs(TODAY, exist_ok=True)
+    outputs = []
+    for dim in dims:
         prior_output_with_name = get_prior_output(table=table, ys=None, dim=dim, sample=True, traj_length=traj_length)
         outputs += [prior_output_with_name.output]
     make_ess_plot(outputs, dim, NUM_SAMPLES, name='prior')
@@ -1268,29 +1294,56 @@ def rl_ess(traj_lengths, dim):
     make_ess_plot(outputs, dim, NUM_SAMPLES, name='rl (traj_length {} dim {})'.format(traj_length, dim))
     plt.figure()
 
-def execute_posterior_ess(table, traj_lengths, epsilons, dim):
+def execute_posterior_ess_traj(table, traj_lengths, epsilons, dim):
     os.makedirs(TODAY, exist_ok=True)
-    posterior_ess(table=table, traj_lengths=traj_lengths, dim=dim, epsilons=epsilons)
+    for epsilon in epsilons:
+        posterior_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, epsilon=epsilon)
 
-def execute_compare_convergence(table, traj_lengths, epsilons, dim):
+def execute_posterior_ess_dim(table, traj_lengths, epsilons, dims):
+    os.makedirs(TODAY, exist_ok=True)
+    for epsilon in epsilons:
+        posterior_ess_dim(table=table, traj_length=traj_length, dims=dims, epsilon=epsilon)
+
+def execute_compare_convergence_traj(table, traj_lengths, epsilons, dim):
     os.makedirs(TODAY, exist_ok=True)
     for traj_length in traj_lengths:
         compare_convergence(table=table, traj_length=traj_length, dim=dim, epsilons=epsilons)
 
-def execute_ess(table, traj_lengths, dim):
+def execute_compare_convergence_dim(table, traj_length, epsilons, dims):
     os.makedirs(TODAY, exist_ok=True)
-    posterior_ess(table=table, traj_lengths=traj_lengths, dim=dim, epsilons=epsilons)
-    prior_ess(table=table, traj_lengths=traj_lengths, dim=dim)
+    for dim in dims:
+        compare_convergence(table=table, traj_length=traj_length, dim=dim, epsilons=epsilons)
+
+def execute_ess_traj(table, traj_lengths, dim, epsilons):
+    os.makedirs(TODAY, exist_ok=True)
+    for epsilon in epsilons:
+        posterior_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, epsilon=epsilon)
+    prior_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim)
     rl_ess(traj_lengths, dim)
 
+def execute_ess_dim(table, traj_length, dims):
+    os.makedirs(TODAY, exist_ok=True)
+    for epsilon in epsilons:
+        posterior_ess_dim(table=table, traj_length=traj_length, dims=dims, epsilon=epsilon)
+    prior_ess_dim(table=table, traj_length=traj_length, dims=dims)
+    rl_ess(traj_lengths, dim)
 
 if __name__ == "__main__":
     os.makedirs(TODAY, exist_ok=True)
     epsilons = [-5e-3, 0.0, 5e-3]
-    traj_lengths = torch.arange(2, 3, 1)
+    traj_lengths = torch.arange(3, 10, 1)
     dim = 2
     table = create_dimension_table(torch.tensor([dim]), random=False)
-    execute_compare_convergence(table=table, traj_lengths=traj_lengths, epsilons=epsilons, dim=dim)
+
+    # traj plots
+    execute_compare_convergence_traj(table=table, traj_lengths=traj_lengths, epsilons=epsilons, dim=dim)
+
+    # dim plots
+    # dims = np.arange(1, 30, 1)
+    # table = create_dimension_table(dims, random=False)
+    # traj_length = torch.tensor(5)
+    # execute_compare_convergence_dim(table=table, traj_length=traj_length, epsilons=epsilons, dims=dims)
+
     # prior_ess(traj_lengths=torch.arange(2, 17, 1), dim=1)
     # execute_posterior_ess(table=table, traj_lengths=traj_lengths, epsilons=epsilons, dim=dim)
     # rl_ess(traj_lengths=torch.arange(1, 10, 1), dim=1)

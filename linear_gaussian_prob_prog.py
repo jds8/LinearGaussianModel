@@ -53,30 +53,29 @@ class GaussianDistribution:
                 y_cv = self.covariance()
                 x_cv = other.covariance()
                 right_id = other.left.index(self.right)
-                a_mat = torch.tensor([x.get_coef_wrt(self.right) for x in self.left]).view(1,-1)
+                if self.left[0].x.mu.nelement() > 1: # if the dimension is greater than 1
+                    a_mat = torch.cat([x.get_coef_wrt(self.right) for x in self.left], 1)
+                else: # if the dimension is equal to 1
+                    a_mat = torch.tensor([x.get_coef_wrt(self.right) for x in self.left]).view(1, -1)
             else:  # other.right in self.left in this case
                 right = self.right
                 left = self.left + other.left
                 y_cv = other.covariance()
                 x_cv = self.covariance()
                 right_id = self.left.index(other.right)
-                try:
-                    # a_mat = torch.tensor([x.get_coef_wrt(other.right) for x in other.left])
-                    # a_mat = a_mat.view(a_mat.shape[1], -1)
-                    a_mat = other.left[0].get_coef_wrt(other.right)
-                    a_mat = a_mat.view(a_mat.shape[1], -1)
-                except:
-                    import pdb; pdb.set_trace()
-
+                # a_mat = torch.tensor([x.get_coef_wrt(other.right) for x in other.left])
+                # a_mat = a_mat.view(a_mat.shape[1], -1)
+                a_mat = other.left[0].get_coef_wrt(other.right)
+                a_mat = a_mat.view(a_mat.shape[1], -1)
 
             y_precision = torch.inverse(y_cv)
             x_precision = torch.inverse(x_cv)
+
             # mod_y_precision = torch.zeros_like(x_precision)
             # mod_y_precision[right_id, right_id] = torch.matmul(torch.matmul(a_mat, y_precision), a_mat.t())
             mod_y_precision = torch.matmul(torch.matmul(a_mat, y_precision), a_mat.t())
 
             return self.create_distribution(x_precision, y_precision, mod_y_precision, a_mat, left, right, right_id)
-
         else: # these distributions are independent, so multiply them
             cov1 = self.covariance().diag()
             cov2 = other.covariance().diag()
@@ -155,7 +154,6 @@ class GaussianDistribution:
     def create_distribution(x_precision, y_precision, mod_y_precision,
                             a_mat, left, right, right_id):
         lambda_x_x = x_precision + mod_y_precision
-
         correlation_precision = -torch.matmul(a_mat, y_precision)
         if correlation_precision.nelement() > 1:
             lambda_x_y = correlation_precision
@@ -189,14 +187,6 @@ class GaussianDistribution:
             mean = torch.cat([x.mu.reshape(-1) for x in left])
             prob_dist = dist.MultivariateNormal(mean, torch.inverse(precision))
         else:
-            pm = lambda_x_x * (x_precision * left[0].mu + torch.matmul(torch.matmul(a_mat, y_precision), torch.tensor(1.).reshape(1,-1)))
-            # print('lambda_x_x: {}'.format(lambda_x_x))
-            # print('a: {}'.format(a_mat))
-            # print('y_precision: {}'.format(y_precision))
-            # print('x_precision: {}'.format(x_precision))
-            # print('x0.mu: {}'.format(left[0].mu))
-            # print('x1.mu: {}'.format(left[1].mu))
-            # print('posterior mean: {}'.format(pm))
             def condition_on(value):
                 value = torch.tensor(value).reshape(1,-1)
                 mean_list = []
