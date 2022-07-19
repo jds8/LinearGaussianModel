@@ -19,6 +19,7 @@ from generative_model import \
     gen_A, gen_Q,\
     gen_C, gen_R,\
     gen_mu_0, gen_Q_0
+from math_utils import band_matrix
 
 class TorchDistributionInfo:
     def __init__(self, evaluate):
@@ -70,8 +71,9 @@ class GaussianDistribution:
 
             y_precision = torch.inverse(y_cv)
             x_precision = torch.inverse(x_cv)
-            mod_y_precision = torch.zeros_like(x_precision)
-            mod_y_precision[right_id, right_id] = torch.matmul(torch.matmul(a_mat, y_precision), a_mat.t())
+            # mod_y_precision = torch.zeros_like(x_precision)
+            # mod_y_precision[right_id, right_id] = torch.matmul(torch.matmul(a_mat, y_precision), a_mat.t())
+            mod_y_precision = torch.matmul(torch.matmul(a_mat, y_precision), a_mat.t())
 
             return self.create_distribution(x_precision, y_precision, mod_y_precision, a_mat, left, right, right_id)
 
@@ -650,7 +652,7 @@ class MultiGaussianRandomVariable:
         return MultiGaussianRandomVariable(mu, sigma, observed)
 
     def prior(self):
-        return GaussianDistribution(dist=dist.MultivariateNormal(self.mu, self.sigma), left=[self])
+        return GaussianDistribution(dist=dist.MultivariateNormal(self.mu.reshape(self.sigma.shape[0]), self.sigma), left=[self])
 
     def conditional_variance(self, var=None):
         if var is None:
@@ -666,6 +668,8 @@ class MultiGaussianRandomVariable:
         raise NotImplementedError
 
     def covariance(self, var):
+        if var == None:
+            var = self
         if self == var:
             return self.sigma
         try:
@@ -711,7 +715,7 @@ class MultiLinearGaussian(MultiGaussianRandomVariable):
             if not isinstance(value, torch.Tensor):
                 value = torch.tensor(value).reshape(b.mu.shape)
             var = a * x.observe(value) + b
-            return dist.MultivariateNormal(var.mu, var.sigma)
+            return dist.MultivariateNormal(var.mu.reshape(var.sigma.shape[1]), var.sigma)
         prob_dist = GaussianDistribution(TorchDistributionInfo(lik), left=[self], right=x)
         return prob_dist
 
@@ -773,7 +777,10 @@ class VecLinearGaussian:
         can be evaluated at a particular value of Y=y but can also
         be used to compute joint distributions.
         """
-        a = self.a
+        d, _ = self.a.shape
+        nd, _ = self.x.covariance().shape
+
+        a = band_matrix(self.a, int(nd/d))
         x = self.x
         b = self.b
 
@@ -797,12 +804,11 @@ def compute_block_posterior(dim):
     xt = MultiGaussianRandomVariable(mu=torch.zeros(dim), sigma=torch.eye(dim, dim), name="x")
     xs = [xt]
     ys = []
+    C = torch.eye(1, dim)
     posterior_xt_prev_given_yt_prev = None
     num_observations = 2
     for i in range(num_observations):
-        import pdb; pdb.set_trace()
-
-        yt = MultiLinearGaussian(a=torch.eye(1, dim), x=xt, b=v, name="y")
+        yt = MultiLinearGaussian(a=C, x=xt, b=v, name="y")
         ys.append(yt)
         xt = MultiLinearGaussian(a=torch.eye(dim, dim), x=xt, b=w, name="x")
         xs.append(xt)
@@ -810,21 +816,13 @@ def compute_block_posterior(dim):
     prior = xs[0].prior()
 
     for i in range(1, num_observations):
-        import pdb; pdb.set_trace()
-
         lik = xs[i].likelihood()
-        try:
-            prior *= lik
-        except:
-            import pdb; pdb.set_trace()
-            prior *= lik
+        prior *= lik
 
-    A = single_gen_A * torch.eye(num_observations)
-
-    noise = w.prior()**num_observations
+    noise = v.prior()**num_observations
 
     # find full likelihood
-    ys = VecLinearGaussian(a=A, x=prior, b=noise)
+    ys = VecLinearGaussian(a=C.t(), x=prior, b=noise)
 
     # compute posterior
     posterior = ys.posterior_vec()

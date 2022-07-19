@@ -57,3 +57,14 @@ def log_effective_sample_size(log_weights: torch.Tensor):
 def importance_sampled_confidence_interval(mu, sigma, sample_size, epsilon=torch.tensor(0.05)):
     t = scipy.stats.t.ppf(q=1-epsilon/2, df=sample_size-1)
     return (mu - t*sigma, mu + t*sigma)
+
+def band_matrix(band, num_copies):
+    d = band.nelement()
+    assert band.shape == torch.Size([1, d]) or band.shape == torch.Size([d, 1])
+    outputs = []
+    for i in range(num_copies):
+        start_index = i*d
+        c = torch.zeros(num_copies * d)
+        c[start_index:start_index+d] = band.squeeze()
+        outputs.append(c)
+    return torch.stack(outputs)

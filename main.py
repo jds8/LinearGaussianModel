@@ -22,7 +22,7 @@ import wandb
 from linear_gaussian_env import LinearGaussianEnv, LinearGaussianSingleYEnv
 from math_utils import logvarexp, importance_sampled_confidence_interval, log_effective_sample_size, log_max_weight_proportion, log_mean
 from plot_utils import legend_without_duplicate_labels
-from linear_gaussian_prob_prog import GaussianRandomVariable, LinearGaussian, VecLinearGaussian
+from linear_gaussian_prob_prog import MultiGaussianRandomVariable, GaussianRandomVariable, MultiLinearGaussian, LinearGaussian, VecLinearGaussian
 
 # model name
 # MODEL = 'trial_linear_gaussian_model_(traj_{}_dim_{})'
@@ -326,7 +326,10 @@ def evaluate(ys, d, N, env=None):
 
 def load_rl_model(device, traj_length, dim):
     # load model
-    model = PPO.load(MODEL.format(traj_length, dim)+'.zip')
+    try:
+        model = PPO.load(MODEL.format(traj_length, dim)+'.zip')
+    except:
+        model = PPO.load(MODEL.format(traj_length, dim))
     policy = model.policy.to(device)
     return model, policy
 
@@ -419,14 +422,8 @@ class ImportanceOutput(dict):
         if idstr in self.is_estimators:
             self.is_estimators[idstr].add_repeat(running_log_estimates, ess)
         else:
-            try:
-                self.is_estimators[idstr] = ISEstimator(A, Q, running_log_estimates,
-                                                        ci, weight_mean, max_weight_prop, ess, ess_ci, label=idstr)
-            except:
-                import pdb; pdb.set_trace()
-                self.is_estimators[idstr] = ISEstimator(A, Q, running_log_estimates,
-                                                        ci, weight_mean, max_weight_prop, ess, ess_ci, label=idstr)
-
+            self.is_estimators[idstr] = ISEstimator(A, Q, running_log_estimates,
+                                                    ci, weight_mean, max_weight_prop, ess, ess_ci, label=idstr)
             self[idstr] = self.is_estimators[idstr]
         return self.is_estimators[idstr]
 
@@ -491,7 +488,7 @@ def make_ess_versus_dimension_plot(outputs, num_samples):
     plt.title('Effective Sample Size Versus Hidden Dimension\n(num samples: {} trajectory length: {})'.format(num_samples, traj_length))
     legend_without_duplicate_labels(plt.gca())
     plt.savefig('{}/ess_versus_dimension_(traj_len: {}).png'.format(TODAY, traj_length))
-    plt.gcf().close()
+    plt.close()
 
 def make_ess_plot(outputs, dimension, num_samples, name=''):
     plt.figure()
@@ -528,7 +525,7 @@ def make_ess_plot(outputs, dimension, num_samples, name=''):
     plt.title('Effective Sample Size Versus Trajectory Length\n (num samples: {}, num repeats: {})'.format(num_samples, num_repeats))
     legend_without_duplicate_labels(plt.gca())
     plt.savefig('{}/{}_ess_plot_dimension_{}.png'.format(TODAY, name, dimension))
-    plt.gcf().close()
+    plt.close()
 
 def make_ci_plot(outputs, dimension):
     plt.figure()
@@ -562,7 +559,7 @@ def make_ci_plot(outputs, dimension):
     plt.title('Confidence Interval (true sample size) Versus Trajectory Length')
     legend_without_duplicate_labels(plt.gca())
     plt.savefig('{}/ci_plot_dimension_{}.png'.format(TODAY, dimension))
-    plt.gcf().close()
+    plt.close()
 
 def make_ess_ci_plot(outputs, dimension):
     plt.figure()
@@ -596,7 +593,7 @@ def make_ess_ci_plot(outputs, dimension):
     plt.title('Confidence Interval (effective sample size) Versus Trajectory Length')
     legend_without_duplicate_labels(plt.gca())
     plt.savefig('{}/ess_ci_plot_dimension_{}.png'.format(TODAY, dimension))
-    plt.gcf().close()
+    plt.close()
 
 
 def display_diagnostics(outputs):
@@ -627,7 +624,7 @@ def make_table_of_confidence_intervals(outputs, name='Event'):
             colLabels=tuple(columns),
             loc='top')
     plt.savefig('{}/{}_table_confidence_interval.png'.format(TODAY, name))
-    plt.gcf().close()
+    plt.close()
 
 
 class Plotter:
@@ -762,7 +759,7 @@ class Plotter:
             plt.title('Convergence of Prob. {} Estimate to True Prob. {} \n(trajectory length: {}, dimension: {})'.format(self.name, self.name, traj_length, self.dimension))
             plt.legend()
             plt.savefig('{}/{}traj_length_{}_dimension_{}_{}_convergence.png'.format(TODAY, name, traj_length, self.dimension, self.name))
-            plt.gcf().close()
+            plt.close()
         return outputs
 
 
@@ -942,29 +939,27 @@ def plot_evidence_vs_dim():
     # train_dimensions(traj_length=dim_traj_length, dimensions=dimensions, table=table)
     collect_and_plot_dimension_outputs(ep=ep, dimensions=dimensions, table=table, As=[], Qs=[], traj_length=dim_traj_length, num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS)
 
-def compute_posterior(num_observations):
-    w = GaussianRandomVariable(mu=0., sigma=torch.sqrt(single_gen_Q), name="w")
-    v = GaussianRandomVariable(mu=0., sigma=torch.sqrt(single_gen_R), name="v")
-    xt = GaussianRandomVariable(mu=single_gen_mu_0, sigma=torch.sqrt(single_gen_Q_0), name="x")
+def compute_posterior(A, Q, R, C, num_observations, dim):
+    w = MultiGaussianRandomVariable(mu=0., sigma=torch.sqrt(Q), name="w")
+    v = MultiGaussianRandomVariable(mu=0., sigma=torch.sqrt(R), name="v")
+    xt = MultiGaussianRandomVariable(mu=torch.zeros(dim), sigma=torch.sqrt(Q), name="x")
     xs = [xt]
     ys = []
     posterior_xt_prev_given_yt_prev = None
     for i in range(num_observations):
-        yt = LinearGaussian(a=single_gen_C, x=xt, b=v, name="y")
+        yt = MultiLinearGaussian(a=C, x=xt, b=v, name="y")
         ys.append(yt)
-        xt = LinearGaussian(a=single_gen_A, x=xt, b=w, name="x")
+        xt = MultiLinearGaussian(a=A, x=xt, b=w, name="x")
         xs.append(xt)
 
     prior = xs[0].prior()
     for i in range(1, num_observations):
         prior *= xs[i].likelihood()
 
-    C = single_gen_C * torch.eye(num_observations)
-
     noise = v.prior()**num_observations
 
     # find full likelihood
-    ys = VecLinearGaussian(a=C, x=prior, b=noise)
+    ys = VecLinearGaussian(a=C.t(), x=prior, b=noise)
 
     # compute posterior
     return ys.posterior_vec()
@@ -994,12 +989,16 @@ def evaluate_posterior(ys, N, td, env=None):
     running_log_evidence_estimates = []
     # keep track of (log) weights p(x) / q(x)
     log_weights = []
+    # get trajectory length
+    n = len(ys)
+    # get dimensionality
+    d = int(td.mean.nelement()/n)
     for i in range(N):
         done = False
         # get first obs
         obs = env.reset()
         # keep track of xs
-        xs = td.sample()
+        xs = td.sample().reshape(d, -1)
         # keep track of prior over actions p(x)
         log_p_x = torch.tensor(0.).reshape(1, -1)
         log_p_y_given_x = torch.tensor(0.).reshape(1, -1)
@@ -1007,19 +1006,20 @@ def evaluate_posterior(ys, N, td, env=None):
         states = [obs]
         actions = xs
         if len(xs) > 1:
-            xts = torch.cat([env.prev_xt.reshape(-1), xs[0:-1]])
+            xts = torch.cat([env.prev_xt.reshape(-1), xs[0:-1].squeeze()])
         else:
             xts = env.prev_xt.reshape(-1)
-        prior_reward = score_initial_state(x0=xs[0].reshape(1), mu_0=env.mu_0, Q_0=env.Q_0)  # the reward for the initial state
+        xts = xts.reshape(d, -1)
+        prior_reward = score_initial_state(x0=xs[0].reshape(-1), mu_0=env.mu_0, Q_0=env.Q_0)  # the reward for the initial state
         lik_reward = score_y(y_test=ys[0], x_t=xs[0], C=env.C, R=env.R)  # the first likelihood reward
         priors = [prior_reward]
         log_p_x += prior_reward
         liks = [lik_reward]
         log_p_y_given_x += lik_reward
         total_reward = prior_reward + lik_reward
-        if len(xts) > 1:
+        if n > 1:
             for xt, prev_xt, y in zip(xs[1:], xts[1:], ys[1:]):
-                prior_reward = score_state_transition(xt=xt.reshape(1), prev_xt=prev_xt, A=env.A, Q=env.Q)
+                prior_reward = score_state_transition(xt=xt.reshape(-1), prev_xt=prev_xt, A=env.A, Q=env.Q)
                 lik_reward = score_y(y_test=y, x_t=xt, C=env.C, R=env.R)  # the first likelihood reward
                 total_reward += prior_reward + lik_reward
                 states.append(obs)
@@ -1029,7 +1029,7 @@ def evaluate_posterior(ys, N, td, env=None):
                 log_p_y_given_x += lik_reward
         # log p(x,y)
         log_p_y_x = log_p_y_given_x + log_p_x
-        log_q = td.log_prob(xs)
+        log_q = td.log_prob(xs.flatten())
         if N == 1:
             log_p_y_over_qs[i] = (log_p_y_x - log_q).item()
             running_log_evidence_estimates.append(log_p_y_over_qs[0])
@@ -1056,28 +1056,27 @@ class PosteriorEvidence:
         self.env =env
 
 
-def compute_evidence(traj_length, dim):
+def compute_evidence(table, traj_length, dim):
     os.makedirs(TODAY, exist_ok=True)
-    table = create_dimension_table(torch.tensor([dim]), random=False)
 
-    ys = generate_trajectory(traj_length, A=single_gen_A, Q=single_gen_Q, C=single_gen_C, R=single_gen_R, mu_0=single_gen_mu_0, Q_0=single_gen_Q_0)[0]
-    env = LinearGaussianEnv(A=single_gen_A, Q=single_gen_Q,
-                            C=single_gen_C, R=single_gen_R,
-                            mu_0=single_gen_mu_0,
-                            Q_0=single_gen_Q_0, ys=ys,
-                            sample=True)
+    A = table[dim]['A']
+    Q = table[dim]['Q']
+    C = table[dim]['C']
+    R = table[dim]['R']
+    mu_0 = table[dim]['mu_0']
+    Q_0 = table[dim]['Q_0']
 
-    # A = table[dim]['A']
-    # Q = table[dim]['Q']
-    # C = table[dim]['C']
-    # R = table[dim]['R']
-    # mu_0 = table[dim]['mu_0']
-    # Q_0 = table[dim]['Q_0']
+    # ys = generate_trajectory(traj_length, A=single_gen_A, Q=single_gen_Q, C=single_gen_C, R=single_gen_R, mu_0=single_gen_mu_0, Q_0=single_gen_Q_0)[0]
+    # env = LinearGaussianEnv(A=single_gen_A, Q=single_gen_Q,
+    #                         C=single_gen_C, R=single_gen_R,
+    #                         mu_0=single_gen_mu_0,
+    #                         Q_0=single_gen_Q_0, ys=ys,
+    #                         sample=True)
 
-    # ys = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0]
-    # env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, ys=ys, sample=False)
+    ys = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0]
+    env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, ys=ys, sample=True)
 
-    posterior = compute_posterior(len(ys))
+    posterior = compute_posterior(A=A, Q=Q, C=C, R=R, num_observations=len(ys), dim=dim)
     td = condition_posterior(posterior, ys)
 
     eval_obj = evaluate_posterior(ys=ys, N=1, td=td, env=env)
@@ -1086,14 +1085,21 @@ def compute_evidence(traj_length, dim):
 
     return PosteriorEvidence(td, ys, true, env)
 
-def get_prior_output(ys, dim, sample, traj_length=0):
+def get_prior_output(table, ys, dim, sample, traj_length=0):
+    A = table[dim]['A']
+    Q = table[dim]['Q']
+    C = table[dim]['C']
+    R = table[dim]['R']
+    mu_0 = table[dim]['mu_0']
+    Q_0 = table[dim]['Q_0']
+
     if ys is not None:
         traj_length = len(ys)
     prior_output = ImportanceOutput(traj_length=traj_length, ys=ys, dim=dim)
-    name = 'prior (A: {}, Q: {})'.format(single_gen_A, single_gen_Q)
+    name = 'prior (A: {}, Q: {})'.format(A, Q)
     for _ in range(NUM_REPEATS):
-        eval_obj = importance_estimate(ys, A=single_gen_A, Q=single_gen_Q, C=single_gen_C, R=single_gen_R, mu_0=single_gen_mu_0, Q_0=single_gen_Q_0, N=NUM_SAMPLES, sample=sample, traj_length=traj_length)
-        is_estimator = prior_output.add_is_estimator(A=single_gen_A, Q=single_gen_Q,
+        eval_obj = importance_estimate(ys, A=A, Q=Q, C=C, R=R, mu_0=torch.zeros(dim), Q_0=Q, N=NUM_SAMPLES, sample=sample, traj_length=traj_length)
+        is_estimator = prior_output.add_is_estimator(A=A, Q=Q,
                                                      running_log_estimates=eval_obj.running_log_estimates,
                                                      ci=eval_obj.ci,
                                                      weight_mean=eval_obj.log_weight_mean.exp(),
@@ -1174,15 +1180,15 @@ def plot_convergence(outputs_with_names, traj_length, dim, true, name):
     plt.title('Convergence of Prob. {} Estimate to True Prob. {} \n(trajectory length: {}, dimension: {})'.format('Evidence', 'Evidence', traj_length, dim))
     legend_without_duplicate_labels(plt.gca())
     plt.savefig('{}/{}_traj_length_{}_dimension_{}_{}_convergence.png'.format(TODAY, name, traj_length, dim, 'Evidence'))
-    plt.gcf().close()
+    plt.close()
 
 def posterior_convergence(posterior_evidence, dim, epsilons):
     posterior_outputs_with_names = get_perturbed_posterior_outputs(posterior_evidence, dim, epsilons)
     traj_length = len(posterior_evidence.ys)
     plot_convergence(posterior_outputs_with_names, traj_length, dim, posterior_evidence.evidence, 'posterior')
 
-def prior_convergence(ys, truth, dim):
-    prior_outputs_with_name = get_prior_output(ys, dim, sample=False)
+def prior_convergence(table, ys, truth, dim):
+    prior_outputs_with_name = get_prior_output(table=table, ys=ys, dim=dim, sample=False)
     traj_length = len(ys)
     plot_convergence([prior_outputs_with_name], traj_length, dim, truth, 'prior')
 
@@ -1225,35 +1231,35 @@ def plot_traj():
     outputs = ep.plot_IS(traj_lengths=traj_lengths, As=[], Qs=[], num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, name='extra')
     make_ess_plot(outputs, dimension=1, num_samples=NUM_SAMPLES)
 
-def compare_convergence(traj_length, dim, epsilons):
-    posterior_evidence = compute_evidence(traj_length, dim)
-    posterior_convergence(posterior_evidence, dim, epsilons)
-    prior_convergence(posterior_evidence.ys, posterior_evidence.evidence, dim)
-    rl_convergence(posterior_evidence.ys, posterior_evidence.evidence, dim)
+def compare_convergence(table, traj_length, dim, epsilons):
+    posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
+    posterior_convergence(posterior_evidence=posterior_evidence, dim=dim, epsilons=epsilons)
+    prior_convergence(table=table, ys=posterior_evidence.ys, truth=posterior_evidence.evidence, dim=dim)
+    rl_convergence(posterior_evidence.ys, posterior_evidence.evidence, dim=dim)
 
-def posterior_ess(traj_lengths, dim, epsilons):
+def posterior_ess(table, traj_lengths, dim, epsilons):
     os.makedirs(TODAY, exist_ok=True)
     for epsilon in epsilons:
         outputs = []
         for traj_length in traj_lengths:
-            posterior_evidence = compute_evidence(traj_length, dim)
+            posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
             posterior_outputs_with_names = get_perturbed_posterior_outputs(posterior_evidence, dim, [epsilon])
             outputs += [o.output for o in posterior_outputs_with_names]
         make_ess_plot(outputs, dim, NUM_SAMPLES, name='posterior_{}'.format(epsilon))
         plt.figure()
 
-def prior_ess(traj_lengths, dim):
+def prior_ess(table, traj_lengths, dim):
     os.makedirs(TODAY, exist_ok=True)
     outputs = []
     for traj_length in traj_lengths:
-        # ys = generate_trajectory(traj_length, A=single_gen_A, Q=single_gen_Q, C=single_gen_C, R=single_gen_R, mu_0=single_gen_mu_0, Q_0=single_gen_Q_0)[0]
-        prior_output_with_name = get_prior_output(ys=None, dim=dim, sample=True, traj_length=traj_length)
+        prior_output_with_name = get_prior_output(table=table, ys=None, dim=dim, sample=True, traj_length=traj_length)
         outputs += [prior_output_with_name.output]
     make_ess_plot(outputs, dim, NUM_SAMPLES, name='prior')
     plt.figure()
 
 def rl_ess(traj_lengths, dim):
     os.makedirs(TODAY, exist_ok=True)
+    plt.figure()
     outputs = []
     for traj_length in traj_lengths:
         # ys = generate_trajectory(traj_length, A=single_gen_A, Q=single_gen_Q, C=single_gen_C, R=single_gen_R, mu_0=single_gen_mu_0, Q_0=single_gen_Q_0)[0]
@@ -1262,28 +1268,31 @@ def rl_ess(traj_lengths, dim):
     make_ess_plot(outputs, dim, NUM_SAMPLES, name='rl (traj_length {} dim {})'.format(traj_length, dim))
     plt.figure()
 
-def execute_posterior_ess(epsilons):
+def execute_posterior_ess(table, traj_lengths, epsilons, dim):
     os.makedirs(TODAY, exist_ok=True)
-    posterior_ess(traj_lengths=torch.arange(30, 51, 1), dim=1, epsilons=epsilons)
+    posterior_ess(table=table, traj_lengths=traj_lengths, dim=dim, epsilons=epsilons)
 
-def execute_compare_convergence(traj_lengths, epsilons):
+def execute_compare_convergence(table, traj_lengths, epsilons, dim):
     os.makedirs(TODAY, exist_ok=True)
     for traj_length in traj_lengths:
-        compare_convergence(traj_length=traj_length, dim=1, epsilons=epsilons)
+        compare_convergence(table=table, traj_length=traj_length, dim=dim, epsilons=epsilons)
 
-def execute_ess(traj_lengths, dim):
+def execute_ess(table, traj_lengths, dim):
     os.makedirs(TODAY, exist_ok=True)
-    posterior_ess(traj_lengths, dim, epsilons)
-    prior_ess(traj_lengths, dim)
+    posterior_ess(table=table, traj_lengths=traj_lengths, dim=dim, epsilons=epsilons)
+    prior_ess(table=table, traj_lengths=traj_lengths, dim=dim)
     rl_ess(traj_lengths, dim)
 
 
 if __name__ == "__main__":
     os.makedirs(TODAY, exist_ok=True)
-    epsilons = [-5e-2, 5e-2]
-    # execute_compare_convergence(torch.arange(2, 10, 1), epsilons)
+    epsilons = [-5e-3, 0.0, 5e-3]
+    traj_lengths = torch.arange(2, 3, 1)
+    dim = 2
+    table = create_dimension_table(torch.tensor([dim]), random=False)
+    execute_compare_convergence(table=table, traj_lengths=traj_lengths, epsilons=epsilons, dim=dim)
     # prior_ess(traj_lengths=torch.arange(2, 17, 1), dim=1)
-    execute_posterior_ess(epsilons)
+    # execute_posterior_ess(table=table, traj_lengths=traj_lengths, epsilons=epsilons, dim=dim)
     # rl_ess(traj_lengths=torch.arange(1, 10, 1), dim=1)
 
     # plot_traj()
