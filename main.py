@@ -31,8 +31,8 @@ MODEL = 'new_linear_gaussian_model_(traj_{}_dim_{})'
 TODAY = date.today().strftime("%b-%d-%Y")
 
 RL_TIMESTEPS = 100000
-NUM_SAMPLES = 10
-NUM_REPEATS = 5
+NUM_SAMPLES = 100
+NUM_REPEATS = 20
 
 class CustomCallback(BaseCallback):
     """
@@ -511,15 +511,14 @@ def make_ess_versus_dimension_plot(outputs, num_samples):
 
 def make_ess_plot_nice(outputs_with_names, fixed_feature_string,
                        fixed_feature, num_samples, num_repeats,
-                       xlabel, name=''):
-    plot_ess_estimators(outputs_with_names, fixed_feature)
+                       traj_lengths, xlabel, name=''):
+    plot_ess_estimators_traj(outputs_with_names, traj_lengths)
 
     plt.xlabel(xlabel)
     plt.ylabel('Effective Sample Size')
     plt.title('Effective Sample Size Versus {}\n (num samples: {}, num repeats: {})'.format(xlabel, num_samples, num_repeats))
     legend_without_duplicate_labels(plt.gca())
     plt.savefig('{}/{}_ess_plot_{}_{}.png'.format(TODAY, name, fixed_feature_string, fixed_feature))
-    plt.close()
 
 def make_ess_plot_nice_dim(outputs_with_names, fixed_feature_string,
                            fixed_feature, num_samples, num_repeats,
@@ -1004,6 +1003,21 @@ def plot_ess_estimators(outputs_with_names, fixed_feature):
         estimator = output.output[output.name]
         estimator.plot_ess()
 
+def plot_ess_estimators_traj(outputs_with_names, traj_lengths):
+    # estimates = []
+    # for output in outputs_with_names:
+    #     estimates.append(torch.tensor([repeat[-1] for repeat in output.output[output.name].ess]))
+    # estimates = torch.stack(estimates, dim=1)
+
+    outputs = torch.stack([torch.tensor(output.output[output.name].ess) for output in outputs_with_names], dim=1)
+    quantiles = torch.tensor([0.05, 0.5, 0.95])
+    lower_ci, med, upper_ci = torch.quantile(outputs, quantiles, dim=0)
+    plt.plot(traj_lengths, med.squeeze(), label=outputs_with_names[0].name)
+    plt.fill_between(traj_lengths, y1=lower_ci, y2=upper_ci, alpha=0.3)
+
+    ax = plt.gca()
+    ax.xaxis.get_major_locator().set_params(integer=True)
+
 def plot_ess_estimators_dim(outputs_with_names, dims):
     outputs = torch.stack([torch.tensor(output.output[output.name].ess) for output in outputs_with_names], dim=1)
     quantiles = torch.tensor([0.05, 0.5, 0.95])
@@ -1012,7 +1026,7 @@ def plot_ess_estimators_dim(outputs_with_names, dims):
     plt.fill_between(dims, y1=lower_ci, y2=upper_ci, alpha=0.3)
 
     ax = plt.gca()
-    ax.yaxis.get_major_locator().set_params(integer=True)
+    ax.xaxis.get_major_locator().set_params(integer=True)
 
 def plot_running_log_estimates(outputs_with_names):
     plt.figure()
@@ -1042,8 +1056,8 @@ def prior_convergence(table, ys, truth, dim):
     traj_length = len(ys)
     plot_convergence([prior_outputs_with_name], traj_length, dim, truth, 'prior')
 
-def rl_convergence(ys, truth, dim):
-    rl_outputs_with_name = get_rl_output(ys, dim, sample=False)
+def rl_convergence(table, ys, truth, dim):
+    rl_outputs_with_name = get_rl_output(table=table, ys=ys, dim=dim, sample=False)
     traj_length = len(ys)
     plot_convergence([rl_outputs_with_name], traj_length, dim, truth, 'rl (traj_length {} dim {})'.format(traj_length, dim))
 
@@ -1069,7 +1083,7 @@ def compare_convergence(table, traj_length, dim, epsilons):
     posterior_convergence(posterior_evidence=posterior_evidence, dim=dim, epsilons=epsilons)
     prior_convergence(table=table, ys=posterior_evidence.ys, truth=posterior_evidence.evidence, dim=dim)
     try:
-        rl_convergence(posterior_evidence.ys, posterior_evidence.evidence, dim=dim)
+        rl_convergence(table=table, ys=posterior_evidence.ys, truth=posterior_evidence.evidence, dim=dim)
     except:
         pass
 
@@ -1083,9 +1097,8 @@ def posterior_ess_traj(table, traj_lengths, dim, epsilon):
     for traj_length in traj_lengths:
         outputs += get_posterior_ess_outputs(table, traj_length, dim, epsilon)
     make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=dim,
-                       num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS,
+                       num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, traj_lengths=traj_lengths,
                        xlabel='Trajectory Length', name='posterior_{}'.format(epsilon))
-    plt.figure()
 
 def posterior_ess_dim(table, traj_length, dims, epsilon):
     os.makedirs(TODAY, exist_ok=True)
@@ -1101,7 +1114,9 @@ def prior_ess_traj(table, traj_lengths, dim):
     outputs = []
     for traj_length in traj_lengths:
         outputs += [get_prior_output(table=table, ys=None, dim=dim, sample=True, traj_length=traj_length)]
-    make_ess_plot_nice(outputs, dim, NUM_SAMPLES, name='prior')
+    make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=dim,
+                       num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, traj_lengths=traj_lengths,
+                       xlabel='Trajectory Length', name='prior')
     plt.figure()
 
 def prior_ess_dim(table, traj_length, dims):
@@ -1112,15 +1127,16 @@ def prior_ess_dim(table, traj_length, dims):
     make_ess_plot_nice_dim(outputs, fixed_feature_string='traj_length', fixed_feature=traj_length,
                            num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, dims=dims,
                            xlabel='Latent Dimension', name='prior')
-    plt.figure()
 
-def rl_ess_traj(traj_lengths, dim):
+def rl_ess_traj(table, traj_lengths, dim):
     os.makedirs(TODAY, exist_ok=True)
     plt.figure()
     outputs = []
     for traj_length in traj_lengths:
-        outputs += [get_rl_output(ys=None, dim=dim, sample=True, traj_length=traj_length)]
-    make_ess_plot_nice(outputs, dim, NUM_SAMPLES, name='rl (traj_length {} dim {})'.format(traj_length, dim))
+        outputs += [get_rl_output(table=table, ys=None, dim=dim, sample=True, traj_length=traj_length)]
+    make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=dim,
+                       num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, traj_lengths=traj_lengths,
+                       xlabel='Trajectory Length', name='RL')
     plt.figure()
 
 def rl_ess_dim(table, traj_length, dims):
@@ -1140,7 +1156,7 @@ def execute_posterior_ess_traj(table, traj_lengths, epsilons, dim):
     for epsilon in epsilons:
         posterior_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, epsilon=epsilon)
 
-def execute_posterior_ess_dim(table, traj_lengths, epsilons, dims):
+def execute_posterior_ess_dim(table, traj_length, epsilons, dims):
     os.makedirs(TODAY, exist_ok=True)
     for epsilon in epsilons:
         posterior_ess_dim(table=table, traj_length=traj_length, dims=dims, epsilon=epsilon)
@@ -1157,13 +1173,15 @@ def execute_compare_convergence_dim(table, traj_length, epsilons, dims):
 
 def execute_ess_traj(table, traj_lengths, dim, epsilons):
     os.makedirs(TODAY, exist_ok=True)
+    plt.gca().set_yscale('log')
     for epsilon in epsilons:
         posterior_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, epsilon=epsilon)
     prior_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim)
-    rl_ess_traj(traj_lengths, dim)
+    # rl_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim)
 
-def execute_ess_dim(table, traj_length, dims):
+def execute_ess_dim(table, traj_length, dims, epsilons):
     os.makedirs(TODAY, exist_ok=True)
+    plt.gca().set_yscale('log')
     for epsilon in epsilons:
         posterior_ess_dim(table=table, traj_length=traj_length, dims=dims, epsilon=epsilon)
     prior_ess_dim(table=table, traj_length=traj_length, dims=dims)
@@ -1172,22 +1190,23 @@ def execute_ess_dim(table, traj_length, dims):
 if __name__ == "__main__":
     os.makedirs(TODAY, exist_ok=True)
     epsilons = [-5e-3, 0.0, 5e-3]
-    # traj_lengths = torch.arange(3, 10, 1)
-    # dim = 2
-    # table = create_dimension_table(torch.tensor([dim]), random=False)
+    traj_lengths = torch.arange(2, 5, 1)
+    dim = 1
+    table = create_dimension_table(torch.tensor([dim]), random=False)
 
     # traj plots
     # execute_compare_convergence_traj(table=table, traj_lengths=traj_lengths, epsilons=epsilons, dim=dim)
+    execute_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, epsilons=epsilons)
 
     # dim plots
     # dims = np.arange(2, 30, 1)
-    dims = np.arange(2, 4, 1)
-    table = create_dimension_table(dims, random=False)
-    traj_length = torch.tensor(5)
+    # dims = np.arange(2, 4, 1)
+    # table = create_dimension_table(dims, random=False)
+    # traj_length = torch.tensor(5)
     # execute_compare_convergence_dim(table=table, traj_length=traj_length, epsilons=epsilons, dims=dims)
 
-    execute_ess_dim(table, traj_length, dims)
+    # execute_ess_dim(table, traj_length, dims, epsilsons)
 
     # prior_ess_dim(traj_lengths=torch.arange(2, 17, 1), dim=1)
-    # execute_posterior_ess_dim(table=table, traj_lengths=traj_lengths, epsilons=epsilons, dim=dim)
+    # execute_posterior_ess_dim(table=table, traj_length=traj_length, epsilons=epsilons, dim=dim)
     # rl_ess(traj_lengths=torch.arange(1, 10, 1), dim=1)
