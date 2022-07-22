@@ -31,8 +31,8 @@ MODEL = 'new_linear_gaussian_model_(traj_{}_dim_{})'
 TODAY = date.today().strftime("%b-%d-%Y")
 
 RL_TIMESTEPS = 100000
-NUM_SAMPLES = 100
-NUM_REPEATS = 20
+NUM_SAMPLES = 10
+NUM_REPEATS = 5
 
 class CustomCallback(BaseCallback):
     """
@@ -1170,7 +1170,7 @@ def execute_ess_dim(table, traj_length, dims):
     for epsilon in epsilons:
         posterior_ess_dim(table=table, traj_length=traj_length, dims=dims, epsilon=epsilon)
     prior_ess_dim(table=table, traj_length=traj_length, dims=dims)
-    # rl_ess_dim(table=table, traj_length=traj_length, dims=dims)
+    rl_ess_dim(table=table, traj_length=traj_length, dims=dims)
 
 if __name__ == "__main__":
     os.makedirs(TODAY, exist_ok=True)
