@@ -330,8 +330,6 @@ def load_rl_model(device, traj_length, dim):
     except:
         model = PPO.load(MODEL.format(traj_length, dim))
     print('loaded model {}'.format(MODEL.format(traj_length, dim)+'.zip'))
-    import pdb; pdb.set_trace()
-
     policy = model.policy.to(device)
     return model, policy
 
