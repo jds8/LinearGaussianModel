@@ -996,8 +996,7 @@ def get_perturbed_posterior_outputs(posterior_evidence, dim, epsilons):
     outputs = []
     for epsilon in epsilons:
         name = 'posterior {}'.format(epsilon)
-        output = get_perturbed_posterior_output(posterior_evidence, dim, epsilon, name)
-        outputs.append(output)
+        outputs += [get_perturbed_posterior_output(posterior_evidence, dim, epsilon, name)]
     return outputs
 
 def plot_ess_estimators(outputs_with_names, fixed_feature):
@@ -1120,7 +1119,7 @@ def rl_ess_traj(traj_lengths, dim):
     plt.figure()
     outputs = []
     for traj_length in traj_lengths:
-        outputs += get_rl_output(ys=None, dim=dim, sample=True, traj_length=traj_length)
+        outputs += [get_rl_output(ys=None, dim=dim, sample=True, traj_length=traj_length)]
     make_ess_plot_nice(outputs, dim, NUM_SAMPLES, name='rl (traj_length {} dim {})'.format(traj_length, dim))
     plt.figure()
 
@@ -1129,7 +1128,7 @@ def rl_ess_dim(table, traj_length, dims):
     outputs = []
     for dim in dims:
         # ys = generate_trajectory(traj_length, A=single_gen_A, Q=single_gen_Q, C=single_gen_C, R=single_gen_R, mu_0=single_gen_mu_0, Q_0=single_gen_Q_0)[0]
-        outputs += get_rl_output(table=table, ys=None, dim=dim, sample=True, traj_length=traj_length)
+        outputs += [get_rl_output(table=table, ys=None, dim=dim, sample=True, traj_length=traj_length)]
     make_ess_plot_nice_dim(outputs, fixed_feature_string='traj_length', fixed_feature=traj_length,
                     num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, dims=dims,
                     xlabel='Latent Dimension', name='RL')
