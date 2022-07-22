@@ -1009,11 +1009,10 @@ def plot_ess_estimators(outputs_with_names, fixed_feature):
 
 def plot_ess_estimators_dim(outputs_with_names, dims):
     outputs = torch.stack([torch.tensor(output.output[output.name].ess) for output in outputs_with_names], dim=1)
-    x_vals = torch.arange(1, outputs.shape[1]+1)
     quantiles = torch.tensor([0.05, 0.5, 0.95])
     lower_ci, med, upper_ci = torch.quantile(outputs, quantiles, dim=0)
-    plt.plot(x_vals, med.squeeze(), label=outputs_with_names[0].name)
-    plt.fill_between(x_vals, y1=lower_ci, y2=upper_ci, alpha=0.3)
+    plt.plot(dims, med.squeeze(), label=outputs_with_names[0].name)
+    plt.fill_between(dims, y1=lower_ci, y2=upper_ci, alpha=0.3)
 
     ax = plt.gca()
     ax.yaxis.get_major_locator().set_params(integer=True)
