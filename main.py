@@ -13,7 +13,6 @@ from stable_baselines3.common.callbacks import BaseCallback
 from copy import deepcopy
 from generative_model import y_dist, sample_y, generate_trajectory, \
     gen_A, gen_Q, gen_C, gen_R, gen_mu_0, gen_Q_0, \
-    single_gen_A, single_gen_Q, single_gen_C, single_gen_R, single_gen_mu_0, single_gen_Q_0, \
     test_A, test_Q, test_C, test_R, test_mu_0, test_Q_0, \
     state_transition, score_state_transition, gen_covariance_matrix, \
     score_initial_state, score_y
@@ -330,6 +329,9 @@ def load_rl_model(device, traj_length, dim):
         model = PPO.load(MODEL.format(traj_length, dim)+'.zip')
     except:
         model = PPO.load(MODEL.format(traj_length, dim))
+    print('loaded model {}'.format(MODEL.format(traj_length, dim)+'.zip'))
+    import pdb; pdb.set_trace()
+
     policy = model.policy.to(device)
     return model, policy
 
@@ -372,6 +374,7 @@ def rl_estimate(ys, dim, N, env=None, traj_length=0, device='cpu'):
     _, policy = load_rl_model(device, traj_length=traj_length, dim=dim)
     return evaluate(ys, d=policy, N=N, env=env)
 
+
 class Estimator:
     def __init__(self, running_log_estimates, ci,
                  weight_mean, max_weight_prop, ess, ess_ci, label='RL'):
@@ -387,11 +390,29 @@ class Estimator:
         self.running_log_estimate_repeats.append(running_log_estimates)
         self.ess.append(ess)
 
-    def plot(self, ax=None):
-        ax = ax if ax is not None else plt
+    def plot(self):
         # plot prob estimates
         x_vals = torch.arange(1, self.running_log_estimate_repeats[0].squeeze().nelement()+1)
         lower_ci, med, upper_ci = torch.quantile(torch.stack(self.running_log_estimate_repeats).exp(), torch.tensor([0.05, 0.5, 0.95]), dim=0)
+        plt.plot(x_vals, med.squeeze(), label=self.label)
+        plt.fill_between(x_vals, y1=lower_ci, y2=upper_ci, alpha=0.3)
+
+    def plot_running_log_estimates(self):
+        self._plot_nice(xlen=self.running_log_estimate_repeats[0].squeeze().nelement(),
+                  data=torch.stack(self.running_log_estimate_repeats).exp(),
+                  quantiles=torch.tensor([0.05, 0.5, 0.95]))
+
+    def plot_ess(self):
+        self._plot_nice(xlen=self.ess[0].squeeze().nelement(),
+                  data=torch.stack(self.ess),
+                  quantiles=torch.tensor([0.05, 0.5, 0.95]))
+
+    def _plot_nice(self, xlen, data, quantiles):
+        assert quantiles.nelement() == 3
+
+        # plot prob estimates
+        x_vals = torch.arange(1, xlen+1)
+        lower_ci, med, upper_ci = torch.quantile(data, quantiles, dim=0)
         plt.plot(x_vals, med.squeeze(), label=self.label)
         plt.fill_between(x_vals, y1=lower_ci, y2=upper_ci, alpha=0.3)
 
@@ -490,141 +511,28 @@ def make_ess_versus_dimension_plot(outputs, num_samples):
     plt.savefig('{}/ess_versus_dimension_(traj_len: {}).png'.format(TODAY, traj_length))
     plt.close()
 
-def make_ess_plot(outputs, dimension, num_samples, name=''):
-    plt.figure()
-    plt.gca().set_yscale('log')
-    traj_lengths = []
-    ess = {}
-    for output in outputs:
-        traj_lengths.append(output.traj_length)
-        if output.is_estimators:
-            for key, val in output.is_estimators.items():
-                if key not in ess:
-                    ess[output.traj_length] = val.ess
-                else:
-                    ess[output.traj_length] += val.ess
-        else:
-            for key, val in output.rl_estimators.items():
-                if key not in ess:
-                    ess[output.traj_length] = val.ess
-                else:
-                    ess[output.traj_length] += val.ess
+def make_ess_plot_nice(outputs_with_names, fixed_feature_string,
+                       fixed_feature, num_samples, num_repeats,
+                       xlabel, name=''):
+    plot_ess_estimators(outputs_with_names, fixed_feature)
 
-    plt.scatter(traj_lengths, [torch.median(torch.tensor(e)) for k, e in ess.items()])
-    for traj_length, (k, e) in zip(traj_lengths, ess.items()):
-        lower, upper = torch.quantile(torch.tensor(e), torch.tensor([0.05, 0.95]), dim=0)
-        plt.vlines(x=traj_length, ymin=lower.item(), ymax=upper.item())
-        num_repeats = len(e)
-
-    # plt.scatter(traj_lengths, ess.values())
-    # for key, val in ess.items():
-    #     plt.scatter(traj_lengths, val, label=key)
-
-    plt.xlabel('Trajectory Length')
+    plt.xlabel(xlabel)
     plt.ylabel('Effective Sample Size')
-    plt.title('Effective Sample Size Versus Trajectory Length\n (num samples: {}, num repeats: {})'.format(num_samples, num_repeats))
+    plt.title('Effective Sample Size Versus {}\n (num samples: {}, num repeats: {})'.format(xlabel, num_samples, num_repeats))
     legend_without_duplicate_labels(plt.gca())
-    plt.savefig('{}/{}_ess_plot_dimension_{}.png'.format(TODAY, name, dimension))
+    plt.savefig('{}/{}_ess_plot_{}_{}.png'.format(TODAY, name, fixed_feature_string, fixed_feature))
     plt.close()
 
-def make_ci_plot(outputs, dimension):
-    plt.figure()
-    colors = iter(cm.rainbow(np.linspace(0, 1, len(outputs[0].is_estimators)+1)))
-    color_map = {}
-    traj_lengths = []
-    ci = {}
-    true_vals = []
-    for output in outputs:
-        traj_lengths.append(output.traj_length)
-        for key, val in output.is_estimators.items():
-            if key not in color_map:
-                color_map[key] = next(colors)
-            # plt.scatter(x=output.traj_length, y=val.ci[0], color=color_map[key], label=key)
-            # plt.scatter(x=output.traj_length, y=val.ci[1], color=color_map[key], label=key)
-            plt.axvline(x=output.traj_length, ymin=val.ci[0], ymax=val.ci[1], color=color_map[key], label=key)
-            break
-        # for key, val in output.rl_estimators.items():
-        #     if key not in color_map:
-        #         color_map[key] = next(colors)
-        #     plt.scatter(x=output.traj_length, y=val.ci[0], color=color_map[key], label=key)
-        #     plt.scatter(x=output.traj_length, y=val.ci[1], color=color_map[key], label=key)
-        #     break
-        true_vals.append(output.truth)
+def make_ess_plot_nice_dim(outputs_with_names, fixed_feature_string,
+                           fixed_feature, num_samples, num_repeats,
+                           dims, xlabel, name=''):
+    plot_ess_estimators_dim(outputs_with_names, dims)
 
-    for traj_len, true_val in zip(traj_lengths, true_vals):
-        plt.scatter(traj_len, true_val, label='true prob.', marker='x', color='b')
-
-    plt.xlabel('Trajectory Length')
-    plt.ylabel('Confidence Interval')
-    plt.title('Confidence Interval (true sample size) Versus Trajectory Length')
+    plt.xlabel(xlabel)
+    plt.ylabel('Effective Sample Size')
+    plt.title('Effective Sample Size Versus {}\n (num samples: {}, num repeats: {})'.format(xlabel, num_samples, num_repeats))
     legend_without_duplicate_labels(plt.gca())
-    plt.savefig('{}/ci_plot_dimension_{}.png'.format(TODAY, dimension))
-    plt.close()
-
-def make_ess_ci_plot(outputs, dimension):
-    plt.figure()
-    colors = iter(cm.rainbow(np.linspace(0, 1, len(outputs[0].is_estimators)+1)))
-    color_map = {}
-    traj_lengths = []
-    ci = {}
-    true_vals = []
-    for output in outputs:
-        traj_lengths.append(output.traj_length)
-        for key, val in output.is_estimators.items():
-            if key not in color_map:
-                color_map[key] = next(colors)
-            # plt.scatter(x=output.traj_length, y=val.ess_ci[0], color=color_map[key], label=key)
-            # plt.scatter(x=output.traj_length, y=val.ess_ci[1], color=color_map[key], label=key)
-            plt.axvline(x=output.traj_length, ymin=val.ess_ci[0], ymax=val.ess_ci[1], color=color_map[key], label=key)
-            break
-        # for key, val in output.rl_estimators.items():
-        #     if key not in color_map:
-        #         color_map[key] = next(colors)
-        #     plt.scatter(x=output.traj_length, y=val.ess_ci[0], color=color_map[key], label=key)
-        #     plt.scatter(x=output.traj_length, y=val.ess_ci[1], color=color_map[key], label=key)
-        #     break
-        true_vals.append(output.truth)
-
-    for traj_len, true_val in zip(traj_lengths, true_vals):
-        plt.scatter(traj_len, true_val, label='true prob.', marker='x', color='b')
-
-    plt.xlabel('Trajectory Length')
-    plt.ylabel('Confidence Interval')
-    plt.title('Confidence Interval (effective sample size) Versus Trajectory Length')
-    legend_without_duplicate_labels(plt.gca())
-    plt.savefig('{}/ess_ci_plot_dimension_{}.png'.format(TODAY, dimension))
-    plt.close()
-
-
-def display_diagnostics(outputs):
-    for output in outputs:
-        output.display_self()
-    
-
-def make_table_of_confidence_intervals(outputs, name='Event'):
-    columns = []
-    rows = []
-    cell_text = []
-    for i, output in enumerate(outputs):
-        cell_text.append([])
-        rows.append("Traj Length: {}".format(output.traj_length))
-        for key, is_est in output.is_estimators.items():
-            columns.append('IS (A: {}, Q: {})'.format(is_est.A, is_est.Q))
-            cell_text[i].append(is_est.ci)
-        for key, rl_est in output.rl_estimators.items():
-            columns.append('RL')
-            cell_text[i].append(rl_est.ci)
-        columns.append('truth')
-        cell_text[i].append(output.truth)
-    fig, axs = plt.subplots(2,1)
-    axs[0].axis('tight')
-    axs[0].axis('off')
-    axs[0].table(cellText=cell_text,
-            rowLabels=tuple(rows),
-            colLabels=tuple(columns),
-            loc='top')
-    plt.savefig('{}/{}_table_confidence_interval.png'.format(TODAY, name))
-    plt.close()
+    plt.savefig('{}/{}_ess_plot_{}_{}.png'.format(TODAY, name, fixed_feature_string, fixed_feature))
 
 
 class Plotter:
@@ -725,7 +633,7 @@ class Plotter:
                                                             idstr='A: {}, Q: {}'.format(_A, _Q))
 
                     # plot mean and empirical confidence interval
-                    is_estimator.plot()
+                    is_estimator.plot_running_log_estimates()
 
                 # add RL plot
                 try:
@@ -748,7 +656,7 @@ class Plotter:
 
             try:
                 # plot em
-                rl_estimator.plot()
+                rl_estimator.plot_running_log_estimates()
             except:
                 pass
 
@@ -822,53 +730,6 @@ class EventPlotter(Plotter):
             print('true dist (for traj_length {}) (dim {}): N({}, {})'.format(t, self.dimension, d.mean.item(), d.variance.item()))
         return super().plot_IS(traj_lengths, As, Qs, num_samples=num_samples, num_repeats=num_repeats)
 
-def kl_divergence(traj_length, p, q):
-    return 0.
-
-def collect_and_plot_dimension_outputs(ep, dimensions, table, As, Qs, traj_length, num_samples, num_repeats):
-    dim_outputs = []
-    for dimension in dimensions:
-        ep.reset(table, dimension)
-        outputs = ep.plot_IS(traj_lengths=torch.tensor([traj_length]), As=As, Qs=Qs,
-                             num_samples=num_samples, num_repeats=num_repeats)
-        dim_outputs.append(outputs[0])
-    make_ess_versus_dimension_plot(outputs=dim_outputs, num_samples=num_samples)
-
-
-def make_trajectory_plots(plotter, traj_lengths, As, Qs, dimension, num_samples, num_repeats):
-    outputs = plotter.plot_IS(traj_lengths=traj_lengths, As=As, Qs=Qs, num_samples=num_samples, num_repeats=num_repeats)
-    # make_table_of_confidence_intervals(outputs, name='EventWithCI')
-    display_diagnostics(outputs)
-    make_ess_plot(outputs, dimension, num_samples)
-
-    # make_ci_plot(outputs, dimension)
-    # make_ess_ci_plot(outputs, dimension)
-
-def plot_event_stuff():
-    event_prob = torch.tensor(0.02)
-    traj_length = 10
-    env = LinearGaussianSingleYEnv(A=single_gen_A, Q=single_gen_Q,
-                                   C=single_gen_C, R=single_gen_R,
-                                   mu_0=single_gen_mu_0,
-                                   Q_0=single_gen_Q_0, ys=None,
-                                   traj_length=traj_length,
-                                   sample=True,
-                                   event_prob=event_prob)
-    dimension = 1
-    train(traj_length, env, dim=dimension)
-
-    os.makedirs(TODAY, exist_ok=True)
-    As = [] #[torch.rand(dimension, dimension)]
-    Qs = [] #[gen_covariance_matrix(dimension)]
-    num_samples = 10000
-    num_repeats = 10
-    ep = EventPlotter(event_prob=event_prob, fix_event=True, dim=dimension)
-    # collect_and_plot_dimension_outputs(ep=ep, As=[torch.rand(dimension, dimension)],
-    #                                    Qs=[gen_covariance_matrix(dimension)],
-    #                                    traj_length=traj_length, num_samples=num_samples,
-    #                                    num_repeats=num_repeats)
-    ep.dimension = dimension
-    make_trajectory_plots(plotter=ep, event_prob=event_prob, As=As, Qs=Qs, dimension=dimension, num_samples=num_samples, num_repeats=num_repeats)
 
 def train_dimensions(traj_length, dimensions, table):
     os.makedirs(TODAY, exist_ok=True)
@@ -907,37 +768,6 @@ def create_dimension_table(dimensions, random=False):
             table[dimension]['mu_0'] = torch.zeros(dimension)
             table[dimension]['Q_0'] = table[dimension]['Q']
     return table
-
-def plot_evidence_vs_trajectory():
-    os.makedirs(TODAY, exist_ok=True)
-    dimension = 1
-    traj_lengths = torch.arange(3, 7, 1)
-    # traj_lengths = torch.arange(10, 31, 10)
-    # for traj_length in traj_lengths:
-    #     env = LinearGaussianEnv(A=single_gen_A, Q=single_gen_Q,
-    #                             C=single_gen_C, R=single_gen_R,
-    #                             mu_0=single_gen_mu_0,
-    #                             Q_0=single_gen_Q_0, ys=None,
-    #                             traj_length=traj_length,
-    #                             sample=True)
-    #     train(traj_length, env, dim=dimension)
-
-    num_samples = NUM_SAMPLES
-    num_repeats = NUM_REPEATS
-    ep = EvidencePlotter(num_samples=num_samples, dim=dimension, A=single_gen_A, Q=single_gen_Q, C=single_gen_C, R=single_gen_R, mu_0=single_gen_mu_0, Q_0=single_gen_Q_0)
-    make_trajectory_plots(plotter=ep, traj_lengths=traj_lengths, As=[], Qs=[], dimension=dimension, num_samples=num_samples, num_repeats=num_repeats)
-
-def plot_evidence_vs_dim():
-    os.makedirs(TODAY, exist_ok=True)
-    dim_traj_length = 5
-    ep = EvidencePlotter(num_samples=NUM_SAMPLES, dim=1, A=single_gen_A, Q=single_gen_Q, C=single_gen_C, R=single_gen_R, mu_0=single_gen_mu_0, Q_0=single_gen_Q_0)
-    dimensions = torch.arange(1, 10, 1)
-    # dimensions = [torch.tensor(3)]
-
-    torch.manual_seed(dim_traj_length)
-    table = create_dimension_table(dimensions, random=False)
-    # train_dimensions(traj_length=dim_traj_length, dimensions=dimensions, table=table)
-    collect_and_plot_dimension_outputs(ep=ep, dimensions=dimensions, table=table, As=[], Qs=[], traj_length=dim_traj_length, num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS)
 
 def compute_posterior(A, Q, R, C, num_observations, dim):
     w = MultiGaussianRandomVariable(mu=0., sigma=torch.sqrt(Q), name="w")
@@ -1112,18 +942,22 @@ def get_prior_output(table, ys, dim, sample, traj_length=0):
                                                      idstr=name)
     return OutputWithName(prior_output, name)
 
-def get_rl_output(ys, dim, sample, traj_length=0):
+def get_rl_output(table, ys, dim, sample, traj_length=0):
     if ys is not None:
         traj_length = len(ys)
     rl_output = ImportanceOutput(traj_length=traj_length, ys=ys, dim=dim)
     name = 'rl (traj_len {} dim {})'.format(traj_length, dim)
+
+    A = table[dim]['A']
+    Q = table[dim]['Q']
+    C = table[dim]['C']
+    R = table[dim]['R']
+    mu_0 = table[dim]['mu_0']
+    Q_0 = table[dim]['Q_0']
+
     for _ in range(NUM_REPEATS):
-        env = LinearGaussianEnv(A=single_gen_A, Q=single_gen_Q,
-                                C=single_gen_C, R=single_gen_R,
-                                mu_0=single_gen_mu_0,
-                                Q_0=single_gen_Q_0, ys=ys,
-                                traj_length=traj_length,
-                                sample=sample)
+        env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q,
+                                ys=ys, traj_length=traj_length, sample=sample)
 
         eval_obj = rl_estimate(ys, dim=dim, N=NUM_SAMPLES, env=env, traj_length=traj_length)
         # add rl confidence interval
@@ -1168,14 +1002,30 @@ def get_perturbed_posterior_outputs(posterior_evidence, dim, epsilons):
         outputs.append(output)
     return outputs
 
-def plot_estimators(outputs_with_names, ax=None):
+def plot_ess_estimators(outputs_with_names, fixed_feature):
+    for output in outputs_with_names:
+        estimator = output.output[output.name]
+        estimator.plot_ess()
+
+def plot_ess_estimators_dim(outputs_with_names, dims):
+    outputs = torch.stack([torch.tensor(output.output[output.name].ess) for output in outputs_with_names], dim=1)
+    x_vals = torch.arange(1, outputs.shape[1]+1)
+    quantiles = torch.tensor([0.05, 0.5, 0.95])
+    lower_ci, med, upper_ci = torch.quantile(outputs, quantiles, dim=0)
+    plt.plot(x_vals, med.squeeze(), label=outputs_with_names[0].name)
+    plt.fill_between(x_vals, y1=lower_ci, y2=upper_ci, alpha=0.3)
+
+    ax = plt.gca()
+    ax.yaxis.get_major_locator().set_params(integer=True)
+
+def plot_running_log_estimates(outputs_with_names):
     plt.figure()
     for output in outputs_with_names:
         estimator = output.output[output.name]
-        estimator.plot(ax)
+        estimator.plot_running_log_estimates()
 
 def plot_convergence(outputs_with_names, traj_length, dim, true, name):
-    plot_estimators(outputs_with_names)
+    plot_running_log_estimates(outputs_with_names)
 
     # plot em
     plt.scatter(x=NUM_SAMPLES, y=true, label='True: {}'.format(true.item()), color='r')
@@ -1218,23 +1068,6 @@ def plot_dim(traj_length, dim):
 
     outputs = ep.plot_IS(traj_lengths=torch.tensor([traj_length]), As=[], Qs=[], num_samples=100, num_repeats=10, name='extra')
 
-def plot_traj():
-    os.makedirs(TODAY, exist_ok=True)
-    traj_lengths = [7, 8, 9, 10]
-    for traj_length in traj_lengths:
-        env = LinearGaussianEnv(A=single_gen_A, Q=single_gen_Q,
-                                C=single_gen_C, R=single_gen_R,
-                                mu_0=single_gen_mu_0,
-                                Q_0=single_gen_Q_0, ys=None,
-                                traj_length=traj_length,
-                                sample=True)
-        train(traj_length, env=env, dim=1)
-        ys = generate_trajectory(traj_length, A=single_gen_A, Q=single_gen_Q, C=single_gen_C, R=single_gen_R, mu_0=single_gen_mu_0, Q_0=single_gen_Q_0)[0]
-        ep = EvidencePlotter(num_samples=NUM_SAMPLES, dim=1, A=single_gen_A, Q=single_gen_Q, C=single_gen_C, R=single_gen_R, mu_0=single_gen_mu_0, Q_0=single_gen_Q_0)
-
-    outputs = ep.plot_IS(traj_lengths=traj_lengths, As=[], Qs=[], num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, name='extra')
-    make_ess_plot(outputs, dimension=1, num_samples=NUM_SAMPLES)
-
 def compare_convergence(table, traj_length, dim, epsilons):
     posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
     posterior_convergence(posterior_evidence=posterior_evidence, dim=dim, epsilons=epsilons)
@@ -1246,15 +1079,16 @@ def compare_convergence(table, traj_length, dim, epsilons):
 
 def get_posterior_ess_outputs(table, traj_length, dim, epsilon):
     posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
-    posterior_outputs_with_names = get_perturbed_posterior_outputs(posterior_evidence, dim, [epsilon])
-    return [o.output for o in posterior_outputs_with_names]
+    return get_perturbed_posterior_outputs(posterior_evidence, dim, [epsilon])
 
 def posterior_ess_traj(table, traj_lengths, dim, epsilon):
     os.makedirs(TODAY, exist_ok=True)
     outputs = []
     for traj_length in traj_lengths:
         outputs += get_posterior_ess_outputs(table, traj_length, dim, epsilon)
-    make_ess_plot(outputs, dim, NUM_SAMPLES, name='posterior_{}'.format(epsilon))
+    make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=dim,
+                       num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS,
+                       xlabel='Trajectory Length', name='posterior_{}'.format(epsilon))
     plt.figure()
 
 def posterior_ess_dim(table, traj_length, dims, epsilon):
@@ -1262,36 +1096,47 @@ def posterior_ess_dim(table, traj_length, dims, epsilon):
     outputs = []
     for dim in dims:
         outputs += get_posterior_ess_outputs(table, traj_length, dim, epsilon)
-    make_ess_plot(outputs, dim, NUM_SAMPLES, name='posterior_{}'.format(epsilon))
-    plt.figure()
+    make_ess_plot_nice_dim(outputs, fixed_feature_string='traj_length', fixed_feature=traj_length,
+                           num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, dims=dims,
+                           xlabel='Latent Dimension', name='posterior_{}'.format(epsilon))
 
 def prior_ess_traj(table, traj_lengths, dim):
     os.makedirs(TODAY, exist_ok=True)
     outputs = []
     for traj_length in traj_lengths:
-        prior_output_with_name = get_prior_output(table=table, ys=None, dim=dim, sample=True, traj_length=traj_length)
-        outputs += [prior_output_with_name.output]
-    make_ess_plot(outputs, dim, NUM_SAMPLES, name='prior')
+        outputs += [get_prior_output(table=table, ys=None, dim=dim, sample=True, traj_length=traj_length)]
+    make_ess_plot_nice(outputs, dim, NUM_SAMPLES, name='prior')
     plt.figure()
 
 def prior_ess_dim(table, traj_length, dims):
     os.makedirs(TODAY, exist_ok=True)
     outputs = []
     for dim in dims:
-        prior_output_with_name = get_prior_output(table=table, ys=None, dim=dim, sample=True, traj_length=traj_length)
-        outputs += [prior_output_with_name.output]
-    make_ess_plot(outputs, dim, NUM_SAMPLES, name='prior')
+        outputs += [get_prior_output(table=table, ys=None, dim=dim, sample=True, traj_length=traj_length)]
+    make_ess_plot_nice_dim(outputs, fixed_feature_string='traj_length', fixed_feature=traj_length,
+                           num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, dims=dims,
+                           xlabel='Latent Dimension', name='prior')
     plt.figure()
 
-def rl_ess(traj_lengths, dim):
+def rl_ess_traj(traj_lengths, dim):
     os.makedirs(TODAY, exist_ok=True)
     plt.figure()
     outputs = []
     for traj_length in traj_lengths:
+        outputs += get_rl_output(ys=None, dim=dim, sample=True, traj_length=traj_length)
+    make_ess_plot_nice(outputs, dim, NUM_SAMPLES, name='rl (traj_length {} dim {})'.format(traj_length, dim))
+    plt.figure()
+
+def rl_ess_dim(table, traj_length, dims):
+    os.makedirs(TODAY, exist_ok=True)
+    outputs = []
+    for dim in dims:
         # ys = generate_trajectory(traj_length, A=single_gen_A, Q=single_gen_Q, C=single_gen_C, R=single_gen_R, mu_0=single_gen_mu_0, Q_0=single_gen_Q_0)[0]
-        rl_output_with_name = get_rl_output(ys=None, dim=dim, sample=True, traj_length=traj_length)
-        outputs += [rl_output_with_name.output]
-    make_ess_plot(outputs, dim, NUM_SAMPLES, name='rl (traj_length {} dim {})'.format(traj_length, dim))
+        outputs += get_rl_output(table=table, ys=None, dim=dim, sample=True, traj_length=traj_length)
+    make_ess_plot_nice_dim(outputs, fixed_feature_string='traj_length', fixed_feature=traj_length,
+                    num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, dims=dims,
+                    xlabel='Latent Dimension', name='RL')
+
     plt.figure()
 
 def execute_posterior_ess_traj(table, traj_lengths, epsilons, dim):
@@ -1319,35 +1164,34 @@ def execute_ess_traj(table, traj_lengths, dim, epsilons):
     for epsilon in epsilons:
         posterior_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, epsilon=epsilon)
     prior_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim)
-    rl_ess(traj_lengths, dim)
+    rl_ess_traj(traj_lengths, dim)
 
 def execute_ess_dim(table, traj_length, dims):
     os.makedirs(TODAY, exist_ok=True)
     for epsilon in epsilons:
         posterior_ess_dim(table=table, traj_length=traj_length, dims=dims, epsilon=epsilon)
     prior_ess_dim(table=table, traj_length=traj_length, dims=dims)
-    rl_ess(traj_lengths, dim)
+    # rl_ess_dim(table=table, traj_length=traj_length, dims=dims)
 
 if __name__ == "__main__":
     os.makedirs(TODAY, exist_ok=True)
     epsilons = [-5e-3, 0.0, 5e-3]
-    traj_lengths = torch.arange(3, 10, 1)
-    dim = 2
-    table = create_dimension_table(torch.tensor([dim]), random=False)
+    # traj_lengths = torch.arange(3, 10, 1)
+    # dim = 2
+    # table = create_dimension_table(torch.tensor([dim]), random=False)
 
     # traj plots
-    execute_compare_convergence_traj(table=table, traj_lengths=traj_lengths, epsilons=epsilons, dim=dim)
+    # execute_compare_convergence_traj(table=table, traj_lengths=traj_lengths, epsilons=epsilons, dim=dim)
 
     # dim plots
-    # dims = np.arange(1, 30, 1)
-    # table = create_dimension_table(dims, random=False)
-    # traj_length = torch.tensor(5)
+    # dims = np.arange(2, 30, 1)
+    dims = np.arange(2, 4, 1)
+    table = create_dimension_table(dims, random=False)
+    traj_length = torch.tensor(5)
     # execute_compare_convergence_dim(table=table, traj_length=traj_length, epsilons=epsilons, dims=dims)
 
-    # prior_ess(traj_lengths=torch.arange(2, 17, 1), dim=1)
-    # execute_posterior_ess(table=table, traj_lengths=traj_lengths, epsilons=epsilons, dim=dim)
-    # rl_ess(traj_lengths=torch.arange(1, 10, 1), dim=1)
+    execute_ess_dim(table, traj_length, dims)
 
-    # plot_traj()
-    # plot_evidence_vs_trajectory()
-    # plot_evidence_vs_dim()
+    # prior_ess_dim(traj_lengths=torch.arange(2, 17, 1), dim=1)
+    # execute_posterior_ess_dim(table=table, traj_lengths=traj_lengths, epsilons=epsilons, dim=dim)
+    # rl_ess(traj_lengths=torch.arange(1, 10, 1), dim=1)
