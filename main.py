@@ -17,11 +17,14 @@ from generative_model import y_dist, sample_y, generate_trajectory, \
     state_transition, score_state_transition, gen_covariance_matrix, \
     score_initial_state, score_y
     # A, Q, C, R, mu_0, Q_0, \
-import wandb
+# import wandb
 from linear_gaussian_env import LinearGaussianEnv, LinearGaussianSingleYEnv
 from math_utils import logvarexp, importance_sampled_confidence_interval, log_effective_sample_size, log_max_weight_proportion, log_mean
 from plot_utils import legend_without_duplicate_labels
 from linear_gaussian_prob_prog import MultiGaussianRandomVariable, GaussianRandomVariable, MultiLinearGaussian, LinearGaussian, VecLinearGaussian
+from evaluation import EvaluationObject, evaluate
+from dimension_table import create_dimension_table
+from filtering_posterior import compute_filtering_posteriors, evaluate_filtering_posterior
 
 # model name
 # MODEL = 'trial_linear_gaussian_model_(traj_{}_dim_{})'
@@ -57,15 +60,16 @@ class CustomCallback(BaseCallback):
         if "algo" not in d:
             d["algo"] = type(self.model).__name__
         for key in self.model.__dict__:
-            if key in wandb.config:
-                continue
+#             if key in wandb.config:
+                # continue
             if type(self.model.__dict__[key]) in [float, int, str]:
                 d[key] = self.model.__dict__[key]
             else:
                 d[key] = str(self.model.__dict__[key])
         if self.gradient_save_freq > 0:
-            wandb.watch(self.model.policy, log_freq=self.gradient_save_freq, log="all")
-        wandb.config.setdefaults(d)
+            pass
+#             wandb.watch(self.model.policy, log_freq=self.gradient_save_freq, log="all")
+#         wandb.config.setdefaults(d)
 
     def eval_policy(self, policy, env):
         #
@@ -99,11 +103,11 @@ class CustomCallback(BaseCallback):
         policy = lambda obs_: self.model.predict(obs_, deterministic=True)[0]
         avg_return, avg_horizon = self.eval_policy(policy, self.training_env)
         self.training_env.reset()
-        # log to wandb
-        wandb.log({'det_avg_return':avg_return,
-                   'det_avg_horizon':avg_horizon,
-                   'time_steps': self.num_timesteps,
-                   'updates': self.model._n_updates})
+#         # log to wandb
+#         wandb.log({'det_avg_return':avg_return,
+                   # 'det_avg_horizon':avg_horizon,
+                   # 'time_steps': self.num_timesteps,
+                   # 'updates': self.model._n_updates})
         return None
 
     def _on_rollout_start(self) -> None:
@@ -121,13 +125,13 @@ class CustomCallback(BaseCallback):
             avg_return, avg_horizon, avg_wp = self.eval_policy(policy, self.training_env)
             self.training_env.reset()
             #
-            wandb.log({'det_avg_return':avg_return,
-                       'det_avg_horizon':avg_horizon,
-                       'det_avg_wp':avg_wp,
-                       'stoch_avg_return': np.mean([val['l'] for val in self.model.ep_info_buffer]),
-                       'stoch_avg_horizon': np.mean([val['r'] for val in self.model.ep_info_buffer]),
-                       'time_steps': self.num_timesteps,
-                       'updates': self.model._n_updates})
+#             wandb.log({'det_avg_return':avg_return,
+                       # 'det_avg_horizon':avg_horizon,
+                       # 'det_avg_wp':avg_wp,
+                       # 'stoch_avg_return': np.mean([val['l'] for val in self.model.ep_info_buffer]),
+                       # 'stoch_avg_horizon': np.mean([val['r'] for val in self.model.ep_info_buffer]),
+                       # 'time_steps': self.num_timesteps,
+                       # 'updates': self.model._n_updates})
             # New best model, you could save the agent here
             if avg_return > self.best_mean_reward:
                 self.best_mean_reward = avg_return
@@ -135,10 +139,11 @@ class CustomCallback(BaseCallback):
 
         # otherwise just log stochastic info
         else:
-            wandb.log({'stoch_avg_return': np.mean([val['l'] for val in self.model.ep_info_buffer]),
-                       'stoch_avg_horizon': np.mean([val['r'] for val in self.model.ep_info_buffer]),
-                       'time_steps': self.num_timesteps,
-                       'updates': self.model._n_updates})
+            pass
+#             wandb.log({'stoch_avg_return': np.mean([val['l'] for val in self.model.ep_info_buffer]),
+                       # 'stoch_avg_horizon': np.mean([val['r'] for val in self.model.ep_info_buffer]),
+                       # 'time_steps': self.num_timesteps,
+                       # 'updates': self.model._n_updates})
 
     def _on_rollout_end(self) -> None:
         """
@@ -160,14 +165,14 @@ class CustomCallback(BaseCallback):
         if self.env.states:
             q_log_prob = self.model.policy.to(self.env.states[-1].device).evaluate_actions(obs=self.env.states[-1].t(), actions=self.env.actions[-1])[1]
             # note that in this case the weights are p(y|x)p(x)/q(x)
-            wandb.log({'log weights': self.env.liks[-1] + self.env.p_log_probs[-1] - q_log_prob})
+#             wandb.log({'log weights': self.env.liks[-1] + self.env.p_log_probs[-1] - q_log_prob})
 
         return True
 
 
 def train(traj_length, env, dim):
     params = {}
-    run = wandb.init(project='linear_gaussian_model training', save_code=True, config=params, entity='iai')
+#     run = wandb.init(project='linear_gaussian_model training', save_code=True, config=params, entity='iai')
 
     # network archictecture
     arch = [1024 for _ in range(3)]
@@ -211,117 +216,6 @@ class ProposalDist:
         prev_xt = obs.reshape(-1, 1)[0:self.prev_xt_shape, :]
         return (state_transition(prev_xt, self.A, self.Q), None)
 
-
-
-class EvaluationObject:
-    def __init__(self, running_log_estimates, sigma_est, xts, states, actions, priors, liks, log_weights):
-        self.running_log_estimates = running_log_estimates
-        self.sigma_est = sigma_est
-        self.xts = xts
-        self.states = states
-        self.actions = actions
-        self.priors = priors
-        self.liks = liks
-        self.log_weights = log_weights
-
-        self._compute_statistics()
-
-    def _compute_statistics(self):
-        self._compute_importance_weight_diagnostics()
-        self._compute_confidence_intervals()
-
-    def _compute_confidence_intervals(self):
-        self.running_ci = importance_sampled_confidence_interval(self.running_log_estimates.exp(), self.sigma_est,
-                                                                 len(self.running_log_estimates), epsilon=torch.tensor(0.05))
-        self.running_ess_ci = importance_sampled_confidence_interval(self.running_log_estimates.exp(), self.ess_sigma_est,
-                                                                     self.log_effective_sample_size.exp(), epsilon=torch.tensor(0.05))
-        self.ci = (round(self.running_ci[0][-1].item(), 4), round(self.running_ci[1][-1].item(), 4))
-        self.ess_ci = (round(self.running_ess_ci[0][-1].item(), 4), round(self.running_ess_ci[1][-1].item(), 4))
-
-    def _compute_importance_weight_diagnostics(self):
-        self.log_weight_mean = log_mean(self.log_weights)
-        self.log_max_weight_prop = log_max_weight_proportion(self.log_weights)
-        self.log_effective_sample_size = log_effective_sample_size(self.log_weights)
-        self.ess_sigma_est = self.sigma_est / self.log_weight_mean.exp()
-
-
-def evaluate(ys, d, N, env=None):
-    run = wandb.init(project='linear_gaussian_model evaluation', save_code=True, entity='iai')
-    print('\nevaluating...')
-    if env is None:
-        # create env
-        if env is None:
-            env = LinearGaussianEnv(A=gen_A, Q=gen_Q,
-                                    C=gen_C, R=gen_R,
-                                    mu_0=gen_mu_0,
-                                    Q_0=gen_Q_0, ys=ys,
-                                    sample=False)
-
-    # evidence estimate
-    evidence_est = torch.tensor(0.).reshape(1, -1)
-    log_evidence_est = torch.tensor(0.).reshape(1, -1)
-    total_rewards = []
-    # collect log( p(x,y)/q(x) )
-    log_p_y_over_qs = torch.zeros(N)
-    # keep track of log evidence estimates up to N sample trajectories
-    running_log_evidence_estimates = []
-    # keep track of (log) weights p(x) / q(x)
-    log_weights = []
-    # evaluate N times
-    for i in range(N):
-        done = False
-        # get first obs
-        obs = env.reset()
-        # keep track of xs
-        xs = []
-        # keep track of prior over actions p(x)
-        log_p_x = torch.tensor(0.).reshape(1, -1)
-        log_p_y_given_x = torch.tensor(0.).reshape(1, -1)
-        # collect actions, likelihoods
-        states = [obs]
-        actions = []
-        priors = []
-        liks = []
-        xts = []
-        total_reward = 0.
-        while not done:
-            xt = d.predict(obs, deterministic=False)[0]
-            xts.append(env.prev_xt)
-            obs, reward, done, info = env.step(xt)
-            total_reward += reward
-            states.append(obs)
-            priors.append(info['prior_reward'])
-            liks.append(info['lik_reward'])
-            log_p_x += info['prior_reward']
-            log_p_y_given_x += info['lik_reward']
-            actions.append(info['action'])
-            xs.append(xt)
-        if isinstance(xs[0], torch.Tensor):
-            xs = torch.cat(xs).reshape(-1, env.traj_length)
-        else:
-            xs = torch.tensor(np.array(xs)).reshape(-1, env.traj_length)
-
-        # log p(x,y)
-        log_p_y_x = log_p_y_given_x + log_p_x
-        log_qrobs = torch.zeros(len(env.states))
-        for j in range(len(env.states)):
-            state = env.states[j]
-            action = actions[j]
-            log_qrobs[j] = d.evaluate_actions(obs=state.t(), actions=action)[1].sum().item()
-
-        log_q = torch.sum(log_qrobs)
-        log_p_y_over_qs[i] = (log_p_y_x - log_q).item()
-        running_log_evidence_estimates.append(torch.logsumexp(log_p_y_over_qs[0:i+1], -1) - torch.log(torch.tensor(i+1.)))
-        log_weights.append(log_p_x - log_q)  # ignore these since we consider the weights to be p(y|x)p(x)/q(x)
-        total_rewards.append(total_reward)
-        wandb.log({'total_reward': total_reward})
-
-    # calculate variance estmate as
-    # $\hat{\sigma}_{int}^2=(n(n-1))^{-1}\sum_{i=1}^n(f_iW_i-\overline{fW})^2$
-    sigma_est = torch.sqrt( (logvarexp(log_p_y_over_qs) - torch.log(torch.tensor(len(log_p_y_over_qs) - 1, dtype=torch.float32))).exp() )
-    return EvaluationObject(running_log_estimates=torch.tensor(running_log_evidence_estimates), sigma_est=sigma_est,
-                            xts=xts, states=states, actions=actions, priors=priors, liks=liks,
-                            log_weights=log_p_y_over_qs)
 
 def load_rl_model(device, traj_length, dim):
     # load model
@@ -742,30 +636,6 @@ def train_dimensions(traj_length, dimensions, table):
                                 ys=None, traj_length=traj_length, sample=True)
         train(traj_length, env, dim=dimension)
 
-def create_dimension_table(dimensions, random=False):
-    table = {}
-    if random:
-        for dim in dimensions:
-            dimension = dim.item() if isinstance(dim, torch.Tensor) else dim
-            table[dimension] = {}
-            table[dimension]['A'] = torch.rand(dimension, dimension)
-            table[dimension]['Q'] = gen_covariance_matrix(dimension)
-            table[dimension]['C'] = torch.rand(1, dimension)
-            table[dimension]['R'] = torch.rand(1, 1)
-            table[dimension]['mu_0'] = torch.zeros(dimension)
-            table[dimension]['Q_0'] = table[dimension]['Q']
-    else:
-        for dim in dimensions:
-            dimension = dim.item() if isinstance(dim, torch.Tensor) else dim
-            table[dimension] = {}
-            table[dimension]['A'] = torch.eye(dimension, dimension)
-            table[dimension]['Q'] = torch.eye(dimension)
-            table[dimension]['C'] = torch.eye(1, dimension)
-            table[dimension]['R'] = torch.eye(1, 1)
-            table[dimension]['mu_0'] = torch.zeros(dimension)
-            table[dimension]['Q_0'] = table[dimension]['Q']
-    return table
-
 def compute_posterior(A, Q, R, C, num_observations, dim):
     w = MultiGaussianRandomVariable(mu=0., sigma=torch.sqrt(Q), name="w")
     v = MultiGaussianRandomVariable(mu=0., sigma=torch.sqrt(R), name="v")
@@ -778,12 +648,14 @@ def compute_posterior(A, Q, R, C, num_observations, dim):
         xt = MultiLinearGaussian(a=A, x=xt, b=w, name="x")
         xs.append(xt)
 
-    prior = xs[num_observations-1].likelihood()
-    for i in range(num_observations-2, 0, -1):
-        lik = xs[i].likelihood()
-        prior *= lik
+    prior = None
+    if num_observations > 1:
+        prior = xs[num_observations-1].likelihood()
+        for i in range(num_observations-2, 0, -1):
+            lik = xs[i].likelihood()
+            prior *= lik
     p_x_0 = xs[0].prior()
-    prior *= p_x_0
+    prior = p_x_0 if prior is None else prior * p_x_0
 
     noise = v.prior()**num_observations
 
@@ -797,7 +669,7 @@ def condition_posterior(td, obs):
     return td.dist(arg={'value': obs})
 
 def evaluate_posterior(ys, N, td, env=None):
-    run = wandb.init(project='linear_gaussian_model evaluation', save_code=True, entity='iai')
+#     run = wandb.init(project='linear_gaussian_model evaluation', save_code=True, entity='iai')
     print('\nevaluating...')
     if env is None:
         # create env
@@ -869,7 +741,7 @@ def evaluate_posterior(ys, N, td, env=None):
             running_log_evidence_estimates.append(torch.logsumexp(log_p_y_over_qs[0:i+1], -1) - torch.log(torch.tensor(i+1.)))
         log_weights.append(log_p_x - log_q)  # ignore these since we consider the weights to be p(y|x)p(x)/q(x)
         total_rewards.append(total_reward)
-        wandb.log({'total_reward': total_reward})
+#         wandb.log({'total_reward': total_reward})
 
     # calculate variance estmate as
     # $\hat{\sigma}_{int}^2=(n(n-1))^{-1}\sum_{i=1}^n(f_iW_i-\overline{fW})^2$
@@ -884,7 +756,7 @@ class PosteriorEvidence:
         self.td = td
         self.ys = ys
         self.evidence = evidence
-        self.env =env
+        self.env = env
 
 
 def compute_evidence(table, traj_length, dim):
@@ -978,10 +850,31 @@ def get_perturbed_posterior_output(posterior_evidence, dim, epsilon, name):
     for _ in range(NUM_REPEATS):
         eval_obj = evaluate_posterior(ys=ys, N=NUM_SAMPLES, td=td, env=env)
         posterior_estimator = posterior_output.add_rl_estimator(running_log_estimates=eval_obj.running_log_estimates,
-                                                                      ci=eval_obj.ci, weight_mean=eval_obj.log_weight_mean.exp(),
-                                                                      max_weight_prop=eval_obj.log_max_weight_prop.exp(),
-                                                                      ess=eval_obj.log_effective_sample_size.exp(),
-                                                                      ess_ci=eval_obj.ess_ci, idstr=name)
+                                                                ci=eval_obj.ci, weight_mean=eval_obj.log_weight_mean.exp(),
+                                                                max_weight_prop=eval_obj.log_max_weight_prop.exp(),
+                                                                ess=eval_obj.log_effective_sample_size.exp(),
+                                                                ess_ci=eval_obj.ess_ci, idstr=name)
+    return OutputWithName(posterior_output, name)
+
+
+def get_perturbed_posterior_filtering_output(table, posterior_evidence, dim, epsilon, name):
+    ys = posterior_evidence.ys
+    true_posterior = posterior_evidence.td
+    env = posterior_evidence.env
+    fps, ys = compute_filtering_posteriors(table=table, num_obs=len(posterior_evidence.ys), dim=dim, ys=posterior_evidence.ys)
+
+    posterior_output = ImportanceOutput(traj_length=len(ys), ys=ys, dim=dim)
+    # get importance weighted score for comparison
+
+    print('epsilon being ignored in get_perturbed_posterior_filtering_output')
+
+    for _ in range(NUM_REPEATS):
+        eval_obj = evaluate_filtering_posterior(ys=ys, N=NUM_SAMPLES, tds=fps, env=env)
+        posterior_estimator = posterior_output.add_rl_estimator(running_log_estimates=eval_obj.running_log_estimates,
+                                                                ci=eval_obj.ci, weight_mean=eval_obj.log_weight_mean.exp(),
+                                                                max_weight_prop=eval_obj.log_max_weight_prop.exp(),
+                                                                ess=eval_obj.log_effective_sample_size.exp(),
+                                                                ess_ci=eval_obj.ess_ci, idstr=name)
     return OutputWithName(posterior_output, name)
 
 
@@ -996,6 +889,13 @@ def get_perturbed_posterior_outputs(posterior_evidence, dim, epsilons):
     for epsilon in epsilons:
         name = 'posterior {}'.format(epsilon)
         outputs += [get_perturbed_posterior_output(posterior_evidence, dim, epsilon, name)]
+    return outputs
+
+def get_perturbed_posterior_filtering_outputs(table, posterior_evidence, dim, epsilons):
+    outputs = []
+    for epsilon in epsilons:
+        name = 'posterior filtering {}'.format(epsilon)
+        outputs += [get_perturbed_posterior_filtering_output(table, posterior_evidence, dim, epsilon, name)]
     return outputs
 
 def plot_ess_estimators(outputs_with_names, fixed_feature):
@@ -1051,6 +951,11 @@ def posterior_convergence(posterior_evidence, dim, epsilons):
     traj_length = len(posterior_evidence.ys)
     plot_convergence(posterior_outputs_with_names, traj_length, dim, posterior_evidence.evidence, 'posterior')
 
+def posterior_filtering_convergence(table, posterior_evidence, dim, epsilons):
+    posterior_outputs_with_names = get_perturbed_posterior_filtering_outputs(table, posterior_evidence, dim, epsilons)
+    traj_length = len(posterior_evidence.ys)
+    plot_convergence(posterior_outputs_with_names, traj_length, dim, posterior_evidence.evidence, 'posterior_filtering')
+
 def prior_convergence(table, ys, truth, dim):
     prior_outputs_with_name = get_prior_output(table=table, ys=ys, dim=dim, sample=False)
     traj_length = len(ys)
@@ -1078,6 +983,8 @@ def plot_dim(traj_length, dim):
 
     outputs = ep.plot_IS(traj_lengths=torch.tensor([traj_length]), As=[], Qs=[], num_samples=100, num_repeats=10, name='extra')
 
+
+
 def compare_convergence(table, traj_length, dim, epsilons):
     posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
     posterior_convergence(posterior_evidence=posterior_evidence, dim=dim, epsilons=epsilons)
@@ -1090,6 +997,10 @@ def compare_convergence(table, traj_length, dim, epsilons):
 def get_posterior_ess_outputs(table, traj_length, dim, epsilon):
     posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
     return get_perturbed_posterior_outputs(posterior_evidence, dim, [epsilon])
+
+def get_posterior_filtering_ess_outputs(table, traj_length, dim, epsilon):
+    posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
+    return get_perturbed_posterior_filtering_outputs(table=table, posterior_evidence=posterior_evidence, dim=dim, epsilons=[epsilon])
 
 def posterior_ess_traj(table, traj_lengths, dim, epsilon):
     os.makedirs(TODAY, exist_ok=True)
@@ -1108,6 +1019,15 @@ def posterior_ess_dim(table, traj_length, dims, epsilon):
     make_ess_plot_nice_dim(outputs, fixed_feature_string='traj_length', fixed_feature=traj_length,
                            num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, dims=dims,
                            xlabel='Latent Dimension', name='posterior_{}'.format(epsilon))
+
+def posterior_filtering_ess_traj(table, traj_lengths, dim, epsilon):
+    os.makedirs(TODAY, exist_ok=True)
+    outputs = []
+    for traj_length in traj_lengths:
+        outputs += get_posterior_filtering_ess_outputs(table, traj_length, dim, epsilon)
+    make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=dim,
+                       num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, traj_lengths=traj_lengths,
+                       xlabel='Trajectory Length', name='posterior_filtering')
 
 def prior_ess_traj(table, traj_lengths, dim):
     os.makedirs(TODAY, exist_ok=True)
@@ -1148,7 +1068,6 @@ def rl_ess_dim(table, traj_length, dims):
     make_ess_plot_nice_dim(outputs, fixed_feature_string='traj_length', fixed_feature=traj_length,
                     num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, dims=dims,
                     xlabel='Latent Dimension', name='RL')
-
     plt.figure()
 
 def execute_posterior_ess_traj(table, traj_lengths, epsilons, dim):
@@ -1176,7 +1095,8 @@ def execute_ess_traj(table, traj_lengths, dim, epsilons):
     plt.gca().set_yscale('log')
     for epsilon in epsilons:
         posterior_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, epsilon=epsilon)
-    prior_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim)
+    posterior_filtering_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, epsilon=epsilons[0])
+    # prior_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim)
     # rl_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim)
 
 def execute_ess_dim(table, traj_length, dims, epsilons):
@@ -1187,10 +1107,82 @@ def execute_ess_dim(table, traj_length, dims, epsilons):
     prior_ess_dim(table=table, traj_length=traj_length, dims=dims)
     rl_ess_dim(table=table, traj_length=traj_length, dims=dims)
 
+def trial_evidence(table, traj_length, dim):
+    posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
+    return posterior_evidence.truth
+
+def compute_evidence(table, traj_length, dim):
+    os.makedirs(TODAY, exist_ok=True)
+
+    A = table[dim]['A']
+    Q = table[dim]['Q']
+    C = table[dim]['C']
+    R = table[dim]['R']
+    mu_0 = table[dim]['mu_0']
+    Q_0 = table[dim]['Q_0']
+
+    # ys = generate_trajectory(traj_length, A=single_gen_A, Q=single_gen_Q, C=single_gen_C, R=single_gen_R, mu_0=single_gen_mu_0, Q_0=single_gen_Q_0)[0]
+    # env = LinearGaussianEnv(A=single_gen_A, Q=single_gen_Q,
+    #                         C=single_gen_C, R=single_gen_R,
+    #                         mu_0=single_gen_mu_0,
+    #                         Q_0=single_gen_Q_0, ys=ys,
+    #                         sample=True)
+
+    ys = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0]
+    env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, ys=ys, sample=True)
+
+    posterior = compute_posterior(A=A, Q=Q, C=C, R=R, num_observations=len(ys), dim=dim)
+    td = condition_posterior(posterior, ys)
+    eval_obj = evaluate_posterior(ys=ys, N=1, td=td, env=env)
+    true = eval_obj.running_log_estimates[0].exp()
+    print('True evidence: {}'.format(true))
+
+    return PosteriorEvidence(td, ys, true, env)
+
+def execute_filtering_posterior_convergence(table, traj_lengths, epsilons, dim):
+    os.makedirs(TODAY, exist_ok=True)
+    for traj_length in traj_lengths:
+        posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
+        posterior_filtering_convergence(table=table, posterior_evidence=posterior_evidence, dim=dim, epsilons=epsilons)
+
+def verify_filtering_posterior():
+    os.makedirs(TODAY, exist_ok=True)
+    epsilons = [-5e-2]
+    traj_lengths = torch.arange(2, 5, 1)
+    dim = 1
+    table = create_dimension_table(torch.tensor([dim]), random=False)
+
+    traj_length = 5
+    posterior_evidence = compute_evidence(table, traj_length, dim)
+
+    fps, ys = compute_filtering_posteriors(table=table, num_obs=traj_length, dim=dim, ys=posterior_evidence.ys)
+
+    A = table[dim]['A']
+    Q = table[dim]['Q']
+    C = table[dim]['C']
+    R = table[dim]['R']
+    mu_0 = table[dim]['mu_0']
+    Q_0 = table[dim]['Q_0']
+    env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, ys=ys, sample=True)
+
+    eval_obj = evaluate_filtering_posterior(ys=ys, N=2, tds=fps, env=env)
+    actions = eval_obj.actions
+    true_score = posterior_evidence.td.log_prob(torch.tensor(actions))
+
+    actions = [None] + actions
+    print('true posterior score: ', true_score)
+    score = torch.tensor(0.)
+    for i, (action, td) in enumerate(zip(actions[1:], fps)):
+        score += td.condition(y_values=ys[i:], x_value=actions[i]).log_prob(action)
+    print('filtering posterior score: ', score)
+
+
 if __name__ == "__main__":
     os.makedirs(TODAY, exist_ok=True)
-    epsilons = [-5e-3, 0.0, 5e-3]
-    traj_lengths = torch.arange(2, 5, 1)
+
+    # epsilons = [-5e-3, 0.0, 5e-3]
+    epsilons = [-5e-2, 0.0]
+    traj_lengths = torch.arange(10, 20, 1)
     dim = 1
     table = create_dimension_table(torch.tensor([dim]), random=False)
 
@@ -1200,13 +1192,19 @@ if __name__ == "__main__":
 
     # dim plots
     # dims = np.arange(2, 30, 1)
-    # dims = np.arange(2, 4, 1)
+    # dims = np.arange(10, 22, 1)
     # table = create_dimension_table(dims, random=False)
     # traj_length = torch.tensor(5)
     # execute_compare_convergence_dim(table=table, traj_length=traj_length, epsilons=epsilons, dims=dims)
 
-    # execute_ess_dim(table, traj_length, dims, epsilsons)
+    # execute_ess_dim(table, traj_length, dims, epsilons)
 
     # prior_ess_dim(traj_lengths=torch.arange(2, 17, 1), dim=1)
     # execute_posterior_ess_dim(table=table, traj_length=traj_length, epsilons=epsilons, dim=dim)
     # rl_ess(traj_lengths=torch.arange(1, 10, 1), dim=1)
+
+    # evidence trials
+    # traj_length = 5
+    # truth = trial_evidence(table, traj_length, dim)
+
+    # execute_filtering_posterior_convergence(table, traj_lengths, epsilons, dim)
