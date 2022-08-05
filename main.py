@@ -984,6 +984,59 @@ def plot_dim(traj_length, dim):
     outputs = ep.plot_IS(traj_lengths=torch.tensor([traj_length]), As=[], Qs=[], num_samples=100, num_repeats=10, name='extra')
 
 
+class EvidenceConvergence:
+    def __init__(self, posterior_evidence, dim, lower_quantile, upper_quantile):
+        self.posterior_evidence = posterior_evidence
+        self.dim = dim
+        self.lower_quantile = lower_quantile
+        self.upper_quantile = upper_quantile
+
+    def compute_data(self, data):
+        lower_ci, med, upper_ci = torch.quantile(data, torch.tensor([self.lower_quantile, self.upper_quantile]), dim=0)
+
+
+class PosteriorConvergence(EvidenceConvergence):
+    def __init__(self, posterior_evidence, dim, epsilons):
+        super(Posterior_Evidence, self).__init__(posterior_evidence, dim)
+        self.epsilons = epsilons
+
+    def get_output_with_name(self, epsilon):
+        ys = self.posterior_evidence.ys
+        true_posterior = self.posterior_evidence.td
+        env = self.posterior_evidence.env
+
+        name = 'posterior {}'.format(epsilon)
+
+        posterior_output = ImportanceOutput(traj_length=len(ys), ys=ys, dim=dim)
+        # get importance weighted score for comparison
+        td = dist.MultivariateNormal(true_posterior.mean, true_posterior.covariance_matrix + epsilon * torch.eye(true_posterior.mean.shape[0]))
+
+        for _ in range(NUM_REPEATS):
+            eval_obj = evaluate_posterior(ys=ys, N=NUM_SAMPLES, td=td, env=env)
+            posterior_estimator = posterior_output.add_rl_estimator(running_log_estimates=eval_obj.running_log_estimates,
+                                                                    ci=eval_obj.ci, weight_mean=eval_obj.log_weight_mean.exp(),
+                                                                    max_weight_prop=eval_obj.log_max_weight_prop.exp(),
+                                                                    ess=eval_obj.log_effective_sample_size.exp(),
+                                                                    ess_ci=eval_obj.ess_ci, idstr=name)
+        return OutputWithName(posterior_output, name)
+
+
+class PriorConvergence(EvidenceConvergence):
+    def __init__(self, posterior_evidence, dim):
+        super(Posterior_Evidence, self).__init__(posterior_evidence, dim)
+
+    def get_output_with_name(self, table):
+        return get_prior_output(table=table, ys=self.posterior.ys, dim=self.dim, sample=False)
+
+
+class RLConvergence(EvidenceConvergence):
+    def __init__(self, posterior_evidence, dim):
+        super(Posterior_Evidence, self).__init__(posterior_evidence, dim)
+        self.name = 'prior'
+
+    def get_output_with_name(self, table):
+        return get_rl_output(table=table, ys=self.posterior_evidence.ys, dim=self.dim, sample=False)
+
 
 def compare_convergence(table, traj_length, dim, epsilons):
     posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
@@ -1188,7 +1241,7 @@ if __name__ == "__main__":
 
     # traj plots
     # execute_compare_convergence_traj(table=table, traj_lengths=traj_lengths, epsilons=epsilons, dim=dim)
-    execute_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, epsilons=epsilons)
+    # execute_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, epsilons=epsilons)
 
     # dim plots
     # dims = np.arange(2, 30, 1)

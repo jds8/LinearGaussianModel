@@ -299,51 +299,57 @@ class GaussianDistribution:
     def precision(self, **kwargs):
         return torch.inverse(self.covariance(**kwargs))
 
-    def _condition_helper(self, dd, x_inds, z_inds, z_values):
-        mu_x = torch.index_select(dd.mean, 0, x_inds)
-        mu_z = torch.index_select(dd.mean, 0, z_inds)
-        sigma_xx = torch.index_select(torch.index_select(dd.covariance_matrix, 0, x_inds), 1, x_inds)
-        sigma_xz = torch.index_select(torch.index_select(dd.covariance_matrix, 0, x_inds), 1, z_inds)
-        sigma_zx = torch.index_select(torch.index_select(dd.covariance_matrix, 0, z_inds), 1, x_inds)
-        sigma_zz = torch.index_select(torch.index_select(dd.covariance_matrix, 0, z_inds), 1, z_inds)
+    @staticmethod
+    def _condition_helper(dd, x_inds, z_inds, all_vars, z_values):
+        # find indices which correspond to x_inds ( dimensionality might be > 1 )
+        x_dims = [len(var.mu) for var in np.array(all_vars)[x_inds]]
+        z_dims = [len(var.mu) for var in np.array(all_vars)[z_inds]]
+
+        start_inds = [0]
+        for var in all_vars[0:-1]:
+            start_inds += [start_inds[-1] + var.mu.nelement()]
+
+        x_dim_inds = np.array([])
+        for ind, dim in zip(x_inds, x_dims):
+            start_ind = start_inds[ind]
+            x_dim_inds = np.concatenate((x_dim_inds, np.arange(start_ind, start_ind+dim)))
+        x_dim_inds = torch.tensor(x_dim_inds, dtype=torch.int32)
+
+        z_dim_inds = np.array([])
+        for ind, dim in zip(z_inds, z_dims):
+            start_ind = start_inds[ind]
+            z_dim_inds = np.concatenate((z_dim_inds, np.arange(start_ind, start_ind+dim)))
+        z_dim_inds = torch.tensor(z_dim_inds, dtype=torch.int32)
+
+        mu_x = torch.index_select(dd.mean, 0, x_dim_inds)
+        mu_z = torch.index_select(dd.mean, 0, z_dim_inds)
+        sigma_xx = torch.index_select(torch.index_select(dd.covariance_matrix, 0, x_dim_inds), 1, x_dim_inds)
+        sigma_xz = torch.index_select(torch.index_select(dd.covariance_matrix, 0, x_dim_inds), 1, z_dim_inds)
+        sigma_zx = torch.index_select(torch.index_select(dd.covariance_matrix, 0, z_dim_inds), 1, x_dim_inds)
+        sigma_zz = torch.index_select(torch.index_select(dd.covariance_matrix, 0, z_dim_inds), 1, z_dim_inds)
         product = torch.mm(sigma_xz, torch.inverse(sigma_zz))
 
-        mu_x_given_z = mu_x + torch.mm(product, (z_values - mu_z).reshape(product.shape[1], -1))
-        sigma_x_given_z = torch.inverse(torch.inverse(sigma_xx) + torch.mm(torch.mm(sigma_xz, torch.inverse(sigma_zz)), sigma_zx))
+        mu_x_given_z = mu_x + torch.mm(product, (z_values - mu_z).reshape(product.shape[1], -1)).reshape(mu_x.shape)
+        sigma_x_given_z = sigma_xx - torch.mm(torch.mm(sigma_xz, torch.inverse(sigma_zz)), sigma_zx)
         return dist.MultivariateNormal(mu_x_given_z.reshape(-1), sigma_x_given_z)
 
     def condition(self, z_rvs):
         z_inds = [self.left.index(var.r_var) for var in z_rvs]
+        all_vars = [var.r_var for var in self.left]
         z_values = torch.tensor([var.value for var in z_rvs])
         x_inds = list(set(range(len(self.left))) - set(z_inds))
         z_inds = torch.tensor(z_inds)
         x_inds = torch.tensor(x_inds)
         if self.right is None:
             dd = self.get_dist()
-            prob_dist = self._condition_helper(dd, x_inds, z_inds, z_values)
+            prob_dist = self._condition_helper(dd, x_inds, z_inds, all_vars, z_values)
         else:
             dd_dist = self.dist
             def inner_fun(value):
                 dd = dd_dist.evaluate(value)
-                return self._condition_helper(dd, x_inds, z_inds, z_values)
+                return self._condition_helper(dd, x_inds, z_inds, all_vars, z_values)
             prob_dist = TorchDistributionInfo(inner_fun)
         return GaussianDistribution(prob_dist, left=self.left, right=self.right)
-
-    # def condition(self, z_vars, z_values):
-    #     z_inds = [self.left.index(var) for var in z_vars]
-    #     x_inds = list(set(range(len(self.left))) - set(z_inds))
-    #     z_inds = torch.tensor(z_inds)
-    #     x_inds = torch.tensor(x_inds)
-    #     if self.right is None:
-    #         dd = self.get_dist()
-    #         prob_dist = self._condition_helper(dd, x_inds, z_inds, z_values)
-    #     else:
-    #         dd_dist = self.dist
-    #         def inner_fun(value):
-    #             dd = dd_dist.evaluate(value)
-    #             return self._condition_helper(dd, x_inds, z_inds, z_values)
-    #         prob_dist = TorchDistributionInfo(inner_fun)
-    #     return GaussianDistribution(prob_dist, left=self.left, right=self.right)
 
 
 class RandomVariable:
@@ -360,33 +366,35 @@ class JointVariables:
         self.dist = self._compute_joint_dist()
 
     def _compute_joint_dist(self):
-        mu = torch.tensor([rv.mu for rv in self.rvs]).squeeze()
-        cov = torch.zeros(len(self.rvs), len(self.rvs))
-        for i in range(len(self.rvs)):
-            x = self.rvs[i]
-            for j in range(len(self.rvs)):
-                y = self.rvs[j]
+        mu = torch.cat([rv.mu for rv in self.rvs], dim=0).squeeze()
+        cov = torch.block_diag(*[rv.sigma for rv in self.rvs])
+        i = 0
+        j = 0
+        for i_rv in range(len(self.rvs)):
+            x = self.rvs[i_rv]
+            i_dim = x.mu.nelement()
+            j = i
+            for j_rv in range(i_rv, len(self.rvs)):
+                y = self.rvs[j_rv]
+                j_dim = y.mu.nelement()
                 sigma = x.covariance(y)
-                cov[i, j] = sigma
-                cov[j, i] = sigma
+                cov_block = cov[i:i+i_dim, j:j+j_dim]
+                cov[i:i+i_dim, j:j+j_dim] = sigma.reshape(cov_block.shape)
+                cov[j:j+j_dim, i:i+i_dim] = sigma.reshape(cov_block.t().shape)
+
+                j += j_dim
+            i += i_dim
         return GaussianDistribution(dist.MultivariateNormal(mu, cov), left=self.rvs, right=None)
 
     def condition(self, z_rvs):
-        z_inds = [self.left.index(var.r_var) for var in z_rvs]
-        z_values = torch.tensor([var.value for var in z_rvs])
-        x_inds = list(set(range(len(self.left))) - set(z_inds))
+        z_inds = [self.rvs.index(var) for var in z_rvs]
+        x_inds = list(set(range(len(self.rvs))) - set(z_inds))
         z_inds = torch.tensor(z_inds)
         x_inds = torch.tensor(x_inds)
-        if self.right is None:
-            dd = self.get_dist()
-            prob_dist = self._condition_helper(dd, x_inds, z_inds, z_values)
-        else:
-            dd_dist = self.dist
-            def inner_fun(value):
-                dd = dd_dist.evaluate(value)
-                return self._condition_helper(dd, x_inds, z_inds, z_values)
-            prob_dist = TorchDistributionInfo(inner_fun)
-        return GaussianDistribution(prob_dist, left=self.left, right=self.right)
+        left = [rv for rv in self.rvs if rv not in z_rvs]
+        def condition_values(z_values):
+            return GaussianDistribution._condition_helper(self.dist.get_dist(), x_inds, z_inds, self.rvs, z_values)
+        return GaussianDistribution(condition_values(torch.cat([rv.mu for rv in z_rvs], dim=0)), left=left, right=None)
 
 
 class GaussianRandomVariable:
@@ -1004,6 +1012,34 @@ def compute_block_posterior(dim, num_observations, table):
     # compute posterior
     posterior = ys.posterior_vec()
 
+def test_joint_vars():
+    dim = 2
+    num_obs = 2
+
+    lgv = get_linear_gaussian_variables(dim=dim, num_obs=num_obs)
+    xs = lgv.xs
+    ys = lgv.ys
+
+    table = create_dimension_table(torch.tensor([dim]), random=False)
+    A = table[dim]['A']
+    Q = table[dim]['Q']
+    C = table[dim]['C']
+    R = table[dim]['R']
+    mu_0 = table[dim]['mu_0']
+    Q_0 = table[dim]['Q_0']
+
+    jvs = JointVariables([xs[0], xs[1], ys[0], ys[1]], A, C)
+    print(jvs.dist.covariance())
+    rhs_rvs = [xs[0], ys[0]]
+    conditional = jvs.condition(rhs_rvs)
+    import pdb; pdb.set_trace()
+
+
+    from generative_model import generate_trajectory
+    # evaluate it
+    ys = generate_trajectory(num_obs, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0]
+    env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, ys=ys, sample=False)
+
 
 if __name__ == "__main__":
-    print('oh no')
+    test_joint_vars()
