@@ -227,6 +227,7 @@ def evaluate_filtering_posterior(ys, N, tds, env=None):
         log_weights.append(log_p_x - log_q)  # ignore these since we consider the weights to be p(y|x)p(x)/q(x)
         total_rewards.append(total_reward)
         wandb.log({'total_reward': total_reward})
+
     # print('filtering score:' , log_p_y_over_qs)
     # print('filtering evidence: ', log_p_y_over_qs.exp())
     # calculate variance estmate as

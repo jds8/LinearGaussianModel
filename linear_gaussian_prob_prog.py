@@ -302,8 +302,8 @@ class GaussianDistribution:
     @staticmethod
     def _condition_helper(dd, x_inds, z_inds, all_vars, z_values):
         # find indices which correspond to x_inds ( dimensionality might be > 1 )
-        x_dims = [len(var.mu) for var in np.array(all_vars)[x_inds]]
-        z_dims = [len(var.mu) for var in np.array(all_vars)[z_inds]]
+        x_dims = [len(var.mu) for var in np.array(all_vars)[x_inds.numpy()]]
+        z_dims = [len(var.mu) for var in np.array(all_vars)[z_inds.numpy()]]
 
         start_inds = [0]
         for var in all_vars[0:-1]:
@@ -335,7 +335,7 @@ class GaussianDistribution:
 
     def condition(self, z_rvs):
         z_inds = [self.left.index(var.r_var) for var in z_rvs]
-        all_vars = [var.r_var for var in self.left]
+        all_vars = [var for var in self.left]
         z_values = torch.tensor([var.value for var in z_rvs])
         x_inds = list(set(range(len(self.left))) - set(z_inds))
         z_inds = torch.tensor(z_inds)

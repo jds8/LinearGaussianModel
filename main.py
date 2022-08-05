@@ -1235,7 +1235,7 @@ if __name__ == "__main__":
 
     # epsilons = [-5e-3, 0.0, 5e-3]
     epsilons = [-5e-2, 0.0]
-    traj_lengths = torch.arange(10, 20, 1)
+    traj_lengths = torch.arange(2, 20, 1)
     dim = 1
     table = create_dimension_table(torch.tensor([dim]), random=False)
 
@@ -1260,4 +1260,4 @@ if __name__ == "__main__":
     # traj_length = 5
     # truth = trial_evidence(table, traj_length, dim)
 
-    # execute_filtering_posterior_convergence(table, traj_lengths, epsilons, dim)
+    execute_filtering_posterior_convergence(table, traj_lengths, epsilons, dim)
