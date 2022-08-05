@@ -866,10 +866,8 @@ def get_perturbed_posterior_filtering_output(table, posterior_evidence, dim, eps
     posterior_output = ImportanceOutput(traj_length=len(ys), ys=ys, dim=dim)
     # get importance weighted score for comparison
 
-    print('epsilon being ignored in get_perturbed_posterior_filtering_output')
-
     for _ in range(NUM_REPEATS):
-        eval_obj = evaluate_filtering_posterior(ys=ys, N=NUM_SAMPLES, tds=fps, env=env)
+        eval_obj = evaluate_filtering_posterior(ys=ys, N=NUM_SAMPLES, tds=fps, epsilon=epsilon, env=env)
         posterior_estimator = posterior_output.add_rl_estimator(running_log_estimates=eval_obj.running_log_estimates,
                                                                 ci=eval_obj.ci, weight_mean=eval_obj.log_weight_mean.exp(),
                                                                 max_weight_prop=eval_obj.log_max_weight_prop.exp(),
@@ -1148,7 +1146,7 @@ def execute_ess_traj(table, traj_lengths, dim, epsilons):
     plt.gca().set_yscale('log')
     for epsilon in epsilons:
         posterior_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, epsilon=epsilon)
-    posterior_filtering_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, epsilon=epsilons[0])
+        posterior_filtering_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, epsilon=epsilon)
     # prior_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim)
     # rl_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim)
 
@@ -1234,14 +1232,16 @@ if __name__ == "__main__":
     os.makedirs(TODAY, exist_ok=True)
 
     # epsilons = [-5e-3, 0.0, 5e-3]
-    epsilons = [-5e-2, 0.0]
-    traj_lengths = torch.arange(2, 20, 1)
-    dim = 1
+    epsilons = [-5e-2, 0.0, 5e-2]
+    traj_lengths = torch.arange(2, 15, 1)
+    dim = 5
+    # dims = [2, 4, 6, 8]
+
     table = create_dimension_table(torch.tensor([dim]), random=False)
 
     # traj plots
     # execute_compare_convergence_traj(table=table, traj_lengths=traj_lengths, epsilons=epsilons, dim=dim)
-    # execute_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, epsilons=epsilons)
+    execute_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, epsilons=epsilons)
 
     # dim plots
     # dims = np.arange(2, 30, 1)
@@ -1260,4 +1260,4 @@ if __name__ == "__main__":
     # traj_length = 5
     # truth = trial_evidence(table, traj_length, dim)
 
-    execute_filtering_posterior_convergence(table, traj_lengths, epsilons, dim)
+    # execute_filtering_posterior_convergence(table, traj_lengths, epsilons, dim)

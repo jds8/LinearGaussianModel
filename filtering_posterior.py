@@ -32,6 +32,7 @@ from dimension_table import create_dimension_table
 class FilteringPosterior:
     def __init__(self, numerator, left):
         self.numerator = numerator
+        self.left = left
 
     def condition(self, y_values, x_value=None):
         if self.numerator.right is not None:
@@ -43,18 +44,23 @@ class FilteringPosterior:
         sorted_idx = np.argsort(names)
         r_vars = np.array([y for y in self.numerator.left if 'y' in y.name])
         r_vars = r_vars[sorted_idx]
-        r_vars = list(r_vars) + [self.numerator.right] if x_value is not None else list(r_vars)
+        r_vars = list(r_vars) + [self.numerator.right] if self.numerator.right is not None else list(r_vars)
 
         if x_value is not None:
-            values = torch.cat([y_values.reshape(x_value.shape[0], -1), x_value.reshape(-1, 1)], dim=1)
+            values = torch.cat([y_values, x_value])
+            # values = torch.cat([y_values.reshape(x_value.shape[0], -1), x_value.reshape(-1, 1)], dim=1)
         else:
             values = y_values
         values = values.squeeze()
 
         rvs = []
-        for r_var, val in zip(r_vars, values):
-            rv = RandomVariable(r_var=r_var, value=val)
+        # for r_var, val in zip(r_vars, values):
+        current_idx = 0
+        for r_var in self.left:
+            dim = r_var.mu.nelement()
+            rv = RandomVariable(r_var=r_var, value=values[current_idx:current_idx+dim])
             rvs.append(rv)
+            current_idx += dim
 
         # # the next part is to ensure that the random variables
         # # in joint correspond to the y_values and x_values that
@@ -74,7 +80,11 @@ class FilteringPosterior:
         #         vals = torch.cat([vals[0:x_idx], x_value, vals[x_idx:]], dim=1)
 
         # return joint.condition(r_vars, vals)
-        return joint.condition(rvs)
+        try:
+            return joint.condition(rvs)
+        except:
+            import pdb; pdb.set_trace()
+            return joint.condition(rvs)
 
 
 def compute_filtering_data_structures(dim, num_obs):
@@ -100,7 +110,7 @@ def compute_filtering_data_structures(dim, num_obs):
         current_index -= 1
     return xs, ys, p_y_next_given_x
 
-def compute_filtering_posterior(t, num_obs, xs, ys, p_y_next_given_x, A, C):
+def old_compute_filtering_posterior(t, num_obs, xs, ys, p_y_next_given_x, A, C):
     if t == 0:
         lik = ys[0].likelihood()
         cond_ys = lik * p_y_next_given_x[0]
@@ -122,6 +132,41 @@ def compute_filtering_posterior(t, num_obs, xs, ys, p_y_next_given_x, A, C):
 
     return FilteringPosterior(numerator, denominator.left + [x for x in [denominator.right] if x is not None])
 
+def compute_filtering_posterior(t, num_obs, xs, ys, A, C):
+    rest_of_ys = ys[t+1:]
+    rvars = [ys[t], xs[t]] + rest_of_ys
+    rvars += [xs[t-1]] if t > 0 else []
+    jvs = JointVariables(rvars, A=A, C=C)
+    condition_vars = [ys[t]] + rest_of_ys
+    condition_vars = condition_vars + [xs[t-1]] if t > 0 else condition_vars
+    return FilteringPosterior(jvs.dist, condition_vars)
+
+def old_compute_filtering_posteriors(table, num_obs, dim, ys=None):
+    A = table[dim]['A']
+    Q = table[dim]['Q']
+    C = table[dim]['C']
+    R = table[dim]['R']
+    mu_0 = table[dim]['mu_0']
+    Q_0 = table[dim]['Q_0']
+
+    if ys is None:
+        ys = generate_trajectory(num_obs, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0]
+    env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, ys=ys, sample=False)
+
+    assert(num_obs == len(ys))
+
+    fp_xs, fp_ys, p_y_next_given_x = compute_filtering_data_structures(dim=dim, num_obs=num_obs)
+
+    # true evidence
+    jvs = JointVariables(fp_ys, A=A, C=C)
+    print('true evidence: ', jvs.dist.log_prob(ys).exp())
+
+    fps = []
+    for t in range(num_obs):
+        filtering_posterior = old_compute_filtering_posterior(t, num_obs, fp_xs, fp_ys, p_y_next_given_x, A, C)
+        fps.append(filtering_posterior)
+    return fps, ys
+
 def compute_filtering_posteriors(table, num_obs, dim, ys=None):
     A = table[dim]['A']
     Q = table[dim]['Q']
@@ -134,24 +179,21 @@ def compute_filtering_posteriors(table, num_obs, dim, ys=None):
         ys = generate_trajectory(num_obs, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0]
     env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, ys=ys, sample=False)
 
-    if num_obs != len(ys):
-        import pdb; pdb.set_trace()
-
     assert(num_obs == len(ys))
 
-    fp_xs, fp_ys, p_y_next_given_x = compute_filtering_data_structures(dim=dim, num_obs=num_obs)
+    lgv = get_linear_gaussian_variables(dim=dim, num_obs=num_obs)
 
     # true evidence
-    jvs = JointVariables(fp_ys, A=A, C=C)
+    jvs = JointVariables(lgv.ys, A=A, C=C)
     print('true evidence: ', jvs.dist.log_prob(ys).exp())
 
     fps = []
     for t in range(num_obs):
-        filtering_posterior = compute_filtering_posterior(t, num_obs, fp_xs, fp_ys, p_y_next_given_x, A, C)
+        filtering_posterior = compute_filtering_posterior(t, num_obs, lgv.xs, lgv.ys, A, C)
         fps.append(filtering_posterior)
     return fps, ys
 
-def evaluate_filtering_posterior(ys, N, tds, env=None):
+def evaluate_filtering_posterior(ys, N, tds, epsilon, env=None):
     run = wandb.init(project='linear_gaussian_model evaluation', save_code=True, entity='iai')
     if env is None:
         # create env
@@ -175,8 +217,9 @@ def evaluate_filtering_posterior(ys, N, tds, env=None):
     # get trajectory length
     n = len(ys)
     # get dimensionality
-    td = tds[0].condition(y_values=ys)
-    d = int(td.mean().nelement())
+    _td = tds[0].condition(y_values=ys)
+    td = dist.MultivariateGaussian(_td.mean(), _td.covariance() + epsilon * torch.eye(_td.mean().shape[0]))
+    d = int(td.mean.nelement())
     for i in range(N):
         # get first obs
         obs = env.reset()
@@ -201,7 +244,8 @@ def evaluate_filtering_posterior(ys, N, tds, env=None):
         for j in range(1, len(tds)):
             td_fps = tds[j]
             y = ys[j:]
-            dst = td_fps.condition(y_values=y, x_value=xt)
+            _dst = td_fps.condition(y_values=y, x_value=xt)
+            dst = dist.MultivariateGaussian(_dst.mean(), _dst.covariance() + epsilon * torch.eye(_dst.mean().shape[0]))
             prev_xt = xt
             xt = dst.sample()
             log_q += dst.log_prob(xt)
@@ -246,10 +290,10 @@ def test_filtering_posterior():
     C = table[dim]['C']
 
     xs, ys, p_y_next_given_x = compute_filtering_data_structures(dim=dim, num_obs=num_obs, table=table)
-    fp1 = compute_filtering_posterior(t=0, num_obs=num_obs, xs=xs, ys=ys, p_y_next_given_x=p_y_next_given_x, A=A, C=C)
-    fp2 = compute_filtering_posterior(t=1, num_obs=num_obs, xs=xs, ys=ys, p_y_next_given_x=p_y_next_given_x, A=A, C=C)
-    fp3 = compute_filtering_posterior(t=2, num_obs=num_obs, xs=xs, ys=ys, p_y_next_given_x=p_y_next_given_x, A=A, C=C)
-    fp4 = compute_filtering_posterior(t=3, num_obs=num_obs, xs=xs, ys=ys, p_y_next_given_x=p_y_next_given_x, A=A, C=C)
+    fp1 = old_compute_filtering_posterior(t=0, num_obs=num_obs, xs=xs, ys=ys, p_y_next_given_x=p_y_next_given_x, A=A, C=C)
+    fp2 = old_compute_filtering_posterior(t=1, num_obs=num_obs, xs=xs, ys=ys, p_y_next_given_x=p_y_next_given_x, A=A, C=C)
+    fp3 = old_compute_filtering_posterior(t=2, num_obs=num_obs, xs=xs, ys=ys, p_y_next_given_x=p_y_next_given_x, A=A, C=C)
+    fp4 = old_compute_filtering_posterior(t=3, num_obs=num_obs, xs=xs, ys=ys, p_y_next_given_x=p_y_next_given_x, A=A, C=C)
 
     mu = fp2.denominator.mean(value=torch.ones(1))
     fp_dist = fp2.condition(mu)

@@ -279,7 +279,12 @@ class GaussianDistribution:
         return self.get_dist(**kwargs).sample()
 
     def log_prob(self, xs, **kwargs):
-        return self.get_dist(**kwargs).log_prob(xs)
+        try:
+            return self.get_dist(**kwargs).log_prob(xs)
+        except:
+            import pdb; pdb.set_trace()
+            return self.get_dist(**kwargs).log_prob(xs)
+           
 
     def mean(self, **kwargs):
         return self.get_dist(**kwargs).mean
@@ -336,7 +341,7 @@ class GaussianDistribution:
     def condition(self, z_rvs):
         z_inds = [self.left.index(var.r_var) for var in z_rvs]
         all_vars = [var for var in self.left]
-        z_values = torch.tensor([var.value for var in z_rvs])
+        z_values = torch.cat([var.value for var in z_rvs])
         x_inds = list(set(range(len(self.left))) - set(z_inds))
         z_inds = torch.tensor(z_inds)
         x_inds = torch.tensor(x_inds)
