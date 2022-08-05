@@ -218,7 +218,7 @@ def evaluate_filtering_posterior(ys, N, tds, epsilon, env=None):
     n = len(ys)
     # get dimensionality
     _td = tds[0].condition(y_values=ys)
-    td = dist.MultivariateGaussian(_td.mean(), _td.covariance() + epsilon * torch.eye(_td.mean().shape[0]))
+    td = dist.MultivariateNormal(_td.mean(), _td.covariance() + epsilon * torch.eye(_td.mean().shape[0]))
     d = int(td.mean.nelement())
     for i in range(N):
         # get first obs
@@ -245,7 +245,7 @@ def evaluate_filtering_posterior(ys, N, tds, epsilon, env=None):
             td_fps = tds[j]
             y = ys[j:]
             _dst = td_fps.condition(y_values=y, x_value=xt)
-            dst = dist.MultivariateGaussian(_dst.mean(), _dst.covariance() + epsilon * torch.eye(_dst.mean().shape[0]))
+            dst = dist.MultivariateNormal(_dst.mean(), _dst.covariance() + epsilon * torch.eye(_dst.mean().shape[0]))
             prev_xt = xt
             xt = dst.sample()
             log_q += dst.log_prob(xt)

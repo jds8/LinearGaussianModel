@@ -1233,7 +1233,7 @@ if __name__ == "__main__":
 
     # epsilons = [-5e-3, 0.0, 5e-3]
     epsilons = [-5e-2, 0.0, 5e-2]
-    traj_lengths = torch.arange(2, 15, 1)
+    traj_lengths = torch.arange(2, 30, 1)
     dim = 5
     # dims = [2, 4, 6, 8]
 
