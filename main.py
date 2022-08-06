@@ -177,6 +177,8 @@ def train(traj_length, env, dim):
     # network archictecture
     arch = [1024 for _ in range(3)]
     # create policy
+    import pdb; pdb.set_trace()
+
     model = PPO('MlpPolicy', env, ent_coef=0.01, policy_kwargs=dict(net_arch=[dict(pi=arch, vf=arch)]), device='cpu', verbose=1)
 
     # train policy
@@ -1241,7 +1243,7 @@ if __name__ == "__main__":
 
     # traj plots
     # execute_compare_convergence_traj(table=table, traj_lengths=traj_lengths, epsilons=epsilons, dim=dim)
-    execute_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, epsilons=epsilons)
+    # execute_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, epsilons=epsilons)
 
     # dim plots
     # dims = np.arange(2, 30, 1)
@@ -1261,3 +1263,15 @@ if __name__ == "__main__":
     # truth = trial_evidence(table, traj_length, dim)
 
     # execute_filtering_posterior_convergence(table, traj_lengths, epsilons, dim)
+
+    posterior_evidence = compute_evidence(table, traj_lengths[0], dim)
+
+    A = table[dim]['A']
+    Q = table[dim]['Q']
+    C = table[dim]['C']
+    R = table[dim]['R']
+    mu_0 = table[dim]['mu_0']
+    Q_0 = table[dim]['Q_0']
+
+    env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, ys=posterior_evidence.ys, sample=True)
+    train(traj_lengths[0], env, dim)
