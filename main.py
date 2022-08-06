@@ -15,7 +15,7 @@ from generative_model import y_dist, sample_y, generate_trajectory, \
     gen_A, gen_Q, gen_C, gen_R, gen_mu_0, gen_Q_0, \
     test_A, test_Q, test_C, test_R, test_mu_0, test_Q_0, \
     state_transition, score_state_transition, gen_covariance_matrix, \
-    score_initial_state, score_y
+    score_initial_state, score_y, get_stacked_state_transition_dist
     # A, Q, C, R, mu_0, Q_0, \
 # import wandb
 from linear_gaussian_env import LinearGaussianEnv, LinearGaussianSingleYEnv
@@ -28,7 +28,8 @@ from filtering_posterior import compute_filtering_posteriors, evaluate_filtering
 
 # model name
 # MODEL = 'trial_linear_gaussian_model_(traj_{}_dim_{})'
-MODEL = 'new_linear_gaussian_model_(traj_{}_dim_{})'
+# MODEL = 'new_linear_gaussian_model_(traj_{}_dim_{})'
+MODEL = 'forward_kl_linear_gaussian_model_(traj_{}_dim_{})'
 # MODEL = 'from_borg/rl_agents/linear_gaussian_model_(traj_{}_dim_{})'
 
 TODAY = date.today().strftime("%b-%d-%Y")
@@ -177,15 +178,22 @@ def train(traj_length, env, dim):
     # network archictecture
     arch = [1024 for _ in range(3)]
     # create policy
-    import pdb; pdb.set_trace()
 
-    model = PPO('MlpPolicy', env, ent_coef=0.01, policy_kwargs=dict(net_arch=[dict(pi=arch, vf=arch)]), device='cpu', verbose=1)
+    # batch_obs is of shape BATCH_SIZE x (HIDDEN_DIMENSION + 1) x 1 where the middle dimension includes the next y
+    # we only want the x part of the hidden_dimension, so we exclude the y part
+    prior = lambda batch_obs: get_stacked_state_transition_dist(batch_obs[:, 0:-1, :], A=env.A, Q=env.Q)
+
+    ent_coef = 10.0
+    model = PPO('MlpPolicy', env, ent_coef=ent_coef,
+                policy_kwargs=dict(net_arch=[dict(pi=arch, vf=arch)]),
+                device='cpu', verbose=1, loss_type='forward_kl',
+                prior=prior)
 
     # train policy
     model.learn(total_timesteps=RL_TIMESTEPS, callback=CustomCallback(env, verbose=1))
 
     # save model
-    model.save(MODEL.format(traj_length, dim))
+    model.save('{}_'.format(ent_coef)+MODEL.format(traj_length, dim))
 
 
 class ProposalDist:
@@ -1229,6 +1237,66 @@ def verify_filtering_posterior():
         score += td.condition(y_values=ys[i:], x_value=actions[i]).log_prob(action)
     print('filtering posterior score: ', score)
 
+def test_train(traj_length, dim):
+    table = create_dimension_table(torch.tensor([dim]), random=False)
+    posterior_evidence = compute_evidence(table, traj_length, dim)
+
+    A = table[dim]['A']
+    Q = table[dim]['Q']
+    C = table[dim]['C']
+    R = table[dim]['R']
+    mu_0 = table[dim]['mu_0']
+    Q_0 = table[dim]['Q_0']
+
+    env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, ys=posterior_evidence.ys, sample=True)
+    train(traj_length, env, dim)
+
+def sample_variance_ratios(traj_length):
+    # load rl policy
+    _, policy = load_rl_model(device='cpu', traj_length=traj_length, dim=1)  # assume dimensionality equals 1 so the variance is just a scalar
+
+    # set up to create filtering posterior
+    dim = 1  # assume dimension is 1 so that variances are scalars
+    table = create_dimension_table(torch.tensor([dim]), random=False)
+
+    A = table[dim]['A']
+    Q = table[dim]['Q']
+    C = table[dim]['C']
+    R = table[dim]['R']
+    mu_0 = table[dim]['mu_0']
+    Q_0 = table[dim]['Q_0']
+
+    # variance ratios
+    variance_ratios = []
+    for k in range(NUM_SAMPLES):
+        # generate a set of ys using the true model parameters
+        traj_ys, traj_xs = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0:2]
+        # create filtering distribution given the ys
+        tds, traj_ys = compute_filtering_posteriors(table=table, num_obs=traj_length, dim=dim, ys=traj_ys)
+
+        # get dimensionality
+        td = tds[0].condition(y_values=traj_ys)
+        d = int(td.mean().nelement())
+
+        # get first obs
+        obs = env.reset()
+        xt = traj_xs[0]
+
+        # collect ratio of variance at each step
+        variance_ratio_steps = torch.tensor(0.)
+        for j in range(1, len(tds)):
+            td_fps = tds[j]
+            y = traj_ys[j:]
+            dst = td_fps.condition(y_values=y, x_value=xt)
+            filtering_variance = dst.covariance()
+            import pdb; pdb.set_trace()
+            rl_variance = policy.predict(xt, deterministic=False).scale
+            variance_ratio_steps = torch.cat((variance_ratio_steps.reshape(1, -1), (filtering_variance / rl_variance).reshape(1, 1)), dim=1)
+            # get next hidden state
+            xt = traj_xs[j]
+        variance_ratios.append(variance_ratio_steps)
+    return torch.stack(variance_ratios)
+
 
 if __name__ == "__main__":
     os.makedirs(TODAY, exist_ok=True)
@@ -1236,7 +1304,7 @@ if __name__ == "__main__":
     # epsilons = [-5e-3, 0.0, 5e-3]
     epsilons = [-5e-2, 0.0, 5e-2]
     traj_lengths = torch.arange(2, 30, 1)
-    dim = 5
+    dim = 1
     # dims = [2, 4, 6, 8]
 
     table = create_dimension_table(torch.tensor([dim]), random=False)
@@ -1264,14 +1332,6 @@ if __name__ == "__main__":
 
     # execute_filtering_posterior_convergence(table, traj_lengths, epsilons, dim)
 
-    posterior_evidence = compute_evidence(table, traj_lengths[0], dim)
-
-    A = table[dim]['A']
-    Q = table[dim]['Q']
-    C = table[dim]['C']
-    R = table[dim]['R']
-    mu_0 = table[dim]['mu_0']
-    Q_0 = table[dim]['Q_0']
-
-    env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, ys=posterior_evidence.ys, sample=True)
-    train(traj_lengths[0], env, dim)
+    t_len = 10
+    test_train(traj_length=t_len, dim=dim)
+    vrs = sample_variance_ratios(traj_length=t_len)

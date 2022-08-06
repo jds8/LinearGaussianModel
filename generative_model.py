@@ -79,6 +79,10 @@ def get_state_transition_dist(x_t, A, Q):
     x_shape = (A.shape[1], -1)
     return dist.MultivariateNormal(torch.mm(A, x_t.reshape(x_shape)).squeeze(1), Q)
 
+def get_stacked_state_transition_dist(batch_x_t, A, Q):
+    b = batch_x_t.shape[0]
+    return dist.MultivariateNormal(torch.bmm(A.repeat(b, 1, 1), batch_x_t).squeeze(2), Q.repeat(b, 1, 1))
+
 def state_transition(x_t, A, Q):
     """
     Computes state transition from x_t defined by x_{t+1} = Ax_t + w
