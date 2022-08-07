@@ -159,7 +159,7 @@ def old_compute_filtering_posteriors(table, num_obs, dim, ys=None):
 
     # true evidence
     jvs = JointVariables(fp_ys, A=A, C=C)
-    print('true evidence: ', jvs.dist.log_prob(ys).exp())
+    # print('true evidence: ', jvs.dist.log_prob(ys).exp())
 
     fps = []
     for t in range(num_obs):
@@ -185,7 +185,7 @@ def compute_filtering_posteriors(table, num_obs, dim, ys=None):
 
     # true evidence
     jvs = JointVariables(lgv.ys, A=A, C=C)
-    print('true evidence: ', jvs.dist.log_prob(ys).exp())
+    # print('true evidence: ', jvs.dist.log_prob(ys).exp())
 
     fps = []
     for t in range(num_obs):

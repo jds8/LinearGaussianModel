@@ -28,13 +28,13 @@ from filtering_posterior import compute_filtering_posteriors, evaluate_filtering
 
 # model name
 # MODEL = 'trial_linear_gaussian_model_(traj_{}_dim_{})'
-# MODEL = 'new_linear_gaussian_model_(traj_{}_dim_{})'
-MODEL = 'forward_kl_linear_gaussian_model_(traj_{}_dim_{})'
+MODEL = 'new_linear_gaussian_model_(traj_{}_dim_{})'
+# MODEL = 'forward_kl_linear_gaussian_model_(traj_{}_dim_{})'
 # MODEL = 'from_borg/rl_agents/linear_gaussian_model_(traj_{}_dim_{})'
 
 TODAY = date.today().strftime("%b-%d-%Y")
 
-RL_TIMESTEPS = 100000
+RL_TIMESTEPS = 1000
 NUM_SAMPLES = 100
 NUM_REPEATS = 20
 
@@ -171,7 +171,7 @@ class CustomCallback(BaseCallback):
         return True
 
 
-def train(traj_length, env, dim):
+def train(traj_length, env, dim, ent_coef=1.0, loss_type='forward_kl'):
     params = {}
 #     run = wandb.init(project='linear_gaussian_model training', save_code=True, config=params, entity='iai')
 
@@ -183,17 +183,15 @@ def train(traj_length, env, dim):
     # we only want the x part of the hidden_dimension, so we exclude the y part
     prior = lambda batch_obs: get_stacked_state_transition_dist(batch_obs[:, 0:-1, :], A=env.A, Q=env.Q)
 
-    ent_coef = 10.0
     model = PPO('MlpPolicy', env, ent_coef=ent_coef,
                 policy_kwargs=dict(net_arch=[dict(pi=arch, vf=arch)]),
-                device='cpu', verbose=1, loss_type='forward_kl',
-                prior=prior)
+                device='cpu', verbose=1, loss_type=loss_type, prior=prior)
 
     # train policy
     model.learn(total_timesteps=RL_TIMESTEPS, callback=CustomCallback(env, verbose=1))
 
     # save model
-    model.save('{}_'.format(ent_coef)+MODEL.format(traj_length, dim))
+    model.save('{}_'.format(ent_coef)+MODEL.format(traj_length, dim)+'.zip')
 
 
 class ProposalDist:
@@ -229,8 +227,6 @@ class ProposalDist:
 
 def load_rl_model(model_name, device, traj_length, dim):
     # load model
-    import pdb; pdb.set_trace()
-
     try:
         model = PPO.load(model_name.format(traj_length, dim)+'.zip')
     except:
@@ -796,7 +792,7 @@ def compute_evidence(table, traj_length, dim):
 
     eval_obj = evaluate_posterior(ys=ys, N=1, td=td, env=env)
     true = eval_obj.running_log_estimates[0].exp()
-    print('True evidence: {}'.format(true))
+    # print('True evidence: {}'.format(true))
 
     return PosteriorEvidence(td, ys, true, env)
 
@@ -1208,7 +1204,7 @@ def compute_evidence(table, traj_length, dim):
     td = condition_posterior(posterior, ys)
     eval_obj = evaluate_posterior(ys=ys, N=1, td=td, env=env)
     true = eval_obj.running_log_estimates[0].exp()
-    print('True evidence: {}'.format(true))
+    # print('True evidence: {}'.format(true))
 
     return PosteriorEvidence(td, ys, true, env)
 
@@ -1249,7 +1245,7 @@ def verify_filtering_posterior():
         score += td.condition(y_values=ys[i:], x_value=actions[i]).log_prob(action)
     print('filtering posterior score: ', score)
 
-def test_train(traj_length, dim):
+def test_train(traj_length, dim, ent_coef, loss_type):
     table = create_dimension_table(torch.tensor([dim]), random=False)
     posterior_evidence = compute_evidence(table, traj_length, dim)
 
@@ -1261,9 +1257,14 @@ def test_train(traj_length, dim):
     Q_0 = table[dim]['Q_0']
 
     env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, ys=posterior_evidence.ys, sample=True)
-    train(traj_length, env, dim)
+    train(traj_length=traj_length, env=env, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
 
 def sample_variance_ratios(traj_length, model_name):
+    """
+    This function generates NUM_SAMPLES trajectories of length traj_length
+    and computes the ratios of the filtering posterior variance to that of the rl agent.
+    """
+
     # load rl policy
     _, policy = load_rl_model(model_name=model_name, device='cpu',
                               traj_length=traj_length, dim=1)  # assume dimensionality equals 1 so the variance is just a scalar
@@ -1287,28 +1288,49 @@ def sample_variance_ratios(traj_length, model_name):
         # create filtering distribution given the ys
         tds, traj_ys = compute_filtering_posteriors(table=table, num_obs=traj_length, dim=dim, ys=traj_ys)
 
-        # get dimensionality
+        # get first filtering distribution p(x0 | y0:yT)
         td = tds[0].condition(y_values=traj_ys)
-        d = int(td.mean().nelement())
 
         # get first obs
-        obs = env.reset()
-        xt = traj_xs[0]
+        xt = traj_xs[0].reshape(1)
 
         # collect ratio of variance at each step
-        variance_ratio_steps = torch.tensor(0.)
+        variance_ratio_steps = torch.tensor(td.covariance())
         for j in range(1, len(tds)):
             td_fps = tds[j]
             y = traj_ys[j:]
             dst = td_fps.condition(y_values=y, x_value=xt)
             filtering_variance = dst.covariance()
-            import pdb; pdb.set_trace()
-            rl_variance = policy.predict(xt, deterministic=False).scale
-            variance_ratio_steps = torch.cat((variance_ratio_steps.reshape(1, -1), (filtering_variance / rl_variance).reshape(1, 1)), dim=1)
+            obs = torch.cat([xt, y[0].reshape(1)]).reshape(1, dim+1)
+            rl_variance = policy.get_distribution(obs).distribution.scale.detach()
+            variance_ratio = (filtering_variance / rl_variance).reshape(1, 1)
+            variance_ratio_steps = torch.cat((variance_ratio_steps.reshape(1, -1), variance_ratio), dim=1)
             # get next hidden state
-            xt = traj_xs[j]
+            xt = traj_xs[j].reshape(1)
         variance_ratios.append(variance_ratio_steps)
-    return torch.stack(variance_ratios)
+    return torch.stack(variance_ratios).reshape(NUM_SAMPLES, -1)
+
+def plot_variance_ratios(vrs, quantiles, traj_length, ent_coef, loss_type):
+    lwr, med, upr = torch.quantile(vrs, quantiles, dim=0)
+    x_data = torch.arange(1, traj_length+1)
+    plt.plot(x_data, med.squeeze(), label='var(filtering posterior) / var(rl proposal)')
+    plt.fill_between(x_data, y1=lwr, y2=upr, alpha=0.3)
+    plt.xlabel('Trajectory Step (of {})'.format(traj_length))
+    plt.ylabel('Variance Ratio')
+    plt.title('Ratio of Variances of Filtering Posterior and RL Proposal\n (Loss Type: {} Coef: {})'.format(loss_type, ent_coef))
+    plt.legend()
+    plt.savefig('Variance Ratio traj_len: {} ent_coef: {} loss_type: {}'.format(traj_lenth, ent_coef, loss_type))
+    plt.close()
+
+def execute_variance_ratio_runs():
+    t_len = 10
+    ent_coef = 1.0
+    loss_type = 'forward_kl'
+    # test_train(traj_length=t_len, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
+    model_name='{}_'.format(ent_coef)+MODEL.format(t_len, dim)+'.zip'
+    vrs = sample_variance_ratios(traj_length=t_len, model_name=model_name)
+    quantiles = torch.tensor([0.05, 0.5, 0.95])
+    plot_variance_ratios(vrs=vrs, quantiles=quantiles, traj_length=t_len, ent_coef=ent_coef, loss_type=loss_type)
 
 
 if __name__ == "__main__":
@@ -1317,10 +1339,10 @@ if __name__ == "__main__":
     # epsilons = [-5e-3, 0.0, 5e-3]
     epsilons = [-5e-2, 0.0, 5e-2]
     traj_lengths = torch.arange(2, 30, 1)
-    # dim = 1
-    dims = np.array([2, 4, 6, 8])
+    dim = 1
+    # dims = np.array([2, 4, 6, 8])
 
-    table = create_dimension_table(torch.tensor(dims), random=False)
+    # table = create_dimension_table(torch.tensor(dims), random=False)
 
     # traj plots
     # execute_compare_convergence_traj(table=table, traj_lengths=traj_lengths, epsilons=epsilons, dim=dim)
@@ -1333,7 +1355,7 @@ if __name__ == "__main__":
     # traj_length = torch.tensor(5)
     # execute_compare_convergence_dim(table=table, traj_length=traj_length, epsilons=epsilons, dims=dims)
 
-    execute_ess_dim(table, traj_lengths[0], dims, epsilons)
+    # execute_ess_dim(table, traj_lengths[0], dims, epsilons)
 
     # prior_ess_dim(traj_lengths=torch.arange(2, 17, 1), dim=1)
     # execute_posterior_ess_dim(table=table, traj_length=traj_length, epsilons=epsilons, dim=dim)
@@ -1345,7 +1367,6 @@ if __name__ == "__main__":
 
     # execute_filtering_posterior_convergence(table, traj_lengths, epsilons, dim)
 
-    t_len = 10
-    # test_train(traj_length=t_len, dim=dim)
-    # model_name='{}_'.format(10.0)+MODEL
-    # vrs = sample_variance_ratios(traj_length=t_len, model_name=model_name)
+    execute_variance_ratio_runs()
+
+    # load_rl_model(model_name=model_name, device='cpu', traj_length=t_len, dim=dim)
