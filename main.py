@@ -227,13 +227,15 @@ class ProposalDist:
         return (state_transition(prev_xt, self.A, self.Q), None)
 
 
-def load_rl_model(device, traj_length, dim):
+def load_rl_model(model_name, device, traj_length, dim):
     # load model
+    import pdb; pdb.set_trace()
+
     try:
-        model = PPO.load(MODEL.format(traj_length, dim)+'.zip')
+        model = PPO.load(model_name.format(traj_length, dim)+'.zip')
     except:
-        model = PPO.load(MODEL.format(traj_length, dim))
-    print('loaded model {}'.format(MODEL.format(traj_length, dim)+'.zip'))
+        model = PPO.load(model_name.format(traj_length, dim))
+    print('loaded model {}'.format(model_name.format(traj_length, dim)+'.zip'))
     policy = model.policy.to(device)
     return model, policy
 
@@ -1090,6 +1092,15 @@ def posterior_filtering_ess_traj(table, traj_lengths, dim, epsilon):
                        num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, traj_lengths=traj_lengths,
                        xlabel='Trajectory Length', name='posterior_filtering')
 
+def posterior_filtering_ess_dim(table, traj_length, dims, epsilon):
+    os.makedirs(TODAY, exist_ok=True)
+    outputs = []
+    for dim in dims:
+        outputs += get_posterior_filtering_ess_outputs(table, traj_length, dim, epsilon)
+    make_ess_plot_nice_dim(outputs, fixed_feature_string='traj_length', fixed_feature=traj_length,
+                           num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, dims=dims,
+                           xlabel='Latent Dimension', name='posterior_{}'.format(epsilon))
+
 def prior_ess_traj(table, traj_lengths, dim):
     os.makedirs(TODAY, exist_ok=True)
     outputs = []
@@ -1165,8 +1176,9 @@ def execute_ess_dim(table, traj_length, dims, epsilons):
     plt.gca().set_yscale('log')
     for epsilon in epsilons:
         posterior_ess_dim(table=table, traj_length=traj_length, dims=dims, epsilon=epsilon)
-    prior_ess_dim(table=table, traj_length=traj_length, dims=dims)
-    rl_ess_dim(table=table, traj_length=traj_length, dims=dims)
+        posterior_filtering_ess_dim(table=table, traj_length=traj_length, dims=dims, epsilon=epsilon)
+    # prior_ess_dim(table=table, traj_length=traj_length, dims=dims)
+    # rl_ess_dim(table=table, traj_length=traj_length, dims=dims)
 
 def trial_evidence(table, traj_length, dim):
     posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
@@ -1251,9 +1263,10 @@ def test_train(traj_length, dim):
     env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, ys=posterior_evidence.ys, sample=True)
     train(traj_length, env, dim)
 
-def sample_variance_ratios(traj_length):
+def sample_variance_ratios(traj_length, model_name):
     # load rl policy
-    _, policy = load_rl_model(device='cpu', traj_length=traj_length, dim=1)  # assume dimensionality equals 1 so the variance is just a scalar
+    _, policy = load_rl_model(model_name=model_name, device='cpu',
+                              traj_length=traj_length, dim=1)  # assume dimensionality equals 1 so the variance is just a scalar
 
     # set up to create filtering posterior
     dim = 1  # assume dimension is 1 so that variances are scalars
@@ -1304,10 +1317,10 @@ if __name__ == "__main__":
     # epsilons = [-5e-3, 0.0, 5e-3]
     epsilons = [-5e-2, 0.0, 5e-2]
     traj_lengths = torch.arange(2, 30, 1)
-    dim = 1
-    # dims = [2, 4, 6, 8]
+    # dim = 1
+    dims = np.array([2, 4, 6, 8])
 
-    table = create_dimension_table(torch.tensor([dim]), random=False)
+    table = create_dimension_table(torch.tensor(dims), random=False)
 
     # traj plots
     # execute_compare_convergence_traj(table=table, traj_lengths=traj_lengths, epsilons=epsilons, dim=dim)
@@ -1320,7 +1333,7 @@ if __name__ == "__main__":
     # traj_length = torch.tensor(5)
     # execute_compare_convergence_dim(table=table, traj_length=traj_length, epsilons=epsilons, dims=dims)
 
-    # execute_ess_dim(table, traj_length, dims, epsilons)
+    execute_ess_dim(table, traj_lengths[0], dims, epsilons)
 
     # prior_ess_dim(traj_lengths=torch.arange(2, 17, 1), dim=1)
     # execute_posterior_ess_dim(table=table, traj_length=traj_length, epsilons=epsilons, dim=dim)
@@ -1333,5 +1346,6 @@ if __name__ == "__main__":
     # execute_filtering_posterior_convergence(table, traj_lengths, epsilons, dim)
 
     t_len = 10
-    test_train(traj_length=t_len, dim=dim)
-    vrs = sample_variance_ratios(traj_length=t_len)
+    # test_train(traj_length=t_len, dim=dim)
+    # model_name='{}_'.format(10.0)+MODEL
+    # vrs = sample_variance_ratios(traj_length=t_len, model_name=model_name)
