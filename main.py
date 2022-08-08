@@ -28,8 +28,8 @@ from filtering_posterior import compute_filtering_posteriors, evaluate_filtering
 
 # model name
 # MODEL = 'trial_linear_gaussian_model_(traj_{}_dim_{})'
-MODEL = 'new_linear_gaussian_model_(traj_{}_dim_{})'
-# MODEL = 'forward_kl_linear_gaussian_model_(traj_{}_dim_{})'
+# MODEL = 'linear_gaussian_model_(traj_{}_dim_{})'
+MODEL = 'forward_kl_linear_gaussian_model_(traj_{}_dim_{})'
 # MODEL = 'from_borg/rl_agents/linear_gaussian_model_(traj_{}_dim_{})'
 
 TODAY = date.today().strftime("%b-%d-%Y")
@@ -1317,17 +1317,13 @@ def plot_variance_ratios(vrs, quantiles, traj_length, ent_coef, loss_type):
     plt.fill_between(x_data, y1=lwr, y2=upr, alpha=0.3)
     plt.xlabel('Trajectory Step (of {})'.format(traj_length))
     plt.ylabel('Variance Ratio')
-    plt.title('Ratio of Variances of Filtering Posterior and RL Proposal\n (Loss Type: {} Coef: {})'.format(loss_type, ent_coef))
+    plt.title('Ratio of Variances of Filtering Posterior and RL Proposal\n(Loss Type: {} Coef: {})'.format(loss_type, ent_coef))
     plt.legend()
-    plt.savefig('Variance Ratio traj_len: {} ent_coef: {} loss_type: {}.png'.format(traj_length, ent_coef, loss_type))
+    plt.savefig('{}/Variance Ratio traj_len: {} ent_coef: {} loss_type: {}.png'.format(TODAY, traj_length, ent_coef, loss_type))
     plt.close()
 
-def execute_variance_ratio_runs():
-    t_len = 10
-    ent_coef = 1.0
-    loss_type = 'forward_kl'
-    # test_train(traj_length=t_len, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
-    model_name='{}_'.format(ent_coef)+MODEL.format(t_len, dim)+'.zip'
+def execute_variance_ratio_runs(t_len, ent_coef, loss_type):
+    model_name='{}_'.format(ent_coef)+MODEL.format(t_len, dim)
     vrs = sample_variance_ratios(traj_length=t_len, model_name=model_name)
     quantiles = torch.tensor([0.05, 0.5, 0.95])
     plot_variance_ratios(vrs=vrs, quantiles=quantiles, traj_length=t_len, ent_coef=ent_coef, loss_type=loss_type)
@@ -1366,7 +1362,12 @@ if __name__ == "__main__":
     # truth = trial_evidence(table, traj_length, dim)
 
     # execute_filtering_posterior_convergence(table, traj_lengths, epsilons, dim)
+    # test_train(traj_length=t_len, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
 
-    execute_variance_ratio_runs()
+    t_lens = [10, 15]
+    ent_coef = 0.1
+    loss_type = 'forward_kl'
+    for t_len in t_lens:
+        execute_variance_ratio_runs(t_len=t_len, ent_coef=ent_coef, loss_type=loss_type)
 
     # load_rl_model(model_name=model_name, device='cpu', traj_length=t_len, dim=dim)
