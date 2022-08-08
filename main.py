@@ -1319,7 +1319,7 @@ def plot_variance_ratios(vrs, quantiles, traj_length, ent_coef, loss_type):
     plt.ylabel('Variance Ratio')
     plt.title('Ratio of Variances of Filtering Posterior and RL Proposal\n (Loss Type: {} Coef: {})'.format(loss_type, ent_coef))
     plt.legend()
-    plt.savefig('Variance Ratio traj_len: {} ent_coef: {} loss_type: {}'.format(traj_length, ent_coef, loss_type))
+    plt.savefig('Variance Ratio traj_len: {} ent_coef: {} loss_type: {}.png'.format(traj_length, ent_coef, loss_type))
     plt.close()
 
 def execute_variance_ratio_runs():
