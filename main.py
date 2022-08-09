@@ -27,6 +27,7 @@ from dimension_table import create_dimension_table
 from filtering_posterior import compute_filtering_posteriors, evaluate_filtering_posterior
 import pandas as pd
 from get_args import get_args
+from pathlib import Path
 
 # model name
 # MODEL = 'trial_linear_gaussian_model_(traj_{}_dim_{})'
@@ -970,7 +971,7 @@ def plot_convergence(outputs_with_names, traj_length, dim, true, name):
     plt.ylabel('Prob. {} Estimate'.format('Evidence'))
     plt.title('Convergence of Prob. {} Estimate to True Prob. {} \n(trajectory length: {}, dimension: {})'.format('Evidence', 'Evidence', traj_length, dim))
     legend_without_duplicate_labels(plt.gca())
-    plt.savefig('{}/{}_traj_length_{}_dimension_{}_{}_convergence.pdf'.format(TODAY, name, traj_length, dim, 'Evidence'))
+    plt.savefig(TODAY+Path(name).stem+'Convergence.pdf')
     plt.close()
 
 def posterior_convergence(posterior_evidence, dim, epsilons):
@@ -1429,7 +1430,7 @@ def plot_state_occupancy(state_occupancies, quantiles, traj_length, ent_coef, lo
     plt.ylabel('xt')
     plt.title('Values of state xt at each time step t\n(Loss Type: {} Coef: {})'.format(loss_type, ent_coef))
     plt.legend()
-    plt.savefig('{}/Variance Ratio traj_len: {} ent_coef: {} loss_type: {}.pdf'.format(TODAY, traj_length, ent_coef, loss_type))
+    plt.savefig('{}/State Occupancy traj_len: {} ent_coef: {} loss_type: {}.pdf'.format(TODAY, traj_length, ent_coef, loss_type))
     plt.close()
 
 def execute_variance_ratio_runs(t_len, ent_coef, loss_type):
