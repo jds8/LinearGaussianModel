@@ -177,6 +177,9 @@ class CustomCallback(BaseCallback):
 def get_model_name(traj_length, dim, ent_coef, loss_type):
     return MODEL.format(ent_coef, loss_type, traj_length, dim)+'.zip'
 
+def model_without_directory(model):
+    return Path(model).parts[-1]
+
 def train(traj_length, env, dim, ent_coef=1.0, loss_type='forward_kl'):
     params = {}
 #     run = wandb.init(project='linear_gaussian_model training', save_code=True, config=params, entity='iai')
@@ -971,7 +974,8 @@ def plot_convergence(outputs_with_names, traj_length, dim, true, name):
     plt.ylabel('Prob. {} Estimate'.format('Evidence'))
     plt.title('Convergence of Prob. {} Estimate to True Prob. {} \n(trajectory length: {}, dimension: {})'.format('Evidence', 'Evidence', traj_length, dim))
     legend_without_duplicate_labels(plt.gca())
-    plt.savefig(TODAY+Path(name).stem+'Convergence.pdf')
+    model_name = model_without_directory(name)
+    plt.savefig(TODAY+'/'+model_name+'Convergence.pdf')
     plt.close()
 
 def posterior_convergence(posterior_evidence, dim, epsilons):
