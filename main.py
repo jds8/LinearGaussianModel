@@ -29,13 +29,13 @@ from filtering_posterior import compute_filtering_posteriors, evaluate_filtering
 # model name
 # MODEL = 'trial_linear_gaussian_model_(traj_{}_dim_{})'
 # MODEL = 'linear_gaussian_model_(traj_{}_dim_{})'
-MODEL = 'forward_kl_linear_gaussian_model_(traj_{}_dim_{})'
+MODEL = '{}_linear_gaussian_model_(traj_{}_dim_{})'
 # MODEL = 'from_borg/rl_agents/linear_gaussian_model_(traj_{}_dim_{})'
 
 TODAY = date.today().strftime("%b-%d-%Y")
 
-RL_TIMESTEPS = 1000
-NUM_SAMPLES = 100
+RL_TIMESTEPS = 1000000
+NUM_SAMPLES = 1000
 NUM_REPEATS = 20
 
 class CustomCallback(BaseCallback):
@@ -191,7 +191,7 @@ def train(traj_length, env, dim, ent_coef=1.0, loss_type='forward_kl'):
     model.learn(total_timesteps=RL_TIMESTEPS, callback=CustomCallback(env, verbose=1))
 
     # save model
-    model.save('{}_'.format(ent_coef)+MODEL.format(traj_length, dim)+'.zip')
+    model.save('{}_'.format(ent_coef)+MODEL.format(loss_type, traj_length, dim)+'.zip')
 
 
 class ProposalDist:
@@ -266,12 +266,12 @@ def test_importance_sampler(traj_length, A, Q):
 
     return importance_estimate(ys, A=A, Q=Q, C=gen_C, R=gen_R, mu_0=gen_mu_0, Q_0=gen_Q_0, N=NUM_SAMPLES)
 
-def rl_estimate(ys, dim, N, env=None, traj_length=0, device='cpu'):
+def rl_estimate(ys, dim, N, env=None, traj_length=0, device='cpu', model_name=MODEL):
     if ys is not None:
         traj_length = len(ys)
         device = ys.device
     print('\nrl_estimate\n')
-    _, policy = load_rl_model(device, traj_length=traj_length, dim=dim)
+    _, policy = load_rl_model(model_name, device, traj_length=traj_length, dim=dim)
     return evaluate(ys, d=policy, N=N, env=env)
 
 
@@ -819,7 +819,7 @@ def get_prior_output(table, ys, dim, sample, traj_length=0):
                                                      idstr=name)
     return OutputWithName(prior_output, name)
 
-def get_rl_output(table, ys, dim, sample, traj_length=0):
+def get_rl_output(table, ys, dim, sample, traj_length=0, model_name=MODEL):
     if ys is not None:
         traj_length = len(ys)
     rl_output = ImportanceOutput(traj_length=traj_length, ys=ys, dim=dim)
@@ -836,7 +836,7 @@ def get_rl_output(table, ys, dim, sample, traj_length=0):
         env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q,
                                 ys=ys, traj_length=traj_length, sample=sample)
 
-        eval_obj = rl_estimate(ys, dim=dim, N=NUM_SAMPLES, env=env, traj_length=traj_length)
+        eval_obj = rl_estimate(ys, dim=dim, N=NUM_SAMPLES, env=env, traj_length=traj_length, model_name=model_name)
         # add rl confidence interval
         rl_estimator = rl_output.add_rl_estimator(running_log_estimates=eval_obj.running_log_estimates,
                                                   ci=eval_obj.ci, weight_mean=eval_obj.log_weight_mean.exp(),
@@ -967,8 +967,8 @@ def prior_convergence(table, ys, truth, dim):
     traj_length = len(ys)
     plot_convergence([prior_outputs_with_name], traj_length, dim, truth, 'prior')
 
-def rl_convergence(table, ys, truth, dim):
-    rl_outputs_with_name = get_rl_output(table=table, ys=ys, dim=dim, sample=False)
+def rl_convergence(table, ys, truth, dim, model_name):
+    rl_outputs_with_name = get_rl_output(table=table, ys=ys, dim=dim, sample=False, model_name=model_name)
     traj_length = len(ys)
     plot_convergence([rl_outputs_with_name], traj_length, dim, truth, 'rl (traj_length {} dim {})'.format(traj_length, dim))
 
@@ -1044,12 +1044,12 @@ class RLConvergence(EvidenceConvergence):
         return get_rl_output(table=table, ys=self.posterior_evidence.ys, dim=self.dim, sample=False)
 
 
-def compare_convergence(table, traj_length, dim, epsilons):
+def compare_convergence(table, traj_length, dim, epsilons, model_name=MODEL):
     posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
     posterior_convergence(posterior_evidence=posterior_evidence, dim=dim, epsilons=epsilons)
     prior_convergence(table=table, ys=posterior_evidence.ys, truth=posterior_evidence.evidence, dim=dim)
     try:
-        rl_convergence(table=table, ys=posterior_evidence.ys, truth=posterior_evidence.evidence, dim=dim)
+        rl_convergence(table=table, ys=posterior_evidence.ys, truth=posterior_evidence.evidence, dim=dim, model_name=model_name)
     except:
         pass
 
@@ -1116,27 +1116,24 @@ def prior_ess_dim(table, traj_length, dims):
                            num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, dims=dims,
                            xlabel='Latent Dimension', name='prior')
 
-def rl_ess_traj(table, traj_lengths, dim):
+def rl_ess_traj(table, traj_lengths, dim, model_name=MODEL):
     os.makedirs(TODAY, exist_ok=True)
-    plt.figure()
     outputs = []
     for traj_length in traj_lengths:
-        outputs += [get_rl_output(table=table, ys=None, dim=dim, sample=True, traj_length=traj_length)]
+        outputs += [get_rl_output(table=table, ys=None, dim=dim, sample=True, traj_length=traj_length, model_name=model_name)]
     make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=dim,
                        num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, traj_lengths=traj_lengths,
                        xlabel='Trajectory Length', name='RL')
-    plt.figure()
 
-def rl_ess_dim(table, traj_length, dims):
+def rl_ess_dim(table, traj_length, dims, model_name=MODEL):
     os.makedirs(TODAY, exist_ok=True)
     outputs = []
     for dim in dims:
         # ys = generate_trajectory(traj_length, A=single_gen_A, Q=single_gen_Q, C=single_gen_C, R=single_gen_R, mu_0=single_gen_mu_0, Q_0=single_gen_Q_0)[0]
-        outputs += [get_rl_output(table=table, ys=None, dim=dim, sample=True, traj_length=traj_length)]
+        outputs += [get_rl_output(table=table, ys=None, dim=dim, sample=True, traj_length=traj_length, model_name=model_name)]
     make_ess_plot_nice_dim(outputs, fixed_feature_string='traj_length', fixed_feature=traj_length,
                     num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, dims=dims,
                     xlabel='Latent Dimension', name='RL')
-    plt.figure()
 
 def execute_posterior_ess_traj(table, traj_lengths, epsilons, dim):
     os.makedirs(TODAY, exist_ok=True)
@@ -1148,33 +1145,31 @@ def execute_posterior_ess_dim(table, traj_length, epsilons, dims):
     for epsilon in epsilons:
         posterior_ess_dim(table=table, traj_length=traj_length, dims=dims, epsilon=epsilon)
 
-def execute_compare_convergence_traj(table, traj_lengths, epsilons, dim):
+def execute_compare_convergence_traj(table, traj_lengths, epsilons, dim, model_name=MODEL):
     os.makedirs(TODAY, exist_ok=True)
     for traj_length in traj_lengths:
-        compare_convergence(table=table, traj_length=traj_length, dim=dim, epsilons=epsilons)
+        compare_convergence(table=table, traj_length=traj_length, dim=dim, epsilons=epsilons, model_name=model_name)
 
-def execute_compare_convergence_dim(table, traj_length, epsilons, dims):
+def execute_compare_convergence_dim(table, traj_length, epsilons, dims, model_name=MODEL):
     os.makedirs(TODAY, exist_ok=True)
     for dim in dims:
-        compare_convergence(table=table, traj_length=traj_length, dim=dim, epsilons=epsilons)
+        compare_convergence(table=table, traj_length=traj_length, dim=dim, epsilons=epsilons, model_name=model_name)
 
-def execute_ess_traj(table, traj_lengths, dim, epsilons):
+def execute_ess_traj(table, traj_lengths, dim, epsilons, model_name=MODEL):
     os.makedirs(TODAY, exist_ok=True)
-    plt.gca().set_yscale('log')
     for epsilon in epsilons:
-        posterior_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, epsilon=epsilon)
+        # posterior_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, epsilon=epsilon)
         posterior_filtering_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, epsilon=epsilon)
     # prior_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim)
-    # rl_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim)
+    rl_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, model_name=model_name)
 
-def execute_ess_dim(table, traj_length, dims, epsilons):
+def execute_ess_dim(table, traj_length, dims, epsilons, model_name=MODEL):
     os.makedirs(TODAY, exist_ok=True)
-    plt.gca().set_yscale('log')
     for epsilon in epsilons:
-        posterior_ess_dim(table=table, traj_length=traj_length, dims=dims, epsilon=epsilon)
+        # posterior_ess_dim(table=table, traj_length=traj_length, dims=dims, epsilon=epsilon)
         posterior_filtering_ess_dim(table=table, traj_length=traj_length, dims=dims, epsilon=epsilon)
     # prior_ess_dim(table=table, traj_length=traj_length, dims=dims)
-    # rl_ess_dim(table=table, traj_length=traj_length, dims=dims)
+    rl_ess_dim(table=table, traj_length=traj_length, dims=dims, model_name=model_name)
 
 def trial_evidence(table, traj_length, dim):
     posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
@@ -1333,16 +1328,24 @@ if __name__ == "__main__":
     os.makedirs(TODAY, exist_ok=True)
 
     # epsilons = [-5e-3, 0.0, 5e-3]
-    epsilons = [-5e-2, 0.0, 5e-2]
-    traj_lengths = torch.arange(2, 30, 1)
+    epsilons = [-5e-2, 0.0]
+    traj_lengths = torch.cat([torch.arange(2, 11), torch.arange(12, 20)])
     dim = 1
+    ent_coef = 0.1
+    forward_kl = 'forward_kl'
+    forward_model_name = '{}_{}_'.format(ent_coef, forward_kl) + 'linear_gaussian_model_(traj_{}_dim_{})'
+    reverse_kl = 'reverse_kl'
+    reverse_model_name = '{}_{}_'.format(ent_coef, reverse_kl) + 'linear_gaussian_model_(traj_{}_dim_{})'
     # dims = np.array([2, 4, 6, 8])
 
-    # table = create_dimension_table(torch.tensor(dims), random=False)
+    table = create_dimension_table(torch.tensor([dim]), random=False)
 
     # traj plots
-    # execute_compare_convergence_traj(table=table, traj_lengths=traj_lengths, epsilons=epsilons, dim=dim)
-    # execute_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, epsilons=epsilons)
+    # execute_compare_convergence_traj(table=table, traj_lengths=traj_lengths, epsilons=epsilons, dim=dim, model_name=model_name)
+    execute_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, epsilons=epsilons)
+    # posterior_evidence = compute_evidence(table=table, traj_length=15, dim=dim)
+    # rl_convergence(table=table, ys=posterior_evidence.ys, truth=posterior_evidence.evidence, dim=dim, model_name=forward_model_name)
+    # rl_convergence(table=table, ys=posterior_evidence.ys, truth=posterior_evidence.evidence, dim=dim, model_name=reverse_model_name)
 
     # dim plots
     # dims = np.arange(2, 30, 1)
@@ -1351,7 +1354,7 @@ if __name__ == "__main__":
     # traj_length = torch.tensor(5)
     # execute_compare_convergence_dim(table=table, traj_length=traj_length, epsilons=epsilons, dims=dims)
 
-    # execute_ess_dim(table, traj_lengths[0], dims, epsilons)
+    # execute_ess_dim(table, traj_lengths[0], dims, epsilons, model_name=forward_kl)
 
     # prior_ess_dim(traj_lengths=torch.arange(2, 17, 1), dim=1)
     # execute_posterior_ess_dim(table=table, traj_length=traj_length, epsilons=epsilons, dim=dim)
@@ -1362,12 +1365,15 @@ if __name__ == "__main__":
     # truth = trial_evidence(table, traj_length, dim)
 
     # execute_filtering_posterior_convergence(table, traj_lengths, epsilons, dim)
-    # test_train(traj_length=t_len, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
+    # test_train(traj_length=t_len, dim=dim, ent_coef=ent_coef, loss_type=reverse_kl)
 
-    t_lens = [10, 15]
-    ent_coef = 0.1
-    loss_type = 'forward_kl'
-    for t_len in t_lens:
-        execute_variance_ratio_runs(t_len=t_len, ent_coef=ent_coef, loss_type=loss_type)
+    # t_lens = torch.arange(2, 10)
+    # dims = np.arange(1, 10)
+    # for dim in dims:
+    #    # execute_variance_ratio_runs(t_len=t_len, ent_coef=ent_coef, loss_type=loss_type)
+    #    test_train(traj_length=10, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
+    #    test_train(traj_length=10, dim=dim+9, ent_coef=ent_coef, loss_type=loss_type)
+    # test_train(traj_length=15, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
+    # test_train(traj_length=15, dim=dim, ent_coef=ent_coef, loss_type='forward_kl')
 
     # load_rl_model(model_name=model_name, device='cpu', traj_length=t_len, dim=dim)
