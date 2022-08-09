@@ -26,6 +26,7 @@ from evaluation import EvaluationObject, evaluate
 from dimension_table import create_dimension_table
 from filtering_posterior import compute_filtering_posteriors, evaluate_filtering_posterior
 import pandas as pd
+from get_args import get_args
 
 # model name
 # MODEL = 'trial_linear_gaussian_model_(traj_{}_dim_{})'
@@ -1383,11 +1384,15 @@ def execute_state_occupancy():
 
 if __name__ == "__main__":
     os.makedirs(TODAY, exist_ok=True)
+    args, _ = get_args()
+    traj_len = args.traj_len
+    dim = args.dim
+    ent_coef = args.ent_coef
+    loss_type = args.loss_type
 
     # epsilons = [-5e-3, 0.0, 5e-3]
     epsilons = [-5e-2, 0.0, 5e-2]
     traj_lengths = torch.arange(2, 30, 1)
-    dim = 1
     # dims = np.array([2, 4, 6, 8])
 
     # table = create_dimension_table(torch.tensor(dims), random=False)
@@ -1415,6 +1420,7 @@ if __name__ == "__main__":
 
     # execute_filtering_posterior_convergence(table, traj_lengths, epsilons, dim)
     # test_train(traj_length=t_len, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
+
 
     # execute_variance_ratio_runs()
     execute_state_occupancy()
