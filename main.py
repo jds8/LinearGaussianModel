@@ -38,9 +38,9 @@ MODEL = 'agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{})'
 TODAY = date.today().strftime("%b-%d-%Y")
 
 RL_TIMESTEPS = 10
-NUM_SAMPLES = 10
+NUM_SAMPLES = 100
 NUM_VARIANCE_SAMPLES = 10
-NUM_REPEATS = 2
+NUM_REPEATS = 20
 
 class CustomCallback(BaseCallback):
     """
@@ -277,7 +277,7 @@ def test_importance_sampler(traj_length, A, Q):
 
     return importance_estimate(ys, A=A, Q=Q, C=gen_C, R=gen_R, mu_0=gen_mu_0, Q_0=gen_Q_0, N=NUM_SAMPLES)
 
-def rl_estimate(ys, dim, N, env=None, traj_length=0, device='cpu', model_name=MODEL):
+def rl_estimate(ys, dim, N, model_name, env=None, traj_length=0, device='cpu'):
     if ys is not None:
         traj_length = len(ys)
         device = ys.device
@@ -335,6 +335,18 @@ class Estimator:
     def get_error_in_estimate(self, true, quantile=torch.tensor([0.5])):
         estimate = self.compute_evidence_estimate(quantile)
         return torch.abs((estimate.log() - true.log()).exp() - 1)
+
+    def save_data(self):
+        """
+        Saves the running log estimate and ess into their own csv files
+        where there are NUM_SAMPLES number of columns and NUM_REPEATS
+        number of rows
+        """
+        estimates_df = pd.DataFrame(torch.stack(self.running_log_estimate_repeats).numpy())
+        estimates_df.to_csv('{}/{}_LogEstimates.csv'.format(TODAY, self.label))
+
+        ess_df = pd.DataFrame(torch.stack(self.ess).numpy())
+        ess_df.to_csv('{}/{}_ESS.csv'.format(TODAY, self.label))
 
 
 class ISEstimator(Estimator):
@@ -556,7 +568,8 @@ class Plotter:
 
                 # add RL plot
                 try:
-                    eval_obj = rl_estimate(ys, dim=self.dimension, N=num_samples, env=env)
+                    model_name = MODEL.format(1, 'entropy', traj_length, self.dimension)
+                    eval_obj = rl_estimate(ys, dim=self.dimension, N=num_samples, model_name=model_name, env=env)
                     print('rl estimate: {}'.format(eval_obj.running_log_estimates[-1].exp()))
                     x_vals = torch.arange(1, len(eval_obj.running_log_estimates.squeeze())+1)
 
@@ -839,7 +852,7 @@ def get_prior_output(table, ys, dim, sample, traj_length=0):
                                                      idstr=name)
     return OutputWithName(prior_output, name)
 
-def get_rl_output(table, ys, dim, sample, traj_length=0, model_name=MODEL):
+def get_rl_output(table, ys, dim, sample, model_name, traj_length=0):
     if ys is not None:
         traj_length = len(ys)
     rl_output = ImportanceOutput(traj_length=traj_length, ys=ys, dim=dim)
@@ -856,8 +869,8 @@ def get_rl_output(table, ys, dim, sample, traj_length=0, model_name=MODEL):
         env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q,
                                 ys=ys, traj_length=traj_length, sample=sample)
 
-        eval_obj = rl_estimate(ys, dim=dim, N=NUM_SAMPLES, env=env,
-                               traj_length=traj_length, model_name=model_name)
+        eval_obj = rl_estimate(ys, dim=dim, N=NUM_SAMPLES, model_name=model_name,
+                               env=env, traj_length=traj_length)
         # add rl confidence interval
         rl_estimator = rl_output.add_rl_estimator(running_log_estimates=eval_obj.running_log_estimates,
                                                   ci=eval_obj.ci, weight_mean=eval_obj.log_weight_mean.exp(),
@@ -1115,6 +1128,15 @@ def posterior_filtering_ess_traj(table, traj_lengths, dim, epsilon):
                        num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, traj_lengths=traj_lengths,
                        xlabel='Trajectory Length', name='posterior_filtering')
 
+
+
+def process_posterior_filtering_ess(table, traj_length, dim, epsilon):
+    os.makedirs(TODAY, exist_ok=True)
+    outputs = []
+    outputs += get_posterior_filtering_ess_outputs(table, traj_length, dim, epsilon)
+
+
+
 def posterior_filtering_ess_dim(table, traj_length, dims, epsilon):
     os.makedirs(TODAY, exist_ok=True)
     outputs = []
@@ -1143,21 +1165,23 @@ def prior_ess_dim(table, traj_length, dims):
                            num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, dims=dims,
                            xlabel='Latent Dimension', name='prior')
 
-def rl_ess_traj(table, traj_lengths, dim):
+def rl_ess_traj(table, traj_lengths, dim, ent_coef, loss_type):
     os.makedirs(TODAY, exist_ok=True)
     outputs = []
     for traj_length in traj_lengths:
-        outputs += [get_rl_output(table=table, ys=None, dim=dim, sample=True, traj_length=traj_length)]
+        model_name = get_model_name(traj_length=traj_length, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
+        outputs += [get_rl_output(table=table, ys=None, dim=dim, sample=True, model_name=model_name, traj_length=traj_length)]
     make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=dim,
                        num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, traj_lengths=traj_lengths,
                        xlabel='Trajectory Length', name='RL')
 
-def rl_ess_dim(table, traj_length, dims):
+def rl_ess_dim(table, traj_length, dims, ent_coef, loss_type):
     os.makedirs(TODAY, exist_ok=True)
     outputs = []
     for dim in dims:
         # ys = generate_trajectory(traj_length, A=single_gen_A, Q=single_gen_Q, C=single_gen_C, R=single_gen_R, mu_0=single_gen_mu_0, Q_0=single_gen_Q_0)[0]
-        outputs += [get_rl_output(table=table, ys=None, dim=dim, sample=True, traj_length=traj_length)]
+        model_name = get_model_name(traj_length=traj_length, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
+        outputs += [get_rl_output(table=table, ys=None, dim=dim, sample=True, model_name=model_name, traj_length=traj_length)]
     make_ess_plot_nice_dim(outputs, fixed_feature_string='traj_length', fixed_feature=traj_length,
                     num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, dims=dims,
                     xlabel='Latent Dimension', name='RL')
@@ -1186,21 +1210,22 @@ def execute_compare_convergence_dim(table, traj_length, epsilons, dims, model_na
                             dim=dim, epsilons=epsilons,
                             model_name=model_name)
 
-def execute_ess_traj(table, traj_lengths, dim, epsilons):
+def execute_ess_traj(traj_lengths, dim, epsilons, ent_coef, loss_type):
+    table = create_dimension_table(torch.tensor([dim]), random=False)
     os.makedirs(TODAY, exist_ok=True)
     for epsilon in epsilons:
         # posterior_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, epsilon=epsilon)
         posterior_filtering_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, epsilon=epsilon)
     # prior_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim)
-    rl_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim)
+    rl_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
 
-def execute_ess_dim(table, traj_length, dims, epsilons):
+def execute_ess_dim(table, traj_length, dims, epsilons, ent_coef, loss_type):
     os.makedirs(TODAY, exist_ok=True)
     for epsilon in epsilons:
         # posterior_ess_dim(table=table, traj_length=traj_length, dims=dims, epsilon=epsilon)
         posterior_filtering_ess_dim(table=table, traj_length=traj_length, dims=dims, epsilon=epsilon)
     # prior_ess_dim(table=table, traj_length=traj_length, dims=dims)
-    rl_ess_dim(table=table, traj_length=traj_length, dims=dims)
+    rl_ess_dim(table=table, traj_length=traj_length, dims=dims, ent_coef=ent_coef, loss_type=loss_type)
 
 def trial_evidence(table, traj_length, dim):
     posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
@@ -1476,6 +1501,14 @@ if __name__ == "__main__":
         test_train(traj_length=traj_length, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
     elif subroutine == 'evaluate_agent':
         evaluate_agent(traj_length, dim, model_name)
+    elif subroutine == 'ess_traj':
+        traj_lengths = torch.arange(2, 20)
+        execute_ess_traj(traj_lengths=traj_lengths, dim=dim, epsilons=epsilons, ent_coef=ent_coef, loss_type=loss_type)
+    else:
+        table = create_dimension_table(torch.tensor([dim]), random=False)
+        posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
+        epsilons = [-5e-3, 5e-3]
+        posterior_filtering_convergence(table, posterior_evidence, dim, epsilons)
 
     # epsilons = [-5e-3, 0.0, 5e-3]
     # epsilons = [-5e-2, 0.0]
@@ -1492,7 +1525,7 @@ if __name__ == "__main__":
 
     # traj plots
     # execute_compare_convergence_traj(table=table, traj_lengths=traj_lengths, epsilons=epsilons, dim=dim)
-    # execute_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, epsilons=epsilons)
+    # execute_ess_traj(traj_lengths=traj_lengths, dim=dim, epsilons=epsilons)
     # posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
     # rl_convergence(table=table, ys=posterior_evidence.ys,
     #                truth=posterior_evidence.evidence, dim=dim,
