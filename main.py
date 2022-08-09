@@ -37,7 +37,7 @@ MODEL = 'agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{})'
 
 TODAY = date.today().strftime("%b-%d-%Y")
 
-RL_TIMESTEPS = 10
+RL_TIMESTEPS = 1000000
 NUM_SAMPLES = 100
 NUM_VARIANCE_SAMPLES = 10
 NUM_REPEATS = 20
@@ -876,7 +876,7 @@ def get_rl_output(table, ys, dim, sample, model_name, traj_length=0):
                                                   max_weight_prop=eval_obj.log_max_weight_prop.exp(),
                                                   ess=eval_obj.log_effective_sample_size.exp(),
                                                   ess_ci=eval_obj.ess_ci, idstr=name)
-
+    rl_estimator.save_data()
     return OutputWithName(rl_output, name)
 
 def get_perturbed_posterior_output(posterior_evidence, dim, epsilon, name):
