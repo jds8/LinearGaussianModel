@@ -1037,8 +1037,6 @@ def test_joint_vars():
     print(jvs.dist.covariance())
     rhs_rvs = [xs[0], ys[0]]
     conditional = jvs.condition(rhs_rvs)
-    import pdb; pdb.set_trace()
-
 
     from generative_model import generate_trajectory
     # evaluate it

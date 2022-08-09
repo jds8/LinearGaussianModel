@@ -25,6 +25,8 @@ from linear_gaussian_prob_prog import MultiGaussianRandomVariable, GaussianRando
 from evaluation import EvaluationObject, evaluate
 from dimension_table import create_dimension_table
 from filtering_posterior import compute_filtering_posteriors, evaluate_filtering_posterior
+import pandas as pd
+from get_args import get_args
 
 # model name
 # MODEL = 'trial_linear_gaussian_model_(traj_{}_dim_{})'
@@ -36,6 +38,7 @@ TODAY = date.today().strftime("%b-%d-%Y")
 
 RL_TIMESTEPS = 1000000
 NUM_SAMPLES = 1000
+NUM_VARIANCE_SAMPLES = 10
 NUM_REPEATS = 20
 
 class CustomCallback(BaseCallback):
@@ -170,6 +173,8 @@ class CustomCallback(BaseCallback):
 
         return True
 
+def get_model_name(traj_length, dim, ent_coef, loss_type):
+    return '{}_{}'.format(ent_coef, loss_type)+MODEL.format(traj_length, dim)+'.zip'
 
 def train(traj_length, env, dim, ent_coef=1.0, loss_type='forward_kl'):
     params = {}
@@ -191,7 +196,8 @@ def train(traj_length, env, dim, ent_coef=1.0, loss_type='forward_kl'):
     model.learn(total_timesteps=RL_TIMESTEPS, callback=CustomCallback(env, verbose=1))
 
     # save model
-    model.save('{}_'.format(ent_coef)+MODEL.format(loss_type, traj_length, dim)+'.zip')
+    model_name = get_model_name(traj_length=traj_length, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
+    model.save(model_name)
 
 
 class ProposalDist:
@@ -299,13 +305,13 @@ class Estimator:
 
     def plot_running_log_estimates(self):
         self._plot_nice(xlen=self.running_log_estimate_repeats[0].squeeze().nelement(),
-                  data=torch.stack(self.running_log_estimate_repeats).exp(),
-                  quantiles=torch.tensor([0.05, 0.5, 0.95]))
+                        data=torch.stack(self.running_log_estimate_repeats).exp(),
+                        quantiles=torch.tensor([0.05, 0.5, 0.95]))
 
     def plot_ess(self):
         self._plot_nice(xlen=self.ess[0].squeeze().nelement(),
-                  data=torch.stack(self.ess),
-                  quantiles=torch.tensor([0.05, 0.5, 0.95]))
+                        data=torch.stack(self.ess),
+                        quantiles=torch.tensor([0.05, 0.5, 0.95]))
 
     def _plot_nice(self, xlen, data, quantiles):
         assert quantiles.nelement() == 3
@@ -989,7 +995,6 @@ def plot_dim(traj_length, dim):
 
     outputs = ep.plot_IS(traj_lengths=torch.tensor([traj_length]), As=[], Qs=[], num_samples=100, num_repeats=10, name='extra')
 
-
 class EvidenceConvergence:
     def __init__(self, posterior_evidence, dim, lower_quantile, upper_quantile):
         self.posterior_evidence = posterior_evidence
@@ -1175,34 +1180,6 @@ def trial_evidence(table, traj_length, dim):
     posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
     return posterior_evidence.truth
 
-def compute_evidence(table, traj_length, dim):
-    os.makedirs(TODAY, exist_ok=True)
-
-    A = table[dim]['A']
-    Q = table[dim]['Q']
-    C = table[dim]['C']
-    R = table[dim]['R']
-    mu_0 = table[dim]['mu_0']
-    Q_0 = table[dim]['Q_0']
-
-    # ys = generate_trajectory(traj_length, A=single_gen_A, Q=single_gen_Q, C=single_gen_C, R=single_gen_R, mu_0=single_gen_mu_0, Q_0=single_gen_Q_0)[0]
-    # env = LinearGaussianEnv(A=single_gen_A, Q=single_gen_Q,
-    #                         C=single_gen_C, R=single_gen_R,
-    #                         mu_0=single_gen_mu_0,
-    #                         Q_0=single_gen_Q_0, ys=ys,
-    #                         sample=True)
-
-    ys = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0]
-    env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, ys=ys, sample=True)
-
-    posterior = compute_posterior(A=A, Q=Q, C=C, R=R, num_observations=len(ys), dim=dim)
-    td = condition_posterior(posterior, ys)
-    eval_obj = evaluate_posterior(ys=ys, N=1, td=td, env=env)
-    true = eval_obj.running_log_estimates[0].exp()
-    # print('True evidence: {}'.format(true))
-
-    return PosteriorEvidence(td, ys, true, env)
-
 def execute_filtering_posterior_convergence(table, traj_lengths, epsilons, dim):
     os.makedirs(TODAY, exist_ok=True)
     for traj_length in traj_lengths:
@@ -1275,6 +1252,9 @@ def sample_variance_ratios(traj_length, model_name):
     mu_0 = table[dim]['mu_0']
     Q_0 = table[dim]['Q_0']
 
+    # keep state occupancy for each state in traj_length
+    state_occupancy = []
+
     # variance ratios
     variance_ratios = []
     for k in range(NUM_SAMPLES):
@@ -1305,6 +1285,108 @@ def sample_variance_ratios(traj_length, model_name):
         variance_ratios.append(variance_ratio_steps)
     return torch.stack(variance_ratios).reshape(NUM_SAMPLES, -1)
 
+def sample_empirical_state_occupancy(traj_length, model_name):
+    """
+    This function generates NUM_SAMPLES trajectories of length traj_length
+    and computes the ratios of the filtering posterior variance to that of the rl agent.
+    """
+
+    # load rl policy
+    _, policy = load_rl_model(model_name=model_name, device='cpu',
+                              traj_length=traj_length, dim=1)  # assume dimensionality equals 1 so the variance is just a scalar
+
+    # set up to create filtering posterior
+    dim = 1  # assume dimension is 1 so that variances are scalars
+    table = create_dimension_table(torch.tensor([dim]), random=False)
+
+    A = table[dim]['A']
+    Q = table[dim]['Q']
+    C = table[dim]['C']
+    R = table[dim]['R']
+    mu_0 = table[dim]['mu_0']
+    Q_0 = table[dim]['Q_0']
+
+    # keep state occupancy for each state in traj_length
+    state_occupancy = [[] for _ in range(traj_length)]
+
+    for k in range(NUM_SAMPLES):
+        # generate a set of ys using the true model parameters
+        traj_ys, traj_xs = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0:2]
+        # create filtering distribution given the ys
+        tds, traj_ys = compute_filtering_posteriors(table=table, num_obs=traj_length, dim=dim, ys=traj_ys)
+
+        for i in range(NUM_VARIANCE_SAMPLES):
+            # get first filtering distribution p(x0 | y0:yT)
+            td = tds[0].condition(y_values=traj_ys)
+
+            # get first obs
+            x0 = torch.zeros(dim)
+            obs = torch.cat([x0, traj_ys[0].reshape(1)]).reshape(dim+1, 1)
+            xt = torch.tensor(policy.predict(obs, deterministic=False)[0])
+            state_occupancy[0].append(xt)
+
+            for j in range(1, len(tds)):
+                td_fps = tds[j]
+                y = traj_ys[j:]
+                # dst = td_fps.condition(y_values=y, x_value=xt)
+                # filtering_variance = dst.covariance()
+                obs = torch.cat([torch.tensor(xt), y[0].reshape(1)]).reshape(dim+1, 1)
+
+                xt = torch.tensor(policy.predict(obs, deterministic=False)[0])
+                state_occupancy[j].append(xt)
+
+    for idx in range(len(state_occupancy)):
+        state_occupancy[idx] = torch.cat(state_occupancy[idx])
+
+    return torch.stack(state_occupancy, dim=1)
+
+def sample_filtering_state_occupancy(traj_length, td):
+    """
+    This function generates NUM_SAMPLES trajectories of length traj_length
+    and computes the ratios of the filtering posterior variance to that of the rl agent.
+    """
+
+    # set up to create filtering posterior
+    dim = 1  # assume dimension is 1 so that variances are scalars
+    table = create_dimension_table(torch.tensor([dim]), random=False)
+
+    A = table[dim]['A']
+    Q = table[dim]['Q']
+    C = table[dim]['C']
+    R = table[dim]['R']
+    mu_0 = table[dim]['mu_0']
+    Q_0 = table[dim]['Q_0']
+
+    # keep state occupancy for each state in traj_length
+    state_occupancy = [[] for _ in range(traj_length)]
+
+    for k in range(NUM_SAMPLES):
+        # generate a set of ys using the true model parameters
+        traj_ys, traj_xs = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0:2]
+        # create filtering distribution given the ys
+        tds, traj_ys = compute_filtering_posteriors(table=table, num_obs=traj_length, dim=dim, ys=traj_ys)
+
+        for i in range(NUM_VARIANCE_SAMPLES):
+            # get first filtering distribution p(x0 | y0:yT)
+            td = tds[0].condition(y_values=traj_ys)
+
+            # get first obs
+            x0 = torch.zeros(dim)
+            xt = td.sample()
+            state_occupancy[0].append(xt)
+
+            for j in range(1, len(tds)):
+                td_fps = tds[j]
+                y = traj_ys[j:]
+                dst = td_fps.condition(y_values=y, x_value=xt)
+                xt = td.sample()
+                state_occupancy[j].append(xt)
+
+    for idx in range(len(state_occupancy)):
+        state_occupancy[idx] = torch.cat(state_occupancy[idx])
+
+    return torch.stack(state_occupancy, dim=1)
+
 def plot_variance_ratios(vrs, quantiles, traj_length, ent_coef, loss_type):
     lwr, med, upr = torch.quantile(vrs, quantiles, dim=0)
     x_data = torch.arange(1, traj_length+1)
@@ -1314,7 +1396,21 @@ def plot_variance_ratios(vrs, quantiles, traj_length, ent_coef, loss_type):
     plt.ylabel('Variance Ratio')
     plt.title('Ratio of Variances of Filtering Posterior and RL Proposal\n(Loss Type: {} Coef: {})'.format(loss_type, ent_coef))
     plt.legend()
-    plt.savefig('{}/Variance Ratio traj_len: {} ent_coef: {} loss_type: {}.png'.format(TODAY, traj_length, ent_coef, loss_type))
+    plt.savefig('{}/Variance Ratio traj_len: {} ent_coef: {} loss_type: {}.pdf'.format(TODAY, traj_length, ent_coef, loss_type))
+    plt.close()
+
+def plot_state_occupancy(state_occupancies, quantiles, traj_length, ent_coef, loss_type):
+    for state_occupancy, name in state_occupancies:
+        quants = torch.tensor(quantiles, dtype=state_occupancy.dtype)
+        lwr, med, upr = torch.quantile(state_occupancy, quants, dim=0)
+        x_data = torch.arange(1, traj_length+1)
+        plt.plot(x_data, med.squeeze(), label=name)
+        plt.fill_between(x_data, y1=lwr, y2=upr, alpha=0.3)
+    plt.xlabel('Trajectory Step (of {})'.format(traj_length))
+    plt.ylabel('xt')
+    plt.title('Values of state xt at each time step t\n(Loss Type: {} Coef: {})'.format(loss_type, ent_coef))
+    plt.legend()
+    plt.savefig('{}/Variance Ratio traj_len: {} ent_coef: {} loss_type: {}.pdf'.format(TODAY, traj_length, ent_coef, loss_type))
     plt.close()
 
 def execute_variance_ratio_runs(t_len, ent_coef, loss_type):
@@ -1323,26 +1419,42 @@ def execute_variance_ratio_runs(t_len, ent_coef, loss_type):
     quantiles = torch.tensor([0.05, 0.5, 0.95])
     plot_variance_ratios(vrs=vrs, quantiles=quantiles, traj_length=t_len, ent_coef=ent_coef, loss_type=loss_type)
 
+def execute_state_occupancy():
+    traj_length = torch.tensor(10)
+    ent_coef = 1.0
+    loss_type = 'forward_kl'
+    model_name = '1.0_new_linear_gaussian_model_(traj_10_dim_1).zip'
+    state_occupancy = sample_empirical_state_occupancy(traj_length, model_name)
+    filtering_state_occupancy = sample_filtering_state_occupancy(traj_length, model_name)
+    quantiles = torch.tensor([0.05, 0.5, 0.95], dtype=state_occupancy.dtype)
+    plot_state_occupancy(state_occupancies=[(state_occupancy, 'RL agent'), (filtering_state_occupancy, 'Filtering Posterior')],
+                         quantiles=quantiles, traj_length=traj_length, ent_coef=ent_coef, loss_type=loss_type)
+
 
 if __name__ == "__main__":
     os.makedirs(TODAY, exist_ok=True)
+    args, _ = get_args()
+    traj_len = args.traj_len
+    dim = args.dim
+    ent_coef = args.ent_coef
+    loss_type = args.loss_type
 
     # epsilons = [-5e-3, 0.0, 5e-3]
-    epsilons = [-5e-2, 0.0]
-    traj_lengths = torch.cat([torch.arange(2, 11), torch.arange(12, 20)])
-    dim = 1
-    ent_coef = 0.1
-    forward_kl = 'forward_kl'
-    forward_model_name = '{}_{}_'.format(ent_coef, forward_kl) + 'linear_gaussian_model_(traj_{}_dim_{})'
-    reverse_kl = 'reverse_kl'
-    reverse_model_name = '{}_{}_'.format(ent_coef, reverse_kl) + 'linear_gaussian_model_(traj_{}_dim_{})'
+    # epsilons = [-5e-2, 0.0]
+    # traj_lengths = torch.cat([torch.arange(2, 11), torch.arange(12, 20)])
+    # dim = 1
+    # ent_coef = 0.1
+    # forward_kl = 'forward_kl'
+    # forward_model_name = '{}_{}_'.format(ent_coef, forward_kl) + 'linear_gaussian_model_(traj_{}_dim_{})'
+    # reverse_kl = 'reverse_kl'
+    # reverse_model_name = '{}_{}_'.format(ent_coef, reverse_kl) + 'linear_gaussian_model_(traj_{}_dim_{})'
     # dims = np.array([2, 4, 6, 8])
 
-    table = create_dimension_table(torch.tensor([dim]), random=False)
+    # table = create_dimension_table(torch.tensor([dim]), random=False)
 
     # traj plots
     # execute_compare_convergence_traj(table=table, traj_lengths=traj_lengths, epsilons=epsilons, dim=dim, model_name=model_name)
-    execute_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, epsilons=epsilons)
+    # execute_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, epsilons=epsilons)
     # posterior_evidence = compute_evidence(table=table, traj_length=15, dim=dim)
     # rl_convergence(table=table, ys=posterior_evidence.ys, truth=posterior_evidence.evidence, dim=dim, model_name=forward_model_name)
     # rl_convergence(table=table, ys=posterior_evidence.ys, truth=posterior_evidence.evidence, dim=dim, model_name=reverse_model_name)
@@ -1365,7 +1477,7 @@ if __name__ == "__main__":
     # truth = trial_evidence(table, traj_length, dim)
 
     # execute_filtering_posterior_convergence(table, traj_lengths, epsilons, dim)
-    # test_train(traj_length=t_len, dim=dim, ent_coef=ent_coef, loss_type=reverse_kl)
+    test_train(traj_length=traj_len, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
 
     # t_lens = torch.arange(2, 10)
     # dims = np.arange(1, 10)
@@ -1375,5 +1487,15 @@ if __name__ == "__main__":
     #    test_train(traj_length=10, dim=dim+9, ent_coef=ent_coef, loss_type=loss_type)
     # test_train(traj_length=15, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
     # test_train(traj_length=15, dim=dim, ent_coef=ent_coef, loss_type='forward_kl')
+    # test_train(traj_length=t_len, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
+
+    # execute_variance_ratio_runs()
+    # execute_state_occupancy()
+
+    # t_lens = [10, 15]
+    # ent_coef = 0.1
+    # loss_type = 'forward_kl'
+    # for t_len in t_lens:
+    #     execute_variance_ratio_runs(t_len=t_len, ent_coef=ent_coef, loss_type=loss_type)
 
     # load_rl_model(model_name=model_name, device='cpu', traj_length=t_len, dim=dim)
