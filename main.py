@@ -895,6 +895,7 @@ def get_perturbed_posterior_output(posterior_evidence, dim, epsilon, name):
                                                                 max_weight_prop=eval_obj.log_max_weight_prop.exp(),
                                                                 ess=eval_obj.log_effective_sample_size.exp(),
                                                                 ess_ci=eval_obj.ess_ci, idstr=name)
+    posterior_estimator.save_data()
     return OutputWithName(posterior_output, name)
 
 
@@ -914,6 +915,7 @@ def get_perturbed_posterior_filtering_output(table, posterior_evidence, dim, eps
                                                                 max_weight_prop=eval_obj.log_max_weight_prop.exp(),
                                                                 ess=eval_obj.log_effective_sample_size.exp(),
                                                                 ess_ci=eval_obj.ess_ci, idstr=name)
+    posterior_estimator.save_data()
     return OutputWithName(posterior_output, name)
 
 
@@ -926,14 +928,14 @@ class OutputWithName:
 def get_perturbed_posterior_outputs(posterior_evidence, dim, epsilons):
     outputs = []
     for epsilon in epsilons:
-        name = 'posterior {}'.format(epsilon)
+        name = 'posterior (epsilon: {} dim: {} traj_len: {})'.format(epsilon, dim, len(posterior_evidence.ys))
         outputs += [get_perturbed_posterior_output(posterior_evidence, dim, epsilon, name)]
     return outputs
 
 def get_perturbed_posterior_filtering_outputs(table, posterior_evidence, dim, epsilons):
     outputs = []
     for epsilon in epsilons:
-        name = 'posterior filtering {}'.format(epsilon)
+        name = 'posterior filtering (epsilon: {} dim: {} traj_len: {})'.format(epsilon, dim, len(posterior_evidence.ys))
         outputs += [get_perturbed_posterior_filtering_output(table, posterior_evidence, dim, epsilon, name)]
     return outputs
 
@@ -1125,15 +1127,6 @@ def posterior_filtering_ess_traj(table, traj_lengths, dim, epsilon):
     make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=dim,
                        num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, traj_lengths=traj_lengths,
                        xlabel='Trajectory Length', name='posterior_filtering')
-
-
-
-def process_posterior_filtering_ess(table, traj_length, dim, epsilon):
-    os.makedirs(TODAY, exist_ok=True)
-    outputs = []
-    outputs += get_posterior_filtering_ess_outputs(table, traj_length, dim, epsilon)
-
-
 
 def posterior_filtering_ess_dim(table, traj_length, dims, epsilon):
     os.makedirs(TODAY, exist_ok=True)
