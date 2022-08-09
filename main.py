@@ -412,7 +412,6 @@ class ImportanceOutput(dict):
             plt.fill_between(x_vals, y1=self[key].running_ess_ci[0], y2=self[key].running_ci[1], alpha=0.3)
 
 def make_ess_versus_dimension_plot(outputs, num_samples):
-    plt.figure()
     # plt.gca().set_yscale('log')
     traj_length = None
     dims = []
@@ -969,7 +968,6 @@ def plot_ess_estimators_dim(outputs_with_names, dims):
     ax.xaxis.get_major_locator().set_params(integer=True)
 
 def plot_running_log_estimates(outputs_with_names):
-    plt.figure()
     for output in outputs_with_names:
         estimator = output.output[output.name]
         estimator.plot_running_log_estimates()
@@ -1154,7 +1152,6 @@ def prior_ess_traj(table, traj_lengths, dim):
     make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=dim,
                        num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, traj_lengths=traj_lengths,
                        xlabel='Trajectory Length', name='prior')
-    plt.figure()
 
 def prior_ess_dim(table, traj_length, dims):
     os.makedirs(TODAY, exist_ok=True)
@@ -1502,7 +1499,7 @@ if __name__ == "__main__":
     elif subroutine == 'evaluate_agent':
         evaluate_agent(traj_length, dim, model_name)
     elif subroutine == 'ess_traj':
-        traj_lengths = torch.cat([torch.arange(2, 11), torch.arange(12, 20)])
+        # traj_lengths = torch.cat([torch.arange(2, 11), torch.arange(12, 20)])
         execute_ess_traj(traj_lengths=traj_lengths, dim=dim, epsilons=epsilons, ent_coef=ent_coef, loss_type=loss_type)
     else:
         table = create_dimension_table(torch.tensor([dim]), random=False)
