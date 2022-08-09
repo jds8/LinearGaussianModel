@@ -1502,7 +1502,7 @@ if __name__ == "__main__":
     elif subroutine == 'evaluate_agent':
         evaluate_agent(traj_length, dim, model_name)
     elif subroutine == 'ess_traj':
-        traj_lengths = torch.arange(2, 20)
+        traj_lengths = torch.cat([torch.arange(2, 11), torch.arange(12, 20)])
         execute_ess_traj(traj_lengths=traj_lengths, dim=dim, epsilons=epsilons, ent_coef=ent_coef, loss_type=loss_type)
     else:
         table = create_dimension_table(torch.tensor([dim]), random=False)
