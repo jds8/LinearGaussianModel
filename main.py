@@ -1488,13 +1488,17 @@ if __name__ == "__main__":
     model_name = MODEL.format(ent_coef, loss_type, traj_length, dim)
 
     if subroutine == 'train_agent':
+        print('executing: {}'.format('train_agent'))
         test_train(traj_length=traj_length, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
     elif subroutine == 'evaluate_agent':
+        print('executing: {}'.format('evaluate_agent'))
         evaluate_agent(traj_length, dim, model_name)
     elif subroutine == 'ess_traj':
-        # traj_lengths = torch.cat([torch.arange(2, 11), torch.arange(12, 20)])
+        print('executing: {}'.format('ess_traj'))
+        traj_lengths = torch.cat([torch.arange(2, 11), torch.arange(12, 20)])
         execute_ess_traj(traj_lengths=traj_lengths, dim=dim, epsilons=epsilons, ent_coef=ent_coef, loss_type=loss_type)
     else:
+        print('executing: {}'.format('custom'))
         table = create_dimension_table(torch.tensor([dim]), random=False)
         posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
         epsilons = [-5e-3, 5e-3]
