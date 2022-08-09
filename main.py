@@ -36,10 +36,10 @@ MODEL = 'agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{})'
 
 TODAY = date.today().strftime("%b-%d-%Y")
 
-RL_TIMESTEPS = 1000000
-NUM_SAMPLES = 100
+RL_TIMESTEPS = 10
+NUM_SAMPLES = 10
 NUM_VARIANCE_SAMPLES = 10
-NUM_REPEATS = 20
+NUM_REPEATS = 2
 
 class CustomCallback(BaseCallback):
     """
@@ -278,7 +278,7 @@ def rl_estimate(ys, dim, N, env=None, traj_length=0, device='cpu', model_name=MO
         traj_length = len(ys)
         device = ys.device
     print('\nrl_estimate\n')
-    _, policy = load_rl_model(model_name, device, traj_length=traj_length, dim=dim)
+    _, policy = load_rl_model(model_name, device)
     return evaluate(ys, d=policy, N=N, env=env)
 
 
@@ -991,7 +991,7 @@ def prior_convergence(table, ys, truth, dim):
 def rl_convergence(table, ys, truth, dim, model_name):
     rl_outputs_with_name = get_rl_output(table=table, ys=ys, dim=dim, sample=False, model_name=model_name)
     traj_length = len(ys)
-    plot_convergence([rl_outputs_with_name], traj_length, dim, truth, 'rl (traj_length {} dim {})'.format(traj_length, dim))
+    plot_convergence([rl_outputs_with_name], traj_length, dim, truth, model_name)
 
 def plot_dim(traj_length, dim):
     dimensions = torch.arange(5, 11, 1)
@@ -1259,8 +1259,7 @@ def sample_variance_ratios(traj_length, model_name):
     """
 
     # load rl policy
-    _, policy = load_rl_model(model_name=model_name, device='cpu',
-                              traj_length=traj_length, dim=1)  # assume dimensionality equals 1 so the variance is just a scalar
+    _, policy = load_rl_model(model_name=model_name, device='cpu')  # assume dimensionality equals 1 so the variance is just a scalar
 
     # set up to create filtering posterior
     dim = 1  # assume dimension is 1 so that variances are scalars
@@ -1313,8 +1312,7 @@ def sample_empirical_state_occupancy(traj_length, model_name):
     """
 
     # load rl policy
-    _, policy = load_rl_model(model_name=model_name, device='cpu',
-                              traj_length=traj_length, dim=1)  # assume dimensionality equals 1 so the variance is just a scalar
+    _, policy = load_rl_model(model_name=model_name, device='cpu')  # assume dimensionality equals 1 so the variance is just a scalar
 
     # set up to create filtering posterior
     dim = 1  # assume dimension is 1 so that variances are scalars
@@ -1451,35 +1449,49 @@ def execute_state_occupancy():
     plot_state_occupancy(state_occupancies=[(state_occupancy, 'RL agent'), (filtering_state_occupancy, 'Filtering Posterior')],
                          quantiles=quantiles, traj_length=traj_length, ent_coef=ent_coef, loss_type=loss_type)
 
+def evaluate_agent(traj_length, dim, model_name):
+    table = create_dimension_table(torch.tensor([dim]), random=False)
+    posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
+    rl_convergence(table=table, ys=posterior_evidence.ys,
+                   truth=posterior_evidence.evidence, dim=dim,
+                   model_name=model_name)
+
 
 if __name__ == "__main__":
     os.makedirs(TODAY, exist_ok=True)
     args, _ = get_args()
-    traj_length = args.traj_len
+    traj_length = args.traj_length
     dim = args.dim
     ent_coef = args.ent_coef
     loss_type = args.loss_type
+    subroutine = args.subroutine
+    model_name = MODEL.format(ent_coef, loss_type, traj_length, dim)
+
+    if subroutine == 'train_agent':
+        test_train(traj_length=traj_length, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
+    elif subroutine == 'evaluate_agent':
+        evaluate_agent(traj_length, dim, model_name)
 
     # epsilons = [-5e-3, 0.0, 5e-3]
     # epsilons = [-5e-2, 0.0]
     # traj_lengths = torch.cat([torch.arange(2, 11), torch.arange(12, 20)])
     # dim = 1
-    ent_coef = 10.0
-    forward_kl = 'forward_kl'
-    forward_model_name = '{}_{}_'.format(ent_coef, forward_kl) + 'linear_gaussian_model_(traj_{}_dim_{})'
+    # ent_coef = 10.0
+    # forward_kl = 'forward_kl'
+    # forward_model_name = MODEL.format(ent_coef, forward_kl, traj_length, dim)
     # reverse_kl = 'reverse_kl'
     # reverse_model_name = '{}_{}_'.format(ent_coef, reverse_kl) + 'linear_gaussian_model_(traj_{}_dim_{})'
     # dims = np.array([2, 4, 6, 8])
 
-    table = create_dimension_table(torch.tensor([dim]), random=False)
+    # table = create_dimension_table(torch.tensor([dim]), random=False)
 
     # traj plots
     # execute_compare_convergence_traj(table=table, traj_lengths=traj_lengths, epsilons=epsilons, dim=dim)
     # execute_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, epsilons=epsilons)
-    posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
-    rl_convergence(table=table, ys=posterior_evidence.ys,
-                   truth=posterior_evidence.evidence, dim=dim,
-                   model_name=forward_model_name)
+    # posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
+    # rl_convergence(table=table, ys=posterior_evidence.ys,
+    #                truth=posterior_evidence.evidence, dim=dim,
+    #                model_name=forward_model_name)
     # dim plots
     # dims = np.arange(2, 30, 1)
     # dims = np.arange(10, 22, 1)
@@ -1498,7 +1510,7 @@ if __name__ == "__main__":
     # truth = trial_evidence(table, traj_length, dim)
 
     # execute_filtering_posterior_convergence(table, traj_lengths, epsilons, dim)
-    # test_train(traj_length=traj_len, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
+    # test_train(traj_length=traj_length, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
 
     # t_lens = torch.arange(2, 10)
     # dims = np.arange(1, 10)
@@ -1519,4 +1531,4 @@ if __name__ == "__main__":
     # for t_len in t_lens:
     #     execute_variance_ratio_runs(t_len=t_len, ent_coef=ent_coef, loss_type=loss_type)
 
-    # load_rl_model(model_name=model_name, device='cpu', traj_length=t_len, dim=dim)
+    # load_rl_model(model_name=model_name, device='cpu')
