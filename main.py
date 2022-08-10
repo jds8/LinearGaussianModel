@@ -40,7 +40,7 @@ MODEL = 'agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{})'
 
 TODAY = date.today().strftime("%b-%d-%Y")
 
-RL_TIMESTEPS = 10
+RL_TIMESTEPS = 1000000
 NUM_SAMPLES = 100
 NUM_VARIANCE_SAMPLES = 10
 NUM_REPEATS = 20
