@@ -17,7 +17,6 @@ from generative_model import y_dist, sample_y, generate_trajectory, \
     state_transition, score_state_transition, gen_covariance_matrix, \
     score_initial_state, score_y
     # A, Q, C, R, mu_0, Q_0, \
-import wandb
 from linear_gaussian_env import LinearGaussianEnv, LinearGaussianSingleYEnv
 from math_utils import logvarexp, importance_sampled_confidence_interval, log_effective_sample_size, log_max_weight_proportion, log_mean
 from plot_utils import legend_without_duplicate_labels
@@ -194,7 +193,6 @@ def compute_filtering_posteriors(table, num_obs, dim, ys=None):
     return fps, ys
 
 def evaluate_filtering_posterior(ys, N, tds, epsilon, env=None):
-    run = wandb.init(project='linear_gaussian_model evaluation', save_code=True, entity='iai')
     if env is None:
         # create env
         if env is None:
@@ -270,7 +268,6 @@ def evaluate_filtering_posterior(ys, N, tds, epsilon, env=None):
             running_log_evidence_estimates.append(torch.logsumexp(log_p_y_over_qs[0:i+1], -1) - torch.log(torch.tensor(i+1.)))
         log_weights.append(log_p_x - log_q)  # ignore these since we consider the weights to be p(y|x)p(x)/q(x)
         total_rewards.append(total_reward)
-        wandb.log({'total_reward': total_reward})
 
     # print('filtering score:' , log_p_y_over_qs)
     # print('filtering evidence: ', log_p_y_over_qs.exp())

@@ -45,6 +45,11 @@ NUM_SAMPLES = 100
 NUM_VARIANCE_SAMPLES = 10
 NUM_REPEATS = 20
 
+FILTERING_POSTERIOR_DISTRIBUTION = 'filtering_posterior'
+POSTERIOR_DISTRIBUTION = 'posterior'
+PRIOR_DISTRIBUTION = 'prior'
+RL_DISTRIBUTION = 'RL'
+
 class CustomCallback(BaseCallback):
     """
     A custom callback that derives from ``BaseCallback``.
@@ -301,6 +306,7 @@ class Estimator:
         self.ess = [ess]
         self.ess_ci = ess_ci
         self.label = label
+        self.distribution_type = self._get_distribution_type()
 
     def add_repeat(self, running_log_estimates, ess):
         self.running_log_estimate_repeats.append(running_log_estimates)
@@ -341,6 +347,18 @@ class Estimator:
         estimate = self.compute_evidence_estimate(quantile)
         return torch.abs((estimate.log() - true.log()).exp() - 1)
 
+    def _get_distribution_type(self):
+        if RL_DISTRIBUTION in self.label:
+            return RL_DISTRIBUTION
+        elif FILTERING_POSTERIOR_DISTRIBUTION in self.label:
+            return FILTERING_POSTERIOR_DISTRIBUTION
+        elif POSTERIOR_DISTRIBUTION in self.label:
+            return POSTERIOR_DISTRIBUTION
+        elif PRIOR_DISTRIBUTION in self.label:
+            return PRIOR_DISTRIBUTION
+        else:
+            raise NotImplementedError
+
     def save_data(self):
         """
         Saves the running log estimate and ess into their own csv files
@@ -348,10 +366,10 @@ class Estimator:
         number of rows
         """
         estimates_df = pd.DataFrame(torch.stack(self.running_log_estimate_repeats).numpy())
-        estimates_df.to_csv('{}/{}_LogEstimates.csv'.format(TODAY, self.label))
+        estimates_df.to_csv('{}/{}/{}_LogEstimates.csv'.format(TODAY, self.distribution_type, self.label))
 
         ess_df = pd.DataFrame(torch.stack(self.ess).numpy())
-        ess_df.to_csv('{}/{}_ESS.csv'.format(TODAY, self.label))
+        ess_df.to_csv('{}/{}/{}_ESS.csv'.format(TODAY, self.distribution_type, self.label))
 
 
 class ISEstimator(Estimator):
@@ -844,7 +862,7 @@ def get_prior_output(table, ys, dim, sample, traj_length=0):
     if ys is not None:
         traj_length = len(ys)
     prior_output = ImportanceOutput(traj_length=traj_length, ys=ys, dim=dim)
-    name = 'prior (A: {}, Q: {})'.format(A, Q)
+    name = '{}(A: {}, Q: {})'.format(PRIOR_DISTRIBUTION, A, Q)
     for _ in range(NUM_REPEATS):
         eval_obj = importance_estimate(ys, A=A, Q=Q, C=C, R=R, mu_0=torch.zeros(dim), Q_0=Q, N=NUM_SAMPLES, sample=sample, traj_length=traj_length)
         is_estimator = prior_output.add_is_estimator(A=A, Q=Q,
@@ -860,7 +878,7 @@ def get_rl_output(table, ys, dim, sample, model_name, traj_length=0):
     if ys is not None:
         traj_length = len(ys)
     rl_output = ImportanceOutput(traj_length=traj_length, ys=ys, dim=dim)
-    name = 'rl (traj_len {} dim {})'.format(traj_length, dim)
+    name = '{}(traj_len {} dim {})'.format(RL_DISTRIBUTION, traj_length, dim)
 
     A = table[dim]['A']
     Q = table[dim]['Q']
@@ -930,30 +948,30 @@ class OutputWithName:
         self.name = name
 
 
-def save_outputs_with_names_dim(outputs, label):
+def save_outputs_with_names_dim(outputs, distribution_type, label):
     columns = [str(output.output.dimension) for output in outputs]
-    save_outputs_with_names(outputs, label, columns, 'dim')
+    save_outputs_with_names(outputs, distribution_type, label, columns, 'dim')
 
-def save_outputs_with_names_traj(outputs, label):
+def save_outputs_with_names_traj(outputs, distribution_type, label):
     columns = [str(output.output.traj_length) for output in outputs]
-    save_outputs_with_names(outputs, label, columns, 'traj')
+    save_outputs_with_names(outputs, distribution_type, label, columns, 'traj')
 
-def save_outputs_with_names(outputs, label, columns, output_type):
+def save_outputs_with_names(outputs, distribution_type, label, columns, output_type):
     ess_output = torch.stack([torch.tensor(output.output[output.name].ess) for output in outputs], dim=1)
     df = pd.DataFrame(ess_output.numpy(), columns=columns)
-    df.to_csv('{}/{}_ESS_{}.csv'.format(TODAY, label, output_type))
+    df.to_csv('{}/{}/{}_ESS_{}.csv'.format(TODAY, distribution_type, label, output_type))
 
 def get_perturbed_posterior_outputs(posterior_evidence, dim, epsilons):
     outputs = []
     for epsilon in epsilons:
-        name = 'posterior (epsilon: {} dim: {} traj_len: {})'.format(epsilon, dim, len(posterior_evidence.ys))
+        name = '{}(epsilon: {} dim: {} traj_len: {})'.format(POSTERIOR_DISTRIBUTION, epsilon, dim, len(posterior_evidence.ys))
         outputs += [get_perturbed_posterior_output(posterior_evidence, dim, epsilon, name)]
     return outputs
 
 def get_perturbed_posterior_filtering_outputs(table, posterior_evidence, dim, epsilons):
     outputs = []
     for epsilon in epsilons:
-        name = 'posterior filtering (epsilon: {} dim: {} traj_len: {})'.format(epsilon, dim, len(posterior_evidence.ys))
+        name = '{}(epsilon: {} dim: {} traj_len: {})'.format(POSTERIOR_FILTERING_DISTRIBUTION, epsilon, dim, len(posterior_evidence.ys))
         outputs += [get_perturbed_posterior_filtering_output(table, posterior_evidence, dim, epsilon, name)]
     return outputs
 
@@ -1067,7 +1085,7 @@ class PosteriorConvergence(EvidenceConvergence):
         true_posterior = self.posterior_evidence.td
         env = self.posterior_evidence.env
 
-        name = 'posterior {}'.format(epsilon)
+        name = '{}_{}'.format(POSTERIOR_DISTRIBUTION, epsilon)
 
         posterior_output = ImportanceOutput(traj_length=len(ys), ys=ys, dim=dim)
         # get importance weighted score for comparison
@@ -1094,7 +1112,7 @@ class PriorConvergence(EvidenceConvergence):
 class RLConvergence(EvidenceConvergence):
     def __init__(self, posterior_evidence, dim):
         super(Posterior_Evidence, self).__init__(posterior_evidence, dim)
-        self.name = 'prior'
+        self.name = 'RL'
 
     def get_output_with_name(self, table):
         return get_rl_output(table=table, ys=self.posterior_evidence.ys, dim=self.dim, sample=False)
@@ -1120,82 +1138,94 @@ def get_posterior_filtering_ess_outputs(table, traj_length, dim, epsilon):
     return get_perturbed_posterior_filtering_outputs(table=table, posterior_evidence=posterior_evidence, dim=dim, epsilons=[epsilon])
 
 def posterior_ess_traj(table, traj_lengths, dim, epsilon):
-    os.makedirs(TODAY, exist_ok=True)
+    distribution_type = POSTERIOR_DISTRIBUTION
+    os.makedirs('{}/{}'.format(TODAY, distribution_type), exist_ok=True)
     outputs = []
     for traj_length in traj_lengths:
         outputs += get_posterior_ess_outputs(table, traj_length, dim, epsilon)
-    save_outputs_with_names_traj(outputs, 'joint_posterior(epsilon_{}_traj_lengths_{}_dim_{})'.format(epsilon, traj_lengths, dim))
+    save_outputs_with_names_traj(outputs, distribution_type, 'joint_posterior(epsilon_{}_traj_lengths_{}_dim_{})'.format(epsilon, traj_lengths, dim))
     make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=dim,
                        num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, traj_lengths=traj_lengths,
                        xlabel='Trajectory Length', name='posterior_{}'.format(epsilon))
 
 def posterior_ess_dim(table, traj_length, dims, epsilon):
-    os.makedirs(TODAY, exist_ok=True)
+    distribution_type = POSTERIOR_DISTRIBUTION
+    os.makedirs('{}/{}'.format(TODAY, distribution_type), exist_ok=True)
     outputs = []
     for dim in dims:
         outputs += get_posterior_ess_outputs(table, traj_length, dim, epsilon)
-    save_outputs_with_names_dim(outputs, 'joint_posterior(epsilon_{}_traj_lengths_{}_dim_{})'.format(epsilon, traj_lengths, dim))
+    save_outputs_with_names_dim(outputs, distribution_type, 'joint_posterior(epsilon_{}_traj_length_{}_dims_{})'.format(epsilon, traj_length, dims))
     make_ess_plot_nice_dim(outputs, fixed_feature_string='traj_length', fixed_feature=traj_length,
                            num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, dims=dims,
                            xlabel='Latent Dimension', name='posterior_{}'.format(epsilon))
 
 def posterior_filtering_ess_traj(table, traj_lengths, dim, epsilon):
-    os.makedirs(TODAY, exist_ok=True)
+    distribution_type = FILTERING_POSTERIOR_DISTRIBUTION
+    os.makedirs('{}/{}'.format(TODAY, distribution_type), exist_ok=True)
     outputs = []
     for traj_length in traj_lengths:
         outputs += get_posterior_filtering_ess_outputs(table, traj_length, dim, epsilon)
-    save_outputs_with_names_traj(outputs, 'posterior_filtering(epsilon_{}_traj_lengths_{}_dim_{})'.format(epsilon, traj_lengths, dim))
+    save_outputs_with_names_traj(outputs, distribution_type,
+                                 'posterior_filtering(epsilon_{}_traj_lengths_{}_dim_{})'.format(epsilon, traj_lengths, dim))
     make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=dim,
                        num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, traj_lengths=traj_lengths,
                        xlabel='Trajectory Length', name='posterior_filtering')
 
 def posterior_filtering_ess_dim(table, traj_length, dims, epsilon):
-    os.makedirs(TODAY, exist_ok=True)
+    distribution_type = FILTERING_POSTERIOR_DISTRIBUTION
+    os.makedirs('{}/{}'.format(TODAY, distribution_type), exist_ok=True)
     outputs = []
     for dim in dims:
         outputs += get_posterior_filtering_ess_outputs(table, traj_length, dim, epsilon)
-    save_outputs_with_names_dim(outputs, 'posterior_filtering(epsilon_{}_traj_length_{}_dims_{})'.format(epsilon, traj_length, dims))
+    save_outputs_with_names_dim(outputs, distribution_type,
+                                'posterior_filtering(epsilon_{}_traj_length_{}_dims_{})'.format(epsilon, traj_length, dims))
     make_ess_plot_nice_dim(outputs, fixed_feature_string='traj_length', fixed_feature=traj_length,
                            num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, dims=dims,
                            xlabel='Latent Dimension', name='posterior_{}'.format(epsilon))
 
 def prior_ess_traj(table, traj_lengths, dim):
-    os.makedirs(TODAY, exist_ok=True)
+    distribution_type = PRIOR_DISTRIBUTION
+    os.makedirs('{}/{}'.format(TODAY, distribution_type), exist_ok=True)
     outputs = []
     for traj_length in traj_lengths:
         outputs += [get_prior_output(table=table, ys=None, dim=dim, sample=True, traj_length=traj_length)]
+    save_outputs_with_names_dim(outputs, distribution_type, 'rl(traj_lengths_{}_dim_{})'.format(traj_lengths, dim))
     make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=dim,
                        num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, traj_lengths=traj_lengths,
                        xlabel='Trajectory Length', name='prior')
 
 def prior_ess_dim(table, traj_length, dims):
-    os.makedirs(TODAY, exist_ok=True)
+    distribution_type = PRIOR_DISTRIBUTION
+    os.makedirs('{}/{}'.format(TODAY, distribution_type), exist_ok=True)
     outputs = []
     for dim in dims:
         outputs += [get_prior_output(table=table, ys=None, dim=dim, sample=True, traj_length=traj_length)]
+    save_outputs_with_names_dim(outputs, distribution_type, 'rl(traj_length_{}_dims_{})'.format(traj_length, dims))
     make_ess_plot_nice_dim(outputs, fixed_feature_string='traj_length', fixed_feature=traj_length,
                            num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, dims=dims,
                            xlabel='Latent Dimension', name='prior')
 
 def rl_ess_traj(table, traj_lengths, dim, ent_coef, loss_type):
-    os.makedirs(TODAY, exist_ok=True)
+    distribution_type = RL_DISTRIBUTION
+    os.makedirs('{}/{}'.format(TODAY, distribution_type), exist_ok=True)
     outputs = []
     for traj_length in traj_lengths:
         model_name = get_model_name(traj_length=traj_length, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
         outputs += [get_rl_output(table=table, ys=None, dim=dim, sample=True, model_name=model_name, traj_length=traj_length)]
-    save_outputs_with_names_traj(outputs, 'rl_traj_lengths_{}_dim_{}'.format(traj_lengths, dim))
+    save_outputs_with_names_traj(outputs, distribution_type, 'rl_traj_lengths_{}_dim_{}'.format(traj_lengths, dim))
     make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=dim,
                        num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, traj_lengths=traj_lengths,
                        xlabel='Trajectory Length', name='RL')
 
 def rl_ess_dim(table, traj_length, dims, ent_coef, loss_type):
-    os.makedirs(TODAY, exist_ok=True)
+    distribution_type = RL_DISTRIBUTION
+    os.makedirs('{}/{}'.format(TODAY, distribution_type), exist_ok=True)
     outputs = []
     for dim in dims:
         # ys = generate_trajectory(traj_length, A=single_gen_A, Q=single_gen_Q, C=single_gen_C, R=single_gen_R, mu_0=single_gen_mu_0, Q_0=single_gen_Q_0)[0]
         model_name = get_model_name(traj_length=traj_length, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
         outputs += [get_rl_output(table=table, ys=None, dim=dim, sample=True, model_name=model_name, traj_length=traj_length)]
-    save_outputs_with_names_dim(outputs, 'rl(traj_length_{}_dims_{})'.format(traj_length, dims))
+    save_outputs_with_names_dim(outputs, distribution_type, 'rl(traj_length_{}_dims_{})'.format(traj_length, dims))
     make_ess_plot_nice_dim(outputs, fixed_feature_string='traj_length', fixed_feature=traj_length,
                     num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, dims=dims,
                     xlabel='Latent Dimension', name='RL')
@@ -1553,9 +1583,22 @@ if __name__ == "__main__":
     elif subroutine == 'ess_dim':
         print('executing: {}'.format('ess_dim'))
         dims = [x for x in range(1, 50)]
-        epsilons = [-5e-3, 5e-3]
+        epsilons = [5e-3]
         table = create_dimension_table(torch.tensor(dims), random=False)
         execute_ess_dim(table, traj_length=traj_length, dims=dims, epsilons=epsilons, ent_coef=ent_coef, loss_type=loss_type)
+    elif subroutine == 'posterior_filtering_ess_dim':
+        print('executing: {}'.format('posterior_filtering_ess_dim'))
+        epsilons = [-5e-3]
+        table = create_dimension_table(torch.tensor(ess_dims), random=False)
+        posterior_filtering_ess_dim(table=table, traj_length=traj_length, dims=ess_dims, epsilon=epsilon)
+    elif subroutine == 'prior_ess_dim':
+        print('executing: {}'.format('prior_ess_dim'))
+        table = create_dimension_table(torch.tensor(ess_dims), random=False)
+        prior_ess_dim(table=table, traj_length=traj_length, dims=ess_dims)
+    elif subroutine == 'rl_ess_dim':
+        print('executing: {}'.format('rl_ess_dim'))
+        table = create_dimension_table(torch.tensor(ess_dims), random=False)
+        rl_ess_dim(table=table, traj_length=traj_length, dims=ess_dims, ent_coef=ent_coef, loss_type=loss_type)
     elif subroutine == 'load_ess_data':
         print('executing: {}'.format('load_ess_dim'))
         plot_ess_from_data(filenames)
