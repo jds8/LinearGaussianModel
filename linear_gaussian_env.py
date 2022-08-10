@@ -42,7 +42,7 @@ class AbstractLinearGaussianEnv(gym.Env):
         self.actions = []
 
         # whether we are using entropy or KL regularization
-        self.using_entropy_loss = using_entropy_loss
+        self.using_entropy_loss = torch.tensor(using_entropy_loss, dtype=torch.float32)
 
     def compute_conditionals(self):
         self.w = GaussianRandomVariable(mu=0., sigma=torch.sqrt(self.Q), name='w')
