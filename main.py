@@ -467,25 +467,25 @@ def make_ess_versus_dimension_plot(outputs, num_samples):
 
 def make_ess_plot_nice(outputs_with_names, fixed_feature_string,
                        fixed_feature, num_samples, num_repeats,
-                       traj_lengths, xlabel, name=''):
+                       traj_lengths, xlabel, distribution_type, name=''):
     plot_ess_estimators_traj(outputs_with_names, traj_lengths)
 
     plt.xlabel(xlabel)
     plt.ylabel('Effective Sample Size')
     plt.title('Effective Sample Size Versus {}\n (num samples: {}, num repeats: {})'.format(xlabel, num_samples, num_repeats))
     legend_without_duplicate_labels(plt.gca())
-    plt.savefig('{}/{}_ess_plot_{}_{}.pdf'.format(TODAY, name, fixed_feature_string, fixed_feature))
+    plt.savefig('{}/{}/{}_ess_plot_{}_{}.pdf'.format(TODAY, distribution_type, name, fixed_feature_string, fixed_feature))
 
 def make_ess_plot_nice_dim(outputs_with_names, fixed_feature_string,
                            fixed_feature, num_samples, num_repeats,
-                           dims, xlabel, name=''):
+                           dims, xlabel, distribution_type, name=''):
     plot_ess_estimators_dim(outputs_with_names, dims)
 
     plt.xlabel(xlabel)
     plt.ylabel('Effective Sample Size')
     plt.title('Effective Sample Size Versus {}\n (num samples: {}, num repeats: {})'.format(xlabel, num_samples, num_repeats))
     legend_without_duplicate_labels(plt.gca())
-    plt.savefig('{}/{}_ess_plot_{}_{}.pdf'.format(TODAY, name, fixed_feature_string, fixed_feature))
+    plt.savefig('{}/{}/{}_ess_plot_{}_{}.pdf'.format(TODAY, distribution_type, name, fixed_feature_string, fixed_feature))
 
 
 class Plotter:
@@ -1143,10 +1143,10 @@ def posterior_ess_traj(table, traj_lengths, dim, epsilon):
     outputs = []
     for traj_length in traj_lengths:
         outputs += get_posterior_ess_outputs(table, traj_length, dim, epsilon)
-    save_outputs_with_names_traj(outputs, distribution_type, 'joint_posterior(epsilon_{}_traj_lengths_{}_dim_{})'.format(epsilon, traj_lengths, dim))
+    save_outputs_with_names_traj(outputs, distribution_type, '{}(epsilon_{}_traj_lengths_{}_dim_{})'.format(distribution_type, epsilon, traj_lengths, dim))
     make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=dim,
                        num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, traj_lengths=traj_lengths,
-                       xlabel='Trajectory Length', name='posterior_{}'.format(epsilon))
+                       xlabel='Trajectory Length', distribution_type=distribution_type, name='posterior_{}'.format(epsilon))
 
 def posterior_ess_dim(table, traj_length, dims, epsilon):
     distribution_type = POSTERIOR_DISTRIBUTION
@@ -1154,10 +1154,10 @@ def posterior_ess_dim(table, traj_length, dims, epsilon):
     outputs = []
     for dim in dims:
         outputs += get_posterior_ess_outputs(table, traj_length, dim, epsilon)
-    save_outputs_with_names_dim(outputs, distribution_type, 'joint_posterior(epsilon_{}_traj_length_{}_dims_{})'.format(epsilon, traj_length, dims))
+    save_outputs_with_names_dim(outputs, distribution_type, '{}(epsilon_{}_traj_length_{}_dims_{})'.format(distribution_type, epsilon, traj_length, dims))
     make_ess_plot_nice_dim(outputs, fixed_feature_string='traj_length', fixed_feature=traj_length,
                            num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, dims=dims,
-                           xlabel='Latent Dimension', name='posterior_{}'.format(epsilon))
+                           xlabel='Latent Dimension', distribution_type=distribution_type, name='posterior_{}'.format(epsilon))
 
 def posterior_filtering_ess_traj(table, traj_lengths, dim, epsilon):
     distribution_type = FILTERING_POSTERIOR_DISTRIBUTION
@@ -1166,10 +1166,10 @@ def posterior_filtering_ess_traj(table, traj_lengths, dim, epsilon):
     for traj_length in traj_lengths:
         outputs += get_posterior_filtering_ess_outputs(table, traj_length, dim, epsilon)
     save_outputs_with_names_traj(outputs, distribution_type,
-                                 'posterior_filtering(epsilon_{}_traj_lengths_{}_dim_{})'.format(epsilon, traj_lengths, dim))
+                                 '{}(epsilon_{}_traj_lengths_{}_dim_{})'.format(distribution_type, epsilon, traj_lengths, dim))
     make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=dim,
                        num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, traj_lengths=traj_lengths,
-                       xlabel='Trajectory Length', name='posterior_filtering')
+                       xlabel='Trajectory Length', distribution_type=distribution_type, name='posterior_filtering')
 
 def posterior_filtering_ess_dim(table, traj_length, dims, epsilon):
     distribution_type = FILTERING_POSTERIOR_DISTRIBUTION
@@ -1178,10 +1178,10 @@ def posterior_filtering_ess_dim(table, traj_length, dims, epsilon):
     for dim in dims:
         outputs += get_posterior_filtering_ess_outputs(table, traj_length, dim, epsilon)
     save_outputs_with_names_dim(outputs, distribution_type,
-                                'posterior_filtering(epsilon_{}_traj_length_{}_dims_{})'.format(epsilon, traj_length, dims))
+                                '{}({}_traj_length_{}_dims_{})'.format(distribution_type, epsilon, traj_length, dims))
     make_ess_plot_nice_dim(outputs, fixed_feature_string='traj_length', fixed_feature=traj_length,
                            num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, dims=dims,
-                           xlabel='Latent Dimension', name='posterior_{}'.format(epsilon))
+                           xlabel='Latent Dimension', distribution_type=distribution_type, name='posterior_{}'.format(epsilon))
 
 def prior_ess_traj(table, traj_lengths, dim):
     distribution_type = PRIOR_DISTRIBUTION
@@ -1189,10 +1189,10 @@ def prior_ess_traj(table, traj_lengths, dim):
     outputs = []
     for traj_length in traj_lengths:
         outputs += [get_prior_output(table=table, ys=None, dim=dim, sample=True, traj_length=traj_length)]
-    save_outputs_with_names_dim(outputs, distribution_type, 'rl(traj_lengths_{}_dim_{})'.format(traj_lengths, dim))
+    save_outputs_with_names_dim(outputs, distribution_type, '{}(traj_lengths_{}_dim_{})'.format(distribution_type, traj_lengths, dim))
     make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=dim,
                        num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, traj_lengths=traj_lengths,
-                       xlabel='Trajectory Length', name='prior')
+                       xlabel='Trajectory Length', distribution_type=distribution_type, name='prior')
 
 def prior_ess_dim(table, traj_length, dims):
     distribution_type = PRIOR_DISTRIBUTION
@@ -1200,10 +1200,10 @@ def prior_ess_dim(table, traj_length, dims):
     outputs = []
     for dim in dims:
         outputs += [get_prior_output(table=table, ys=None, dim=dim, sample=True, traj_length=traj_length)]
-    save_outputs_with_names_dim(outputs, distribution_type, 'rl(traj_length_{}_dims_{})'.format(traj_length, dims))
+    save_outputs_with_names_dim(outputs, distribution_type, '{}(traj_length_{}_dims_{})'.format(distribution_type, traj_length, dims))
     make_ess_plot_nice_dim(outputs, fixed_feature_string='traj_length', fixed_feature=traj_length,
                            num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, dims=dims,
-                           xlabel='Latent Dimension', name='prior')
+                           xlabel='Latent Dimension', distribution_type=distribution_type, name='prior')
 
 def rl_ess_traj(table, traj_lengths, dim, ent_coef, loss_type):
     distribution_type = RL_DISTRIBUTION
@@ -1212,10 +1212,10 @@ def rl_ess_traj(table, traj_lengths, dim, ent_coef, loss_type):
     for traj_length in traj_lengths:
         model_name = get_model_name(traj_length=traj_length, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
         outputs += [get_rl_output(table=table, ys=None, dim=dim, sample=True, model_name=model_name, traj_length=traj_length)]
-    save_outputs_with_names_traj(outputs, distribution_type, 'rl_traj_lengths_{}_dim_{}'.format(traj_lengths, dim))
+    save_outputs_with_names_traj(outputs, distribution_type, '{}traj_lengths_{}_dim_{}'.format(distribution_type, traj_lengths, dim))
     make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=dim,
                        num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, traj_lengths=traj_lengths,
-                       xlabel='Trajectory Length', name='RL')
+                       xlabel='Trajectory Length', distribution_type=distribution_type, name='RL')
 
 def rl_ess_dim(table, traj_length, dims, ent_coef, loss_type):
     distribution_type = RL_DISTRIBUTION
@@ -1225,10 +1225,10 @@ def rl_ess_dim(table, traj_length, dims, ent_coef, loss_type):
         # ys = generate_trajectory(traj_length, A=single_gen_A, Q=single_gen_Q, C=single_gen_C, R=single_gen_R, mu_0=single_gen_mu_0, Q_0=single_gen_Q_0)[0]
         model_name = get_model_name(traj_length=traj_length, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
         outputs += [get_rl_output(table=table, ys=None, dim=dim, sample=True, model_name=model_name, traj_length=traj_length)]
-    save_outputs_with_names_dim(outputs, distribution_type, 'rl(traj_length_{}_dims_{})'.format(traj_length, dims))
+    save_outputs_with_names_dim(outputs, distribution_type, '{}(traj_length_{}_dims_{})'.format(distribution_type, traj_length, dims))
     make_ess_plot_nice_dim(outputs, fixed_feature_string='traj_length', fixed_feature=traj_length,
-                    num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, dims=dims,
-                    xlabel='Latent Dimension', name='RL')
+                           num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, dims=dims,
+                           xlabel='Latent Dimension', distribution_type=distribution_type, name='RL')
 
 def execute_posterior_ess_traj(table, traj_lengths, epsilons, dim):
     os.makedirs(TODAY, exist_ok=True)
@@ -1568,6 +1568,7 @@ if __name__ == "__main__":
     model_name = MODEL.format(ent_coef, loss_type, traj_length, dim)
     filenames = args.filenames
     ess_dims = args.ess_dims
+    ess_traj_lengths = args.ess_traj_lengths
 
     if subroutine == 'train_agent':
         print('executing: {}'.format('train_agent'))
@@ -1580,6 +1581,19 @@ if __name__ == "__main__":
         traj_lengths = torch.cat([torch.arange(2, 11), torch.arange(12, 17)])
         epsilons = [-5e-3]
         execute_ess_traj(traj_lengths=traj_lengths, dim=dim, epsilons=epsilons, ent_coef=ent_coef, loss_type=loss_type)
+    elif subroutine == 'posterior_filtering_ess_traj':
+        print('executing: {}'.format('posterior_filtering_ess_traj'))
+        epsilons = [-5e-3]
+        table = create_dimension_table(torch.tensor([dim]), random=False)
+        posterior_filtering_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, epsilon=epsilon)
+    elif subroutine == 'prior_ess_traj':
+        print('executing: {}'.format('prior_ess_traj'))
+        table = create_dimension_table(torch.tensor([dim]), random=False)
+        prior_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim)
+    elif subroutine == 'rl_ess_traj':
+        print('executing: {}'.format('rl_ess_traj'))
+        table = create_dimension_table(torch.tensor([dim]), random=False)
+        rl_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
     elif subroutine == 'ess_dim':
         print('executing: {}'.format('ess_dim'))
         dims = [x for x in range(1, 50)]

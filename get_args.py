@@ -16,6 +16,7 @@ def get_args():
     parser.add_argument('--subroutine', type=str, default='train_agent', help='what subroutine to run (train_agent, evaluate_agent, ess_dim, ess_traj, load_ess_dim)')
     parser.add_argument('--filenames', type=str, default='', help='what file to load', nargs='*')
     parser.add_argument('--ess_dims', type=int, default=1, help='dimensions for ess', nargs='*')
+    parser.add_argument('--ess_traj_lengths', type=int, default=1, help='traj_lengths for ess', nargs='*')
 
     # parse
     args, _ = parser.parse_known_args()
