@@ -1212,7 +1212,8 @@ def rl_ess_traj(table, traj_lengths, dim, ent_coef, loss_type):
     for traj_length in traj_lengths:
         model_name = get_model_name(traj_length=traj_length, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
         outputs += [get_rl_output(table=table, ys=None, dim=dim, sample=True, model_name=model_name, traj_length=traj_length)]
-    save_outputs_with_names_traj(outputs, distribution_type, '{}traj_lengths_{}_dim_{}'.format(distribution_type, traj_lengths, dim))
+    save_outputs_with_names_traj(outputs, distribution_type,
+                                 '{}_{}(traj_lengths_{}_dim_{})'.format(distribution_type, loss_type, traj_lengths, dim))
     make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=dim,
                        num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, traj_lengths=traj_lengths,
                        xlabel='Trajectory Length', distribution_type=distribution_type, name='RL')
@@ -1225,7 +1226,8 @@ def rl_ess_dim(table, traj_length, dims, ent_coef, loss_type):
         # ys = generate_trajectory(traj_length, A=single_gen_A, Q=single_gen_Q, C=single_gen_C, R=single_gen_R, mu_0=single_gen_mu_0, Q_0=single_gen_Q_0)[0]
         model_name = get_model_name(traj_length=traj_length, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
         outputs += [get_rl_output(table=table, ys=None, dim=dim, sample=True, model_name=model_name, traj_length=traj_length)]
-    save_outputs_with_names_dim(outputs, distribution_type, '{}(traj_length_{}_dims_{})'.format(distribution_type, traj_length, dims))
+    save_outputs_with_names_dim(outputs, distribution_type,
+                                '{}_{}(traj_length_{}_dims_{})'.format(distribution_type, loss_type, traj_length, dims))
     make_ess_plot_nice_dim(outputs, fixed_feature_string='traj_length', fixed_feature=traj_length,
                            num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, dims=dims,
                            xlabel='Latent Dimension', distribution_type=distribution_type, name='RL')
