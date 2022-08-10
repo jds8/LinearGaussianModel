@@ -28,16 +28,19 @@ from filtering_posterior import compute_filtering_posteriors, evaluate_filtering
 import pandas as pd
 from get_args import get_args
 from pathlib import Path
+from data_loader import load_ess_data
+from plot import plot_ess_data
 
 # model name
 # MODEL = 'trial_linear_gaussian_model_(traj_{}_dim_{})'
 # MODEL = 'linear_gaussian_model_(traj_{}_dim_{})'
 MODEL = 'agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{})'
 # MODEL = 'from_borg/rl_agents/linear_gaussian_model_(traj_{}_dim_{})'
+# MODEL = 'new_linear_gaussian_model_(traj_{}_dim_{})'
 
 TODAY = date.today().strftime("%b-%d-%Y")
 
-RL_TIMESTEPS = 1000000
+RL_TIMESTEPS = 10
 NUM_SAMPLES = 100
 NUM_VARIANCE_SAMPLES = 10
 NUM_REPEATS = 20
@@ -237,12 +240,14 @@ class ProposalDist:
 
 def load_rl_model(model_name, device):
     # load model
+    while model_name.endswith('.zip'):
+        model_name = model_name[0:-4]
     try:
-        model = PPO.load(model_name+'.zip')
-        print('loaded model {}'.format(model_name)+'.zip')
-    except:
         model = PPO.load(model_name)
         print('loaded model {}'.format(model_name))
+    except:
+        model = PPO.load(model_name+'.zip')
+        print('loaded model {}'.format(model_name)+'.zip')
     policy = model.policy.to(device)
     return model, policy
 
@@ -583,7 +588,7 @@ class Plotter:
                                                         ess_ci=eval_obj.ess_ci, idstr='rl_{}'.format(traj_length))
 
                 except:
-                    print('error could not load: {}'.format(MODEL.format(1, 'entropy', traj_length, self.dimension)+'.zip'))
+                    print('error could not load: {}'.format(MODEL.format(1, 'entropy', traj_length, self.dimension)))
 
             try:
                 # plot em
@@ -925,6 +930,19 @@ class OutputWithName:
         self.name = name
 
 
+def save_outputs_with_names_dim(outputs, label):
+    columns = [str(output.output.dimension) for output in outputs]
+    save_outputs_with_names(outputs, label, columns, 'dim')
+
+def save_outputs_with_names_traj(outputs, label):
+    columns = [str(output.output.traj_length) for output in outputs]
+    save_outputs_with_names(outputs, label, columns, 'traj')
+
+def save_outputs_with_names(outputs, label, columns, output_type):
+    ess_output = torch.stack([torch.tensor(output.output[output.name].ess) for output in outputs], dim=1)
+    df = pd.DataFrame(ess_output.numpy(), columns=columns)
+    df.to_csv('{}/{}_ESS_{}.csv'.format(TODAY, label, output_type))
+
 def get_perturbed_posterior_outputs(posterior_evidence, dim, epsilons):
     outputs = []
     for epsilon in epsilons:
@@ -1106,6 +1124,7 @@ def posterior_ess_traj(table, traj_lengths, dim, epsilon):
     outputs = []
     for traj_length in traj_lengths:
         outputs += get_posterior_ess_outputs(table, traj_length, dim, epsilon)
+    save_outputs_with_names_traj(outputs, 'joint_posterior(epsilon_{}_traj_lengths_{}_dim_{})'.format(epsilon, traj_lengths, dim))
     make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=dim,
                        num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, traj_lengths=traj_lengths,
                        xlabel='Trajectory Length', name='posterior_{}'.format(epsilon))
@@ -1115,6 +1134,7 @@ def posterior_ess_dim(table, traj_length, dims, epsilon):
     outputs = []
     for dim in dims:
         outputs += get_posterior_ess_outputs(table, traj_length, dim, epsilon)
+    save_outputs_with_names_dim(outputs, 'joint_posterior(epsilon_{}_traj_lengths_{}_dim_{})'.format(epsilon, traj_lengths, dim))
     make_ess_plot_nice_dim(outputs, fixed_feature_string='traj_length', fixed_feature=traj_length,
                            num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, dims=dims,
                            xlabel='Latent Dimension', name='posterior_{}'.format(epsilon))
@@ -1124,6 +1144,7 @@ def posterior_filtering_ess_traj(table, traj_lengths, dim, epsilon):
     outputs = []
     for traj_length in traj_lengths:
         outputs += get_posterior_filtering_ess_outputs(table, traj_length, dim, epsilon)
+    save_outputs_with_names_traj(outputs, 'posterior_filtering(epsilon_{}_traj_lengths_{}_dim_{})'.format(epsilon, traj_lengths, dim))
     make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=dim,
                        num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, traj_lengths=traj_lengths,
                        xlabel='Trajectory Length', name='posterior_filtering')
@@ -1133,6 +1154,7 @@ def posterior_filtering_ess_dim(table, traj_length, dims, epsilon):
     outputs = []
     for dim in dims:
         outputs += get_posterior_filtering_ess_outputs(table, traj_length, dim, epsilon)
+    save_outputs_with_names_dim(outputs, 'posterior_filtering(epsilon_{}_traj_length_{}_dims_{})'.format(epsilon, traj_length, dims))
     make_ess_plot_nice_dim(outputs, fixed_feature_string='traj_length', fixed_feature=traj_length,
                            num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, dims=dims,
                            xlabel='Latent Dimension', name='posterior_{}'.format(epsilon))
@@ -1161,6 +1183,7 @@ def rl_ess_traj(table, traj_lengths, dim, ent_coef, loss_type):
     for traj_length in traj_lengths:
         model_name = get_model_name(traj_length=traj_length, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
         outputs += [get_rl_output(table=table, ys=None, dim=dim, sample=True, model_name=model_name, traj_length=traj_length)]
+    save_outputs_with_names_traj(outputs, 'rl_traj_lengths_{}_dim_{}'.format(traj_lengths, dim))
     make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=dim,
                        num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, traj_lengths=traj_lengths,
                        xlabel='Trajectory Length', name='RL')
@@ -1172,6 +1195,7 @@ def rl_ess_dim(table, traj_length, dims, ent_coef, loss_type):
         # ys = generate_trajectory(traj_length, A=single_gen_A, Q=single_gen_Q, C=single_gen_C, R=single_gen_R, mu_0=single_gen_mu_0, Q_0=single_gen_Q_0)[0]
         model_name = get_model_name(traj_length=traj_length, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
         outputs += [get_rl_output(table=table, ys=None, dim=dim, sample=True, model_name=model_name, traj_length=traj_length)]
+    save_outputs_with_names_dim(outputs, 'rl(traj_length_{}_dims_{})'.format(traj_length, dims))
     make_ess_plot_nice_dim(outputs, fixed_feature_string='traj_length', fixed_feature=traj_length,
                     num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, dims=dims,
                     xlabel='Latent Dimension', name='RL')
@@ -1203,11 +1227,11 @@ def execute_compare_convergence_dim(table, traj_length, epsilons, dims, model_na
 def execute_ess_traj(traj_lengths, dim, epsilons, ent_coef, loss_type):
     table = create_dimension_table(torch.tensor([dim]), random=False)
     os.makedirs(TODAY, exist_ok=True)
+    rl_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
     for epsilon in epsilons:
         # posterior_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, epsilon=epsilon)
         posterior_filtering_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, epsilon=epsilon)
     # prior_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim)
-    rl_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
 
 def execute_ess_dim(table, traj_length, dims, epsilons, ent_coef, loss_type):
     os.makedirs(TODAY, exist_ok=True)
@@ -1215,7 +1239,7 @@ def execute_ess_dim(table, traj_length, dims, epsilons, ent_coef, loss_type):
         # posterior_ess_dim(table=table, traj_length=traj_length, dims=dims, epsilon=epsilon)
         posterior_filtering_ess_dim(table=table, traj_length=traj_length, dims=dims, epsilon=epsilon)
     # prior_ess_dim(table=table, traj_length=traj_length, dims=dims)
-    rl_ess_dim(table=table, traj_length=traj_length, dims=dims, ent_coef=ent_coef, loss_type=loss_type)
+    # rl_ess_dim(table=table, traj_length=traj_length, dims=dims, ent_coef=ent_coef, loss_type=loss_type)
 
 def trial_evidence(table, traj_length, dim):
     posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
@@ -1476,6 +1500,32 @@ def evaluate_agent(traj_length, dim, model_name):
                    truth=posterior_evidence.evidence, dim=dim,
                    model_name=model_name)
 
+def get_full_name_of_ess_type(ess_type):
+    if ess_type == 'traj':
+        return 'Trajectory Length'
+    elif ess_type == 'dim':
+        return 'Dimensionality'
+    else:
+        raise NotImplementedError
+
+def plot_ess_from_data(filenames):
+    assert filenames
+    for filename in filenames:
+        data_with_columns = load_ess_data(filename)
+        plot_ess_data(data_with_columns)
+        ess_type = data_with_columns.data_type
+    xlabel = get_full_name_of_ess_type(ess_type)
+
+    ax = plt.gca()
+    ax.xaxis.get_major_locator().set_params(integer=True)
+
+    plt.xlabel('{}'.format(xlabel))
+    plt.ylabel('Effective Sample Size')
+    plt.title('Effective Sample Size vs. {}'.format(xlabel))
+    plt.legend()
+    plt.savefig('{}/ess_{}.pdf'.format(TODAY, ess_type))
+    plt.close()
+
 
 if __name__ == "__main__":
     os.makedirs(TODAY, exist_ok=True)
@@ -1486,6 +1536,8 @@ if __name__ == "__main__":
     loss_type = args.loss_type
     subroutine = args.subroutine
     model_name = MODEL.format(ent_coef, loss_type, traj_length, dim)
+    filenames = args.filenames
+    ess_dims = args.ess_dims
 
     if subroutine == 'train_agent':
         print('executing: {}'.format('train_agent'))
@@ -1495,8 +1547,18 @@ if __name__ == "__main__":
         evaluate_agent(traj_length, dim, model_name)
     elif subroutine == 'ess_traj':
         print('executing: {}'.format('ess_traj'))
-        traj_lengths = torch.cat([torch.arange(2, 11), torch.arange(12, 20)])
+        traj_lengths = torch.cat([torch.arange(2, 11), torch.arange(12, 17)])
+        epsilons = [-5e-3]
         execute_ess_traj(traj_lengths=traj_lengths, dim=dim, epsilons=epsilons, ent_coef=ent_coef, loss_type=loss_type)
+    elif subroutine == 'ess_dim':
+        print('executing: {}'.format('ess_dim'))
+        dims = [x for x in range(1, 50)]
+        epsilons = [-5e-3, 5e-3]
+        table = create_dimension_table(torch.tensor(dims), random=False)
+        execute_ess_dim(table, traj_length=traj_length, dims=dims, epsilons=epsilons, ent_coef=ent_coef, loss_type=loss_type)
+    elif subroutine == 'load_ess_data':
+        print('executing: {}'.format('load_ess_dim'))
+        plot_ess_from_data(filenames)
     else:
         print('executing: {}'.format('custom'))
         table = create_dimension_table(torch.tensor([dim]), random=False)
