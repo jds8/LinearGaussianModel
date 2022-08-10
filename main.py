@@ -192,6 +192,10 @@ def get_model_name(traj_length, dim, ent_coef, loss_type):
 def model_without_directory(model):
     return Path(model).parts[-1]
 
+def get_loss_type(model_name):
+    model = model_name.split('/')[1]
+    return model.split('_')[0]
+
 def train(traj_length, env, dim, ent_coef=1.0, loss_type='forward_kl'):
     params = {}
     run = wandb.init(project='linear_gaussian_model training', save_code=True, config=params, entity='iai')
@@ -844,7 +848,7 @@ def compute_evidence(table, traj_length, dim):
     #                         sample=True)
 
     ys = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0]
-    env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, ys=ys, sample=True)
+    env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, using_entropy_loss=True, ys=ys, sample=True)
 
     posterior = compute_posterior(A=A, Q=Q, C=C, R=R, num_observations=len(ys), dim=dim)
     td = condition_posterior(posterior, ys)
@@ -891,8 +895,11 @@ def get_rl_output(table, ys, dim, sample, model_name, traj_length=0):
     mu_0 = table[dim]['mu_0']
     Q_0 = table[dim]['Q_0']
 
+    loss_type = get_loss_type(model_name)
+
     for _ in range(NUM_REPEATS):
         env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q,
+                                using_entropy_loss=(loss_type==ENTROPY_LOSS),
                                 ys=ys, traj_length=traj_length, sample=sample)
 
         eval_obj = rl_estimate(ys, dim=dim, N=NUM_SAMPLES, model_name=model_name,
@@ -1305,7 +1312,7 @@ def verify_filtering_posterior():
     R = table[dim]['R']
     mu_0 = table[dim]['mu_0']
     Q_0 = table[dim]['Q_0']
-    env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, ys=ys, sample=True)
+    env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, using_entropy_loss=True, ys=ys, sample=True)
 
     eval_obj = evaluate_filtering_posterior(ys=ys, N=2, tds=fps, env=env)
     actions = eval_obj.actions
