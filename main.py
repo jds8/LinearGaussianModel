@@ -17,7 +17,7 @@ from generative_model import y_dist, sample_y, generate_trajectory, \
     state_transition, score_state_transition, gen_covariance_matrix, \
     score_initial_state, score_y, get_stacked_state_transition_dist
     # A, Q, C, R, mu_0, Q_0, \
-# import wandb
+import wandb
 from linear_gaussian_env import LinearGaussianEnv, LinearGaussianSingleYEnv
 from math_utils import logvarexp, importance_sampled_confidence_interval, log_effective_sample_size, log_max_weight_proportion, log_mean
 from plot_utils import legend_without_duplicate_labels
@@ -41,7 +41,7 @@ MODEL = 'agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{})'
 TODAY = date.today().strftime("%b-%d-%Y")
 
 RL_TIMESTEPS = 1000000
-NUM_SAMPLES = 100
+NUM_SAMPLES = 1000
 NUM_VARIANCE_SAMPLES = 10
 NUM_REPEATS = 20
 
@@ -49,6 +49,10 @@ FILTERING_POSTERIOR_DISTRIBUTION = 'filtering_posterior'
 POSTERIOR_DISTRIBUTION = 'posterior'
 PRIOR_DISTRIBUTION = 'prior'
 RL_DISTRIBUTION = 'RL'
+
+ENTROPY_LOSS = 'entropy'
+FORWARD_KL = 'forward_kl'
+REVERSE_KL = 'reverse_kl'
 
 class CustomCallback(BaseCallback):
     """
@@ -73,16 +77,16 @@ class CustomCallback(BaseCallback):
         if "algo" not in d:
             d["algo"] = type(self.model).__name__
         for key in self.model.__dict__:
-#             if key in wandb.config:
-                # continue
+            if key in wandb.config:
+                continue
             if type(self.model.__dict__[key]) in [float, int, str]:
                 d[key] = self.model.__dict__[key]
             else:
                 d[key] = str(self.model.__dict__[key])
         if self.gradient_save_freq > 0:
             pass
-#             wandb.watch(self.model.policy, log_freq=self.gradient_save_freq, log="all")
-#         wandb.config.setdefaults(d)
+            wandb.watch(self.model.policy, log_freq=self.gradient_save_freq, log="all")
+        wandb.config.setdefaults(d)
 
     def eval_policy(self, policy, env):
         #
@@ -116,11 +120,11 @@ class CustomCallback(BaseCallback):
         policy = lambda obs_: self.model.predict(obs_, deterministic=True)[0]
         avg_return, avg_horizon = self.eval_policy(policy, self.training_env)
         self.training_env.reset()
-#         # log to wandb
-#         wandb.log({'det_avg_return':avg_return,
-                   # 'det_avg_horizon':avg_horizon,
-                   # 'time_steps': self.num_timesteps,
-                   # 'updates': self.model._n_updates})
+        # log to wandb
+        wandb.log({'det_avg_return':avg_return,
+                   'det_avg_horizon':avg_horizon,
+                   'time_steps': self.num_timesteps,
+                   'updates': self.model._n_updates})
         return None
 
     def _on_rollout_start(self) -> None:
@@ -138,13 +142,13 @@ class CustomCallback(BaseCallback):
             avg_return, avg_horizon, avg_wp = self.eval_policy(policy, self.training_env)
             self.training_env.reset()
             #
-#             wandb.log({'det_avg_return':avg_return,
-                       # 'det_avg_horizon':avg_horizon,
-                       # 'det_avg_wp':avg_wp,
-                       # 'stoch_avg_return': np.mean([val['l'] for val in self.model.ep_info_buffer]),
-                       # 'stoch_avg_horizon': np.mean([val['r'] for val in self.model.ep_info_buffer]),
-                       # 'time_steps': self.num_timesteps,
-                       # 'updates': self.model._n_updates})
+            wandb.log({'det_avg_return':avg_return,
+                       'det_avg_horizon':avg_horizon,
+                       'det_avg_wp':avg_wp,
+                       'stoch_avg_return': np.mean([val['l'] for val in self.model.ep_info_buffer]),
+                       'stoch_avg_horizon': np.mean([val['r'] for val in self.model.ep_info_buffer]),
+                       'time_steps': self.num_timesteps,
+                       'updates': self.model._n_updates})
             # New best model, you could save the agent here
             if avg_return > self.best_mean_reward:
                 self.best_mean_reward = avg_return
@@ -153,10 +157,10 @@ class CustomCallback(BaseCallback):
         # otherwise just log stochastic info
         else:
             pass
-#             wandb.log({'stoch_avg_return': np.mean([val['l'] for val in self.model.ep_info_buffer]),
-                       # 'stoch_avg_horizon': np.mean([val['r'] for val in self.model.ep_info_buffer]),
-                       # 'time_steps': self.num_timesteps,
-                       # 'updates': self.model._n_updates})
+            wandb.log({'stoch_avg_return': np.mean([val['l'] for val in self.model.ep_info_buffer]),
+                       'stoch_avg_horizon': np.mean([val['r'] for val in self.model.ep_info_buffer]),
+                       'time_steps': self.num_timesteps,
+                       'updates': self.model._n_updates})
 
     def _on_rollout_end(self) -> None:
         """
@@ -178,7 +182,7 @@ class CustomCallback(BaseCallback):
         if self.env.states:
             q_log_prob = self.model.policy.to(self.env.states[-1].device).evaluate_actions(obs=self.env.states[-1].t(), actions=self.env.actions[-1])[1]
             # note that in this case the weights are p(y|x)p(x)/q(x)
-#             wandb.log({'log weights': self.env.liks[-1] + self.env.p_log_probs[-1] - q_log_prob})
+            wandb.log({'log weights': self.env.liks[-1] + self.env.p_log_probs[-1] - q_log_prob})
 
         return True
 
@@ -190,7 +194,7 @@ def model_without_directory(model):
 
 def train(traj_length, env, dim, ent_coef=1.0, loss_type='forward_kl'):
     params = {}
-#     run = wandb.init(project='linear_gaussian_model training', save_code=True, config=params, entity='iai')
+    run = wandb.init(project='linear_gaussian_model training', save_code=True, config=params, entity='iai')
 
     # network archictecture
     arch = [1024 for _ in range(3)]
@@ -732,7 +736,7 @@ def condition_posterior(td, obs):
     return td.dist(arg={'value': obs})
 
 def evaluate_posterior(ys, N, td, env=None):
-#     run = wandb.init(project='linear_gaussian_model evaluation', save_code=True, entity='iai')
+    run = wandb.init(project='linear_gaussian_model evaluation', save_code=True, entity='iai')
     print('\nevaluating...')
     if env is None:
         # create env
@@ -804,7 +808,7 @@ def evaluate_posterior(ys, N, td, env=None):
             running_log_evidence_estimates.append(torch.logsumexp(log_p_y_over_qs[0:i+1], -1) - torch.log(torch.tensor(i+1.)))
         log_weights.append(log_p_x - log_q)  # ignore these since we consider the weights to be p(y|x)p(x)/q(x)
         total_rewards.append(total_reward)
-#         wandb.log({'total_reward': total_reward})
+        wandb.log({'total_reward': total_reward})
 
     # calculate variance estmate as
     # $\hat{\sigma}_{int}^2=(n(n-1))^{-1}\sum_{i=1}^n(f_iW_i-\overline{fW})^2$
@@ -1325,7 +1329,9 @@ def test_train(traj_length, dim, ent_coef, loss_type):
     mu_0 = table[dim]['mu_0']
     Q_0 = table[dim]['Q_0']
 
-    env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, ys=posterior_evidence.ys, sample=True)
+    env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0,
+                            using_entropy_loss=(loss_type==ENTROPY_LOSS),
+                            ys=posterior_evidence.ys, sample=True)
     train(traj_length=traj_length, env=env, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
 
 def sample_variance_ratios(traj_length, model_name):
