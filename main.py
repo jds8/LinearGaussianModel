@@ -30,6 +30,7 @@ from get_args import get_args
 from pathlib import Path
 from data_loader import load_ess_data
 from plot import plot_ess_data
+from linear_policy import LinearActorCriticPolicy
 
 # model name
 # MODEL = 'trial_linear_gaussian_model_(traj_{}_dim_{})'
@@ -200,16 +201,13 @@ def train(traj_length, env, dim, ent_coef=1.0, loss_type='forward_kl'):
     params = {}
     run = wandb.init(project='linear_gaussian_model training', save_code=True, config=params, entity='iai')
 
-    # network archictecture
-    arch = [1024 for _ in range(3)]
     # create policy
 
     # batch_obs is of shape BATCH_SIZE x (HIDDEN_DIMENSION + 1) x 1 where the middle dimension includes the next y
     # we only want the x part of the hidden_dimension, so we exclude the y part
     prior = lambda batch_obs: get_stacked_state_transition_dist(batch_obs[:, 0:-1, :], A=env.A, Q=env.Q)
 
-    model = PPO('MlpPolicy', env, ent_coef=ent_coef,
-                policy_kwargs=dict(net_arch=[dict(pi=arch, vf=arch)]),
+    model = PPO(LinearActorCriticPolicy, env, ent_coef=ent_coef, policy_kwargs=dict(),
                 device='cpu', verbose=1, loss_type=loss_type, prior=prior)
 
     # train policy
