@@ -18,6 +18,10 @@ def get_args():
     parser.add_argument('--ess_dims', type=int, default=1, help='dimensions for ess', nargs='*')
     parser.add_argument('--ess_traj_lengths', type=int, default=1, help='traj_lengths for ess', nargs='*')
 
+    # hyperparameters
+    parser.add_argument('--learning_rate', type=float, default=1e-4, help='what file to load', nargs='*')
+    parser.add_argument('--clip_range', type=float, default=0.1, help='what file to load', nargs='*')
+
     # parse
     args, _ = parser.parse_known_args()
 

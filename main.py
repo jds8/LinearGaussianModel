@@ -197,7 +197,7 @@ def get_loss_type(model_name):
     model = model_name.split('/')[1]
     return model.split('_')[0]
 
-def train(traj_length, env, dim, ent_coef=1.0, loss_type='forward_kl'):
+def train(traj_length, env, dim, ent_coef=1.0, loss_type='forward_kl', learning_rate=3e-4, clip_range=0.2):
     params = {}
     run = wandb.init(project='linear_gaussian_model training', save_code=True, config=params, entity='iai')
 
@@ -208,7 +208,8 @@ def train(traj_length, env, dim, ent_coef=1.0, loss_type='forward_kl'):
     prior = lambda batch_obs: get_stacked_state_transition_dist(batch_obs[:, 0:-1, :], A=env.A, Q=env.Q)
 
     model = PPO(LinearActorCriticPolicy, env, ent_coef=ent_coef, policy_kwargs=dict(),
-                device='cpu', verbose=1, loss_type=loss_type, prior=prior)
+                device='cpu', verbose=1, loss_type=loss_type, prior=prior,
+                learning_rate=learning_rate, clip_range=clip_range)
 
     # train policy
     model.learn(total_timesteps=RL_TIMESTEPS, callback=CustomCallback(env, verbose=1))
@@ -1323,7 +1324,7 @@ def verify_filtering_posterior():
         score += td.condition(y_values=ys[i:], x_value=actions[i]).log_prob(action)
     print('filtering posterior score: ', score)
 
-def test_train(traj_length, dim, ent_coef, loss_type):
+def test_train(traj_length, dim, ent_coef, loss_type, learning_rate, clip_range):
     table = create_dimension_table(torch.tensor([dim]), random=False)
     posterior_evidence = compute_evidence(table, traj_length, dim)
 
@@ -1337,7 +1338,8 @@ def test_train(traj_length, dim, ent_coef, loss_type):
     env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0,
                             using_entropy_loss=(loss_type==ENTROPY_LOSS),
                             ys=posterior_evidence.ys, sample=True)
-    train(traj_length=traj_length, env=env, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
+    train(traj_length=traj_length, env=env, dim=dim, ent_coef=ent_coef, loss_type=loss_type,
+          learning_rate=learning_rate, clip_range=clip_range)
 
 def sample_variance_ratios(traj_length, model_name):
     """
@@ -1583,9 +1585,14 @@ if __name__ == "__main__":
     ess_dims = args.ess_dims
     ess_traj_lengths = args.ess_traj_lengths
 
+    learning_rate = args.learning_rate
+    clip_range = args.clip_range
+
     if subroutine == 'train_agent':
         print('executing: {}'.format('train_agent'))
-        test_train(traj_length=traj_length, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
+        test_train(traj_length=traj_length, dim=dim, ent_coef=ent_coef,
+                   loss_type=loss_type, learning_rate=learning_rate,
+                   clip_range=clip_range)
     elif subroutine == 'evaluate_agent':
         print('executing: {}'.format('evaluate_agent'))
         evaluate_agent(traj_length, dim, model_name)
