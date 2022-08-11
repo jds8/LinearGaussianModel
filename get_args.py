@@ -22,6 +22,9 @@ def get_args():
     parser.add_argument('--learning_rate', type=float, default=1e-4, help='what file to load', nargs='*')
     parser.add_argument('--clip_range', type=float, default=0.1, help='what file to load', nargs='*')
 
+    # save directory
+    parser.add_argument('--save_dir', type=str, default='.', help='top level directory in which to save files')
+
     # parse
     args, _ = parser.parse_known_args()
 

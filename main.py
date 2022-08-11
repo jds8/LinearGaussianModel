@@ -1588,6 +1588,9 @@ if __name__ == "__main__":
     learning_rate = args.learning_rate
     clip_range = args.clip_range
 
+    save_dir = args.save_dir
+    os.makedirs(save_dir, exist_ok=True)
+
     if subroutine == 'train_agent':
         print('executing: {}'.format('train_agent'))
         test_train(traj_length=traj_length, dim=dim, ent_coef=ent_coef,
