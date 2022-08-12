@@ -35,14 +35,14 @@ from linear_policy import LinearActorCriticPolicy
 # model name
 # MODEL = 'trial_linear_gaussian_model_(traj_{}_dim_{})'
 # MODEL = 'linear_gaussian_model_(traj_{}_dim_{})'
-MODEL = 'agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{})'
+# MODEL = 'agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{})'
 # MODEL = 'from_borg/rl_agents/linear_gaussian_model_(traj_{}_dim_{})'
 # MODEL = 'new_linear_gaussian_model_(traj_{}_dim_{})'
 
 TODAY = date.today().strftime("%b-%d-%Y")
 
 RL_TIMESTEPS = 1000000
-NUM_SAMPLES = 1000
+NUM_SAMPLES = 100
 NUM_VARIANCE_SAMPLES = 10
 NUM_REPEATS = 20
 
@@ -905,7 +905,7 @@ def get_rl_output(table, ys, dim, sample, model_name, traj_length=0):
                                 using_entropy_loss=(loss_type==ENTROPY_LOSS),
                                 ys=ys, traj_length=traj_length, sample=sample)
 
-        eval_obj = rl_estimate(ys, dim=dim, N=NUM_SAMPLES, model_name=model_name,
+        eval_obj = rl_estimate(ys, dim=dim, N=NUM_SAMPLES*traj_length, model_name=model_name,
                                env=env, traj_length=traj_length)
         # add rl confidence interval
         rl_estimator = rl_output.add_rl_estimator(running_log_estimates=eval_obj.running_log_estimates,
@@ -1580,9 +1580,15 @@ def plot_ess_from_data(filenames):
 if __name__ == "__main__":
     args, _ = get_args()
     subroutine = args.subroutine
+    save_dir = args.save_dir
+    MODEL = 'agents/'+save_dir+'/{}_{}_linear_gaussian_model_(traj_{}_dim_{})'
     if subroutine != 'train_agent':
         run = wandb.init(project='linear_gaussian_model', save_code=True, config=params, entity='iai')
+        os.makedirs(save_dir, exist_ok=True)
+
+    os.makedirs('agents/'+save_dir, exist_ok=True)
     os.makedirs(TODAY, exist_ok=True)
+
     traj_length = args.traj_length
     dim = args.dim
     ent_coef = args.ent_coef
@@ -1594,9 +1600,6 @@ if __name__ == "__main__":
 
     learning_rate = args.learning_rate
     clip_range = args.clip_range
-
-    save_dir = args.save_dir
-    os.makedirs(save_dir, exist_ok=True)
 
     if subroutine == 'train_agent':
         print('executing: {}'.format('train_agent'))
