@@ -1578,15 +1578,15 @@ def plot_ess_from_data(filenames):
 
 
 if __name__ == "__main__":
+    args, _ = get_args()
+    subroutine = args.subroutine
     if subroutine != 'train_agent':
         run = wandb.init(project='linear_gaussian_model', save_code=True, config=params, entity='iai')
     os.makedirs(TODAY, exist_ok=True)
-    args, _ = get_args()
     traj_length = args.traj_length
     dim = args.dim
     ent_coef = args.ent_coef
     loss_type = args.loss_type
-    subroutine = args.subroutine
     model_name = MODEL.format(ent_coef, loss_type, traj_length, dim)
     filenames = args.filenames
     ess_dims = args.ess_dims
