@@ -35,7 +35,7 @@ from linear_policy import LinearActorCriticPolicy
 # model name
 # MODEL = 'trial_linear_gaussian_model_(traj_{}_dim_{})'
 # MODEL = 'linear_gaussian_model_(traj_{}_dim_{})'
-MODEL = 'agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{})'
+# MODEL = 'agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{})'
 # MODEL = 'from_borg/rl_agents/linear_gaussian_model_(traj_{}_dim_{})'
 # MODEL = 'new_linear_gaussian_model_(traj_{}_dim_{})'
 
@@ -1578,10 +1578,16 @@ def plot_ess_from_data(filenames):
 
 
 if __name__ == "__main__":
+    args, _ = get_args()
+    save_dir = args.save_dir
+    MODEL = 'agents/'+save_dir+'/{}_{}_linear_gaussian_model_(traj_{}_dim_{})'
     if subroutine != 'train_agent':
         run = wandb.init(project='linear_gaussian_model', save_code=True, config=params, entity='iai')
+        os.makedirs(save_dir, exist_ok=True)
+
+    os.makedirs('agents/'+save_dir, exist_ok=True)
     os.makedirs(TODAY, exist_ok=True)
-    args, _ = get_args()
+
     traj_length = args.traj_length
     dim = args.dim
     ent_coef = args.ent_coef
@@ -1594,9 +1600,6 @@ if __name__ == "__main__":
 
     learning_rate = args.learning_rate
     clip_range = args.clip_range
-
-    save_dir = args.save_dir
-    os.makedirs(save_dir, exist_ok=True)
 
     if subroutine == 'train_agent':
         print('executing: {}'.format('train_agent'))
