@@ -470,6 +470,7 @@ def make_ess_versus_dimension_plot(outputs, num_samples):
     plt.title('Effective Sample Size Versus Hidden Dimension\n(num samples: {} trajectory length: {})'.format(num_samples, traj_length))
     legend_without_duplicate_labels(plt.gca())
     plt.savefig('{}/ess_versus_dimension_(traj_len: {}).pdf'.format(TODAY, traj_length))
+    wandb.save('{}/ess_versus_dimension_(traj_len: {}).pdf'.format(TODAY, traj_length))
     plt.close()
 
 def make_ess_plot_nice(outputs_with_names, fixed_feature_string,
@@ -482,6 +483,7 @@ def make_ess_plot_nice(outputs_with_names, fixed_feature_string,
     plt.title('Effective Sample Size Versus {}\n (num samples: {}, num repeats: {})'.format(xlabel, num_samples, num_repeats))
     legend_without_duplicate_labels(plt.gca())
     plt.savefig('{}/{}/{}_ess_plot_{}_{}.pdf'.format(TODAY, distribution_type, name, fixed_feature_string, fixed_feature))
+    wandb.save('{}/{}/{}_ess_plot_{}_{}.pdf'.format(TODAY, distribution_type, name, fixed_feature_string, fixed_feature))
 
 def make_ess_plot_nice_dim(outputs_with_names, fixed_feature_string,
                            fixed_feature, num_samples, num_repeats,
@@ -493,6 +495,7 @@ def make_ess_plot_nice_dim(outputs_with_names, fixed_feature_string,
     plt.title('Effective Sample Size Versus {}\n (num samples: {}, num repeats: {})'.format(xlabel, num_samples, num_repeats))
     legend_without_duplicate_labels(plt.gca())
     plt.savefig('{}/{}/{}_ess_plot_{}_{}.pdf'.format(TODAY, distribution_type, name, fixed_feature_string, fixed_feature))
+    wandb.save('{}/{}/{}_ess_plot_{}_{}.pdf'.format(TODAY, distribution_type, name, fixed_feature_string, fixed_feature))
 
 
 class Plotter:
@@ -628,6 +631,7 @@ class Plotter:
             plt.title('Convergence of Prob. {} Estimate to True Prob. {} \n(trajectory length: {}, dimension: {})'.format(self.name, self.name, traj_length, self.dimension))
             plt.legend()
             plt.savefig('{}/{}traj_length_{}_dimension_{}_{}_convergence.pdf'.format(TODAY, name, traj_length, self.dimension, self.name))
+            wandb.save('{}/{}traj_length_{}_dimension_{}_{}_convergence.pdf'.format(TODAY, name, traj_length, self.dimension, self.name))
             plt.close()
         return outputs
 
@@ -1035,6 +1039,7 @@ def plot_convergence(outputs_with_names, traj_length, dim, true, name):
     legend_without_duplicate_labels(plt.gca())
     model_name = model_without_directory(name)
     plt.savefig(TODAY+'/'+model_name+'Convergence.pdf')
+    wandb.save(TODAY+'/'+model_name+'Convergence.pdf')
     plt.close()
 
 def posterior_convergence(posterior_evidence, dim, epsilons):
@@ -1505,6 +1510,7 @@ def plot_variance_ratios(vrs, quantiles, traj_length, ent_coef, loss_type):
     plt.title('Ratio of Variances of Filtering Posterior and RL Proposal\n(Loss Type: {} Coef: {})'.format(loss_type, ent_coef))
     plt.legend()
     plt.savefig('{}/Variance Ratio traj_len: {} ent_coef: {} loss_type: {}.pdf'.format(TODAY, traj_length, ent_coef, loss_type))
+    wandb.save('{}/Variance Ratio traj_len: {} ent_coef: {} loss_type: {}.pdf'.format(TODAY, traj_length, ent_coef, loss_type))
     plt.close()
 
 def plot_state_occupancy(state_occupancies, quantiles, traj_length, ent_coef, loss_type):
@@ -1519,6 +1525,7 @@ def plot_state_occupancy(state_occupancies, quantiles, traj_length, ent_coef, lo
     plt.title('Values of state xt at each time step t\n(Loss Type: {} Coef: {})'.format(loss_type, ent_coef))
     plt.legend()
     plt.savefig('{}/State Occupancy traj_len: {} ent_coef: {} loss_type: {}.pdf'.format(TODAY, traj_length, ent_coef, loss_type))
+    wandb.save('{}/State Occupancy traj_len: {} ent_coef: {} loss_type: {}.pdf'.format(TODAY, traj_length, ent_coef, loss_type))
     plt.close()
 
 def execute_variance_ratio_runs(t_len, ent_coef, loss_type):
@@ -1566,10 +1573,13 @@ def plot_ess_from_data(filenames):
     plt.title('Effective Sample Size vs. {}'.format(xlabel))
     plt.legend()
     plt.savefig('{}/ess_{}.pdf'.format(TODAY, ess_type))
+    wandb.save('{}/ess_{}.pdf'.format(TODAY, ess_type))
     plt.close()
 
 
 if __name__ == "__main__":
+    if subroutine != 'train_agent':
+        run = wandb.init(project='linear_gaussian_model', save_code=True, config=params, entity='iai')
     os.makedirs(TODAY, exist_ok=True)
     args, _ = get_args()
     traj_length = args.traj_length
