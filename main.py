@@ -1583,7 +1583,7 @@ if __name__ == "__main__":
     save_dir = args.save_dir
     MODEL = 'agents/'+save_dir+'/{}_{}_linear_gaussian_model_(traj_{}_dim_{})'
     if subroutine != 'train_agent':
-        run = wandb.init(project='linear_gaussian_model', save_code=True, config=params, entity='iai')
+        run = wandb.init(project='linear_gaussian_model', save_code=True, entity='iai')
         os.makedirs(save_dir, exist_ok=True)
 
     os.makedirs('agents/'+save_dir, exist_ok=True)
