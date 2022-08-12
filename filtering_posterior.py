@@ -176,7 +176,6 @@ def compute_filtering_posteriors(table, num_obs, dim, ys=None):
 
     if ys is None:
         ys = generate_trajectory(num_obs, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0]
-    env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, ys=ys, sample=False)
 
     assert(num_obs == len(ys))
 
@@ -301,7 +300,7 @@ if __name__ == "__main__":
     dim = 1
     num_obs = 2
     table = create_dimension_table(torch.tensor([dim]), random=False)
-    fps, ys = compute_filtering_posteriors(table=table, num_obs=num_obs, dim=dim)
+    fps, ys = compute_filtering_posteriors(table=table, num_obs=num_obs, dim=dim, using_entropy_loss=False)
 
     A = table[dim]['A']
     Q = table[dim]['Q']

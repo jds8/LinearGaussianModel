@@ -1527,11 +1527,8 @@ def execute_variance_ratio_runs(t_len, ent_coef, loss_type):
     quantiles = torch.tensor([0.05, 0.5, 0.95])
     plot_variance_ratios(vrs=vrs, quantiles=quantiles, traj_length=t_len, ent_coef=ent_coef, loss_type=loss_type)
 
-def execute_state_occupancy():
-    traj_length = torch.tensor(10)
-    ent_coef = 1.0
-    loss_type = 'forward_kl'
-    model_name = '1.0_new_linear_gaussian_model_(traj_10_dim_1).zip'
+def execute_state_occupancy(traj_length, ent_coef, loss_type):
+    model_name = get_model_name(traj_length=traj_length, dim=1, ent_coef=ent_coef, loss_type=loss_type)
     state_occupancy = sample_empirical_state_occupancy(traj_length, model_name)
     filtering_state_occupancy = sample_filtering_state_occupancy(traj_length, model_name)
     quantiles = torch.tensor([0.05, 0.5, 0.95], dtype=state_occupancy.dtype)
@@ -1639,6 +1636,9 @@ if __name__ == "__main__":
     elif subroutine == 'load_ess_data':
         print('executing: {}'.format('load_ess_dim'))
         plot_ess_from_data(filenames)
+    elif subroutine == 'state_occupancy':
+        print('executing: {}'.format('state_occupancy'))
+        execute_state_occupancy(traj_length=traj_length, ent_coef=ent_coef, loss_type=loss_type)
     else:
         print('executing: {}'.format('custom'))
         table = create_dimension_table(torch.tensor([dim]), random=False)
