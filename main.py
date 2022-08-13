@@ -912,7 +912,7 @@ def get_rl_output(linear_gaussian_env_type, table, ys, dim, sample, model_name, 
                                        using_entropy_loss=(loss_type==ENTROPY_LOSS),
                                        ys=ys, traj_length=traj_length, sample=sample)
 
-        eval_obj = rl_estimate(ys, dim=dim, N=NUM_SAMPLES*traj_length**1, model_name=model_name,
+        eval_obj = rl_estimate(ys, dim=dim, N=NUM_SAMPLES*traj_length**2, model_name=model_name,
                                env=env, traj_length=traj_length)
         # add rl confidence interval
         rl_estimator = rl_output.add_rl_estimator(running_log_estimates=eval_obj.running_log_estimates,
