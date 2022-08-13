@@ -1139,12 +1139,12 @@ class RLConvergence(EvidenceConvergence):
         return get_rl_output(self.linear_gaussian_env_type, table=table, ys=self.posterior_evidence.ys, dim=self.dim, sample=False)
 
 
-def compare_convergence(table, traj_length, dim, epsilons, model_name):
+def compare_convergence(linear_gaussian_env_type, table, traj_length, dim, epsilons, model_name):
     posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
     posterior_convergence(posterior_evidence=posterior_evidence, dim=dim, epsilons=epsilons)
     prior_convergence(table=table, ys=posterior_evidence.ys, truth=posterior_evidence.evidence, dim=dim)
     try:
-        rl_convergence(table=table, ys=posterior_evidence.ys,
+        rl_convergence(linear_gaussian_env_type, table=table, ys=posterior_evidence.ys,
                        truth=posterior_evidence.evidence, dim=dim,
                        model_name=model_name)
     except:
@@ -1548,10 +1548,10 @@ def execute_state_occupancy(traj_length, ent_coef, loss_type):
     plot_state_occupancy(state_occupancies=[(state_occupancy, 'RL agent'), (filtering_state_occupancy, 'Filtering Posterior')],
                          quantiles=quantiles, traj_length=traj_length, ent_coef=ent_coef, loss_type=loss_type)
 
-def evaluate_agent(traj_length, dim, model_name):
+def evaluate_agent(linear_gaussian_env_type, traj_length, dim, model_name):
     table = create_dimension_table(torch.tensor([dim]), random=False)
     posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
-    rl_convergence(table=table, ys=posterior_evidence.ys,
+    rl_convergence(linear_gaussian_env_type, table=table, ys=posterior_evidence.ys,
                    truth=posterior_evidence.evidence, dim=dim,
                    model_name=model_name)
 
@@ -1621,7 +1621,7 @@ if __name__ == "__main__":
                    clip_range=clip_range, linear_gaussian_env_type=linear_gaussian_env_type)
     elif subroutine == 'evaluate_agent':
         print('executing: {}'.format('evaluate_agent'))
-        evaluate_agent(traj_length, dim, model_name)
+        evaluate_agent(linear_guassian_env_type, traj_length, dim, model_name)
     elif subroutine == 'ess_traj':
         print('executing: {}'.format('ess_traj'))
         traj_lengths = torch.cat([torch.arange(2, 11), torch.arange(12, 17)])
