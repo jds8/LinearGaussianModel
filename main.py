@@ -30,7 +30,7 @@ import pandas as pd
 from get_args import get_args
 from pathlib import Path
 from data_loader import load_ess_data
-from plot import plot_ess_data
+from plot import plot_ess_data, plot_3d_state_occupancy
 from linear_policy import LinearActorCriticPolicy
 
 # model name
@@ -183,8 +183,11 @@ class CustomCallback(BaseCallback):
 
         if self.env.states:
             q_log_prob = self.model.policy.to(self.env.states[-1].device).evaluate_actions(obs=self.env.states[-1].t(), actions=self.env.actions[-1])[1]
-            # note that in this case the weights are p(y|x)p(x)/q(x)
+            # note that in this case the weights are log[ p(y|x)p(x)/q(x|y) ]
             wandb.log({'log weights': self.env.liks[-1] + self.env.p_log_probs[-1] - q_log_prob})
+            wandb.log({'likelihood reward': self.env.liks[-1]})
+            wandb.log({'prior reward': self.env.p_log_probs[-1]})
+            wandb.log({'total reward': self.env.rewards[-1]})
 
         return True
 
@@ -909,7 +912,7 @@ def get_rl_output(linear_gaussian_env_type, table, ys, dim, sample, model_name, 
                                        using_entropy_loss=(loss_type==ENTROPY_LOSS),
                                        ys=ys, traj_length=traj_length, sample=sample)
 
-        eval_obj = rl_estimate(ys, dim=dim, N=NUM_SAMPLES*traj_length, model_name=model_name,
+        eval_obj = rl_estimate(ys, dim=dim, N=NUM_SAMPLES*traj_length**1, model_name=model_name,
                                env=env, traj_length=traj_length)
         # add rl confidence interval
         rl_estimator = rl_output.add_rl_estimator(running_log_estimates=eval_obj.running_log_estimates,
@@ -1548,6 +1551,15 @@ def execute_state_occupancy(traj_length, ent_coef, loss_type):
     plot_state_occupancy(state_occupancies=[(state_occupancy, 'RL agent'), (filtering_state_occupancy, 'Filtering Posterior')],
                          quantiles=quantiles, traj_length=traj_length, ent_coef=ent_coef, loss_type=loss_type)
 
+def execute_3d_state_occupancy(traj_length, ent_coef, loss_type):
+    model_name = get_model_name(traj_length=traj_length, dim=1, ent_coef=ent_coef, loss_type=loss_type)
+    state_occupancy = sample_empirical_state_occupancy(traj_length, model_name)
+    filtering_state_occupancy = sample_filtering_state_occupancy(traj_length, model_name)
+    quantiles = torch.tensor([0.05, 0.5, 0.95], dtype=state_occupancy.dtype)
+    plot_3d_state_occupancy(state_occupancy_dict={'RL agent':state_occupancy, 'Filtering Posterior':filtering_state_occupancy},
+                            quantiles=quantiles, traj_length=traj_length, ent_coef=ent_coef, loss_type=loss_type,
+                            today_dir=TODAY)
+
 def evaluate_agent(linear_gaussian_env_type, traj_length, dim, model_name):
     table = create_dimension_table(torch.tensor([dim]), random=False)
     posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
@@ -1621,7 +1633,7 @@ if __name__ == "__main__":
                    clip_range=clip_range, linear_gaussian_env_type=linear_gaussian_env_type)
     elif subroutine == 'evaluate_agent':
         print('executing: {}'.format('evaluate_agent'))
-        evaluate_agent(linear_guassian_env_type, traj_length, dim, model_name)
+        evaluate_agent(linear_gaussian_env_type, traj_length, dim, model_name)
     elif subroutine == 'ess_traj':
         print('executing: {}'.format('ess_traj'))
         traj_lengths = torch.cat([torch.arange(2, 11), torch.arange(12, 17)])
@@ -1665,6 +1677,9 @@ if __name__ == "__main__":
     elif subroutine == 'state_occupancy':
         print('executing: {}'.format('state_occupancy'))
         execute_state_occupancy(traj_length=traj_length, ent_coef=ent_coef, loss_type=loss_type)
+    elif subroutine == '3d_state_occupancy':
+        print('executing: {}'.format('3d_state_occupancy'))
+        execute_3d_state_occupancy(traj_length=traj_length, ent_coef=ent_coef, loss_type=loss_type)
     else:
         print('executing: {}'.format('custom'))
         table = create_dimension_table(torch.tensor([dim]), random=False)

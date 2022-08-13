@@ -26,7 +26,7 @@ def get_args():
     parser.add_argument('--save_dir', type=str, default='.', help='top level directory in which to save files')
 
     # environment type
-    parser.add_argument('--env_type', type=str, default='AllObservationsLinearGaussianEnv', help='the type of environment')
+    parser.add_argument('--env_type', type=str, default='LinearGaussianEnv', help='the type of environment')
 
     # parse
     args, _ = parser.parse_known_args()

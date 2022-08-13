@@ -40,6 +40,7 @@ class AllObservationsAbstractLinearGaussianEnv(gym.Env):
 
         self.p_log_probs = []
         self.liks = []
+        self.rewards = []
         self.states = []
         self.actions = []
 
@@ -89,6 +90,7 @@ class AllObservationsAbstractLinearGaussianEnv(gym.Env):
         self.actions.append(xt)
         self.states.append(self.prev_state)
         reward = lik_reward.sum() + self.using_entropy_loss * prior_reward.sum()
+        self.rewards.append(reward)
 
         # check done
         done = self.index >= self.traj_length
