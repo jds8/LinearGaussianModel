@@ -19,6 +19,7 @@ from generative_model import y_dist, sample_y, generate_trajectory, \
     # A, Q, C, R, mu_0, Q_0, \
 import wandb
 from linear_gaussian_env import LinearGaussianEnv, LinearGaussianSingleYEnv
+from all_obs_linear_gaussian_env import AllObservationsLinearGaussianEnv
 from math_utils import logvarexp, importance_sampled_confidence_interval, log_effective_sample_size, log_max_weight_proportion, log_mean
 from plot_utils import legend_without_duplicate_labels
 from linear_gaussian_prob_prog import MultiGaussianRandomVariable, GaussianRandomVariable, MultiLinearGaussian, LinearGaussian, VecLinearGaussian
@@ -203,13 +204,16 @@ def train(traj_length, env, dim, ent_coef=1.0, loss_type='forward_kl', learning_
 
     # create policy
 
-    # batch_obs is of shape BATCH_SIZE x (HIDDEN_DIMENSION + 1) x 1 where the middle dimension includes the next y
+    # batch_obs is of shape BATCH_SIZE x (HIDDEN_DIMENSION + 1) x 1 where the middle dimension includes (all of the) ys
     # we only want the x part of the hidden_dimension, so we exclude the y part
-    prior = lambda batch_obs: get_stacked_state_transition_dist(batch_obs[:, 0:-1, :], A=env.A, Q=env.Q)
+    print('assuming that the observation ys have dimensionality 1')
+    prior = lambda batch_obs: get_stacked_state_transition_dist(batch_obs[:, 0:-traj_length-1, :], A=env.A, Q=env.Q)
 
-    model = PPO(LinearActorCriticPolicy, env, ent_coef=ent_coef, policy_kwargs=dict(),
-                device='cpu', verbose=1, loss_type=loss_type, prior=prior,
-                learning_rate=learning_rate, clip_range=clip_range)
+    policy_kwargs = dict(hidden_state_dimension=dim)
+    model = PPO(LinearActorCriticPolicy, env, ent_coef=ent_coef, device='cpu',
+                verbose=1, loss_type=loss_type, prior=prior,
+                learning_rate=learning_rate, clip_range=clip_range,
+                policy_kwargs=policy_kwargs)
 
     # train policy
     model.learn(total_timesteps=RL_TIMESTEPS, callback=CustomCallback(env, verbose=1))
@@ -885,7 +889,7 @@ def get_prior_output(table, ys, dim, sample, traj_length=0):
                                                      idstr=name)
     return OutputWithName(prior_output, name)
 
-def get_rl_output(table, ys, dim, sample, model_name, traj_length=0):
+def get_rl_output(linear_gaussian_env_type, table, ys, dim, sample, model_name, traj_length=0):
     if ys is not None:
         traj_length = len(ys)
     rl_output = ImportanceOutput(traj_length=traj_length, ys=ys, dim=dim)
@@ -901,9 +905,9 @@ def get_rl_output(table, ys, dim, sample, model_name, traj_length=0):
     loss_type = get_loss_type(model_name)
 
     for _ in range(NUM_REPEATS):
-        env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q,
-                                using_entropy_loss=(loss_type==ENTROPY_LOSS),
-                                ys=ys, traj_length=traj_length, sample=sample)
+        env = linear_gaussian_env_type(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q,
+                                       using_entropy_loss=(loss_type==ENTROPY_LOSS),
+                                       ys=ys, traj_length=traj_length, sample=sample)
 
         eval_obj = rl_estimate(ys, dim=dim, N=NUM_SAMPLES*traj_length, model_name=model_name,
                                env=env, traj_length=traj_length)
@@ -1030,9 +1034,10 @@ def plot_convergence(outputs_with_names, traj_length, dim, true, name):
     estimator = output.output[output.name]
     estimate = estimator.compute_evidence_estimate()
 
+    xlen = estimator.running_log_estimate_repeats[0].squeeze().nelement()
     # plot em
-    plt.scatter(x=NUM_SAMPLES, y=true, label='True: {}'.format(true.item()), color='r')
-    plt.scatter(x=NUM_SAMPLES, y=estimate, label='Estimate: {}'.format(estimate.item()), color='b')
+    plt.scatter(x=xlen, y=true, label='True: {}'.format(true.item()), color='r')
+    plt.scatter(x=xlen, y=estimate, label='Estimate: {}'.format(estimate.item()), color='b')
     plt.xlabel('Number of Samples')
     plt.ylabel('Prob. {} Estimate'.format('Evidence'))
     plt.title('Convergence of Prob. {} Estimate to True Prob. {} \n(trajectory length: {}, dimension: {})'.format('Evidence', 'Evidence', traj_length, dim))
@@ -1057,8 +1062,8 @@ def prior_convergence(table, ys, truth, dim):
     traj_length = len(ys)
     plot_convergence([prior_outputs_with_name], traj_length, dim, truth, 'prior')
 
-def rl_convergence(table, ys, truth, dim, model_name):
-    rl_outputs_with_name = get_rl_output(table=table, ys=ys, dim=dim, sample=False, model_name=model_name)
+def rl_convergence(linear_gaussian_env_type, table, ys, truth, dim, model_name):
+    rl_outputs_with_name = get_rl_output(linear_gaussian_env_type, table=table, ys=ys, dim=dim, sample=False, model_name=model_name)
     traj_length = len(ys)
     plot_convergence([rl_outputs_with_name], traj_length, dim, truth, model_name)
 
@@ -1125,12 +1130,13 @@ class PriorConvergence(EvidenceConvergence):
 
 
 class RLConvergence(EvidenceConvergence):
-    def __init__(self, posterior_evidence, dim):
+    def __init__(self, posterior_evidence, dim, linear_gaussian_env_type):
         super(Posterior_Evidence, self).__init__(posterior_evidence, dim)
         self.name = 'RL'
+        self.linear_gaussian_env_type = linear_gaussian_env_type
 
     def get_output_with_name(self, table):
-        return get_rl_output(table=table, ys=self.posterior_evidence.ys, dim=self.dim, sample=False)
+        return get_rl_output(self.linear_gaussian_env_type, table=table, ys=self.posterior_evidence.ys, dim=self.dim, sample=False)
 
 
 def compare_convergence(table, traj_length, dim, epsilons, model_name):
@@ -1220,27 +1226,27 @@ def prior_ess_dim(table, traj_length, dims):
                            num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, dims=dims,
                            xlabel='Latent Dimension', distribution_type=distribution_type, name='prior')
 
-def rl_ess_traj(table, traj_lengths, dim, ent_coef, loss_type):
+def rl_ess_traj(linear_gaussian_env_type, table, traj_lengths, dim, ent_coef, loss_type):
     distribution_type = RL_DISTRIBUTION
     os.makedirs('{}/{}'.format(TODAY, distribution_type), exist_ok=True)
     outputs = []
     for traj_length in traj_lengths:
         model_name = get_model_name(traj_length=traj_length, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
-        outputs += [get_rl_output(table=table, ys=None, dim=dim, sample=True, model_name=model_name, traj_length=traj_length)]
+        outputs += [get_rl_output(linear_gaussian_env_type, table=table, ys=None, dim=dim, sample=True, model_name=model_name, traj_length=traj_length)]
     save_outputs_with_names_traj(outputs, distribution_type,
                                  '{}_{}(traj_lengths_{}_dim_{})'.format(distribution_type, loss_type, traj_lengths, dim))
     make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=dim,
                        num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, traj_lengths=traj_lengths,
                        xlabel='Trajectory Length', distribution_type=distribution_type, name='RL')
 
-def rl_ess_dim(table, traj_length, dims, ent_coef, loss_type):
+def rl_ess_dim(linear_gaussian_env_type, table, traj_length, dims, ent_coef, loss_type):
     distribution_type = RL_DISTRIBUTION
     os.makedirs('{}/{}'.format(TODAY, distribution_type), exist_ok=True)
     outputs = []
     for dim in dims:
         # ys = generate_trajectory(traj_length, A=single_gen_A, Q=single_gen_Q, C=single_gen_C, R=single_gen_R, mu_0=single_gen_mu_0, Q_0=single_gen_Q_0)[0]
         model_name = get_model_name(traj_length=traj_length, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
-        outputs += [get_rl_output(table=table, ys=None, dim=dim, sample=True, model_name=model_name, traj_length=traj_length)]
+        outputs += [get_rl_output(linear_gaussian_env_type, table=table, ys=None, dim=dim, sample=True, model_name=model_name, traj_length=traj_length)]
     save_outputs_with_names_dim(outputs, distribution_type,
                                 '{}_{}(traj_length_{}_dims_{})'.format(distribution_type, loss_type, traj_length, dims))
     make_ess_plot_nice_dim(outputs, fixed_feature_string='traj_length', fixed_feature=traj_length,
@@ -1271,22 +1277,22 @@ def execute_compare_convergence_dim(table, traj_length, epsilons, dims, model_na
                             dim=dim, epsilons=epsilons,
                             model_name=model_name)
 
-def execute_ess_traj(traj_lengths, dim, epsilons, ent_coef, loss_type):
+def execute_ess_traj(linear_gaussian_env_type, traj_lengths, dim, epsilons, ent_coef, loss_type):
     table = create_dimension_table(torch.tensor([dim]), random=False)
     os.makedirs(TODAY, exist_ok=True)
-    rl_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
+    rl_ess_traj(linear_gaussian_env_type, table=table, traj_lengths=traj_lengths, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
     for epsilon in epsilons:
         # posterior_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, epsilon=epsilon)
         posterior_filtering_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, epsilon=epsilon)
     # prior_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim)
 
-def execute_ess_dim(table, traj_length, dims, epsilons, ent_coef, loss_type):
+def execute_ess_dim(linear_gaussian_env_type, table, traj_length, dims, epsilons, ent_coef, loss_type):
     os.makedirs(TODAY, exist_ok=True)
     for epsilon in epsilons:
         # posterior_ess_dim(table=table, traj_length=traj_length, dims=dims, epsilon=epsilon)
         posterior_filtering_ess_dim(table=table, traj_length=traj_length, dims=dims, epsilon=epsilon)
     # prior_ess_dim(table=table, traj_length=traj_length, dims=dims)
-    # rl_ess_dim(table=table, traj_length=traj_length, dims=dims, ent_coef=ent_coef, loss_type=loss_type)
+    # rl_ess_dim(linear_gaussian_env_type, table=table, traj_length=traj_length, dims=dims, ent_coef=ent_coef, loss_type=loss_type)
 
 def trial_evidence(table, traj_length, dim):
     posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
@@ -1329,7 +1335,7 @@ def verify_filtering_posterior():
         score += td.condition(y_values=ys[i:], x_value=actions[i]).log_prob(action)
     print('filtering posterior score: ', score)
 
-def test_train(traj_length, dim, ent_coef, loss_type, learning_rate, clip_range):
+def test_train(traj_length, dim, ent_coef, loss_type, learning_rate, clip_range, linear_gaussian_env_type):
     table = create_dimension_table(torch.tensor([dim]), random=False)
     posterior_evidence = compute_evidence(table, traj_length, dim)
 
@@ -1340,9 +1346,9 @@ def test_train(traj_length, dim, ent_coef, loss_type, learning_rate, clip_range)
     mu_0 = table[dim]['mu_0']
     Q_0 = table[dim]['Q_0']
 
-    env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0,
-                            using_entropy_loss=(loss_type==ENTROPY_LOSS),
-                            ys=posterior_evidence.ys, sample=True)
+    env = linear_gaussian_env_type(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0,
+                                   using_entropy_loss=(loss_type==ENTROPY_LOSS),
+                                   ys=posterior_evidence.ys, sample=True)
     train(traj_length=traj_length, env=env, dim=dim, ent_coef=ent_coef, loss_type=loss_type,
           learning_rate=learning_rate, clip_range=clip_range)
 
@@ -1576,6 +1582,12 @@ def plot_ess_from_data(filenames):
     wandb.save('{}/ess_{}.pdf'.format(TODAY, ess_type))
     plt.close()
 
+def get_env_type_from_arg(env_type_arg):
+    if env_type_arg == 'AllObservationsLinearGaussianEnv':
+        return AllObservationsLinearGaussianEnv
+    elif env_type_arg == 'LinearGaussianEnv':
+        return LinearGaussianEnv
+
 
 if __name__ == "__main__":
     args, _ = get_args()
@@ -1597,6 +1609,7 @@ if __name__ == "__main__":
     filenames = args.filenames
     ess_dims = args.ess_dims
     ess_traj_lengths = args.ess_traj_lengths
+    linear_gaussian_env_type = get_env_type_from_arg(args.env_type)
 
     learning_rate = args.learning_rate
     clip_range = args.clip_range
@@ -1605,7 +1618,7 @@ if __name__ == "__main__":
         print('executing: {}'.format('train_agent'))
         test_train(traj_length=traj_length, dim=dim, ent_coef=ent_coef,
                    loss_type=loss_type, learning_rate=learning_rate,
-                   clip_range=clip_range)
+                   clip_range=clip_range, linear_gaussian_env_type=linear_gaussian_env_type)
     elif subroutine == 'evaluate_agent':
         print('executing: {}'.format('evaluate_agent'))
         evaluate_agent(traj_length, dim, model_name)
@@ -1613,7 +1626,7 @@ if __name__ == "__main__":
         print('executing: {}'.format('ess_traj'))
         traj_lengths = torch.cat([torch.arange(2, 11), torch.arange(12, 17)])
         epsilons = [-5e-3]
-        execute_ess_traj(traj_lengths=traj_lengths, dim=dim, epsilons=epsilons, ent_coef=ent_coef, loss_type=loss_type)
+        execute_ess_traj(linear_gaussian_env_type, traj_lengths=traj_lengths, dim=dim, epsilons=epsilons, ent_coef=ent_coef, loss_type=loss_type)
     elif subroutine == 'posterior_filtering_ess_traj':
         print('executing: {}'.format('posterior_filtering_ess_traj'))
         epsilons = [-5e-3]
@@ -1626,13 +1639,13 @@ if __name__ == "__main__":
     elif subroutine == 'rl_ess_traj':
         print('executing: {}'.format('rl_ess_traj'))
         table = create_dimension_table(torch.tensor([dim]), random=False)
-        rl_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
+        rl_ess_traj(linear_gaussian_env_type, table=table, traj_lengths=ess_traj_lengths, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
     elif subroutine == 'ess_dim':
         print('executing: {}'.format('ess_dim'))
         dims = [x for x in range(1, 50)]
         epsilons = [5e-3]
         table = create_dimension_table(torch.tensor(dims), random=False)
-        execute_ess_dim(table, traj_length=traj_length, dims=dims, epsilons=epsilons, ent_coef=ent_coef, loss_type=loss_type)
+        execute_ess_dim(linear_gaussian_env_type, table, traj_length=traj_length, dims=dims, epsilons=epsilons, ent_coef=ent_coef, loss_type=loss_type)
     elif subroutine == 'posterior_filtering_ess_dim':
         print('executing: {}'.format('posterior_filtering_ess_dim'))
         epsilons = [-5e-3]
@@ -1645,7 +1658,7 @@ if __name__ == "__main__":
     elif subroutine == 'rl_ess_dim':
         print('executing: {}'.format('rl_ess_dim'))
         table = create_dimension_table(torch.tensor(ess_dims), random=False)
-        rl_ess_dim(table=table, traj_length=traj_length, dims=ess_dims, ent_coef=ent_coef, loss_type=loss_type)
+        rl_ess_dim(linear_gaussian_env_type, table=table, traj_length=traj_length, dims=ess_dims, ent_coef=ent_coef, loss_type=loss_type)
     elif subroutine == 'load_ess_data':
         print('executing: {}'.format('load_ess_dim'))
         plot_ess_from_data(filenames)
