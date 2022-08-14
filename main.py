@@ -23,9 +23,9 @@ from all_obs_linear_gaussian_env import AllObservationsLinearGaussianEnv
 from math_utils import logvarexp, importance_sampled_confidence_interval, log_effective_sample_size, log_max_weight_proportion, log_mean
 from plot_utils import legend_without_duplicate_labels
 from linear_gaussian_prob_prog import MultiGaussianRandomVariable, GaussianRandomVariable, MultiLinearGaussian, LinearGaussian, VecLinearGaussian
-from evaluation import EvaluationObject, evaluate
+from evaluation import EvaluationObject, evaluate, evaluate_filtering_posterior
 from dimension_table import create_dimension_table
-from filtering_posterior import compute_filtering_posteriors, evaluate_filtering_posterior
+from filtering_posterior import compute_filtering_posteriors
 import pandas as pd
 from get_args import get_args
 from pathlib import Path
@@ -189,6 +189,11 @@ class CustomCallback(BaseCallback):
             wandb.log({'prior reward': self.env.p_log_probs[-1]})
             wandb.log({'total reward': self.env.rewards[-1]})
 
+            # compute KL between filtering posterior and policy at the last state (env.index - 1)
+            td = self.env.tds[self.env.index-1]
+            kl = compute_conditional_kl(td_fps=td, policy=self.model.policy, prev_xt=self.env.prev_xts[-2], ys=self.env.ys[self.env.index-1:])
+            wandb.log({'kl divergence with filtering posterior': kl})
+
         return True
 
 def get_model_name(traj_length, dim, ent_coef, loss_type):
@@ -210,7 +215,8 @@ def train(traj_length, env, dim, ent_coef=1.0, loss_type='forward_kl', learning_
     # batch_obs is of shape BATCH_SIZE x (HIDDEN_DIMENSION + 1) x 1 where the middle dimension includes (all of the) ys
     # we only want the x part of the hidden_dimension, so we exclude the y part
     print('assuming that the observation ys have dimensionality 1')
-    prior = lambda batch_obs: get_stacked_state_transition_dist(batch_obs[:, 0:-traj_length-1, :], A=env.A, Q=env.Q)
+    # prior = lambda batch_obs: get_stacked_state_transition_dist(batch_obs[:, 0:-traj_length-1, :], A=env.A, Q=env.Q)
+    prior = lambda batch_obs: get_stacked_state_transition_dist(batch_obs[:, 0:-1, :], A=env.A, Q=env.Q)
 
     policy_kwargs = dict(hidden_state_dimension=dim)
     model = PPO(LinearActorCriticPolicy, env, ent_coef=ent_coef, device='cpu',
@@ -912,7 +918,7 @@ def get_rl_output(linear_gaussian_env_type, table, ys, dim, sample, model_name, 
                                        using_entropy_loss=(loss_type==ENTROPY_LOSS),
                                        ys=ys, traj_length=traj_length, sample=sample)
 
-        eval_obj = rl_estimate(ys, dim=dim, N=NUM_SAMPLES*traj_length**2, model_name=model_name,
+        eval_obj = rl_estimate(ys, dim=dim, N=NUM_SAMPLES*traj_length**0, model_name=model_name,
                                env=env, traj_length=traj_length)
         # add rl confidence interval
         rl_estimator = rl_output.add_rl_estimator(running_log_estimates=eval_obj.running_log_estimates,
@@ -1379,6 +1385,7 @@ def sample_variance_ratios(traj_length, model_name):
     state_occupancy = []
 
     # variance ratios
+    mean_diffs = []
     variance_ratios = []
     for k in range(NUM_SAMPLES):
         # generate a set of ys using the true model parameters
@@ -1391,22 +1398,46 @@ def sample_variance_ratios(traj_length, model_name):
 
         # get first obs
         xt = traj_xs[0].reshape(1)
+        y0 = traj_ys[0]
+        obs = torch.cat([torch.zeros_like(xt), y0.reshape(1)]).reshape(1, dim+1)
 
-        # collect ratio of variance at each step
-        variance_ratio_steps = torch.tensor(td.covariance())
+        # collect ratio of mean and variance at each step
+        policy_dist_zero = policy.get_distribution(obs).distribution
+        mean_diff_steps = torch.tensor(td.mean() - policy_dist_zero.mean.detach())
+        variance_ratio_steps = torch.tensor(td.covariance() / policy_dist_zero.scale)
         for j in range(1, len(tds)):
             td_fps = tds[j]
             y = traj_ys[j:]
+
+            # filtering dis
             dst = td_fps.condition(y_values=y, x_value=xt)
+            filtering_mean = dst.mean()
             filtering_variance = dst.covariance()
+
+            # policy dist
             obs = torch.cat([xt, y[0].reshape(1)]).reshape(1, dim+1)
-            rl_variance = policy.get_distribution(obs).distribution.scale.detach()
+            policy_dist = policy.get_distribution(obs).distribution
+
+            # mean ratio
+            rl_mean = policy_dist.mean
+            mean_diff = (filtering_mean - rl_mean).reshape(1, 1)
+            mean_diff_steps = torch.cat((mean_diff_steps.reshape(1, -1), mean_diff), dim=1)
+
+            # variance ratio
+            rl_variance = policy_dist.scale.detach()
             variance_ratio = (filtering_variance / rl_variance).reshape(1, 1)
             variance_ratio_steps = torch.cat((variance_ratio_steps.reshape(1, -1), variance_ratio), dim=1)
+
+            print('filtering_variance: {}'.format(filtering_variance))
+            print('rl_variance: {}'.format(rl_variance))
+            # if torch.abs(variance_ratio[0, 0] - variance_ratio_steps[0, 0]).item() > 0.001:
+            #     import pdb; pdb.set_trace()
+
             # get next hidden state
             xt = traj_xs[j].reshape(1)
+        mean_diffs.append(mean_diff_steps)
         variance_ratios.append(variance_ratio_steps)
-    return torch.stack(variance_ratios).reshape(NUM_SAMPLES, -1)
+    return torch.stack(mean_diffs).reshape(NUM_SAMPLES, -1), torch.stack(variance_ratios).reshape(NUM_SAMPLES, -1)
 
 def sample_empirical_state_occupancy(traj_length, model_name):
     """
@@ -1433,7 +1464,7 @@ def sample_empirical_state_occupancy(traj_length, model_name):
 
     for k in range(NUM_SAMPLES):
         # generate a set of ys using the true model parameters
-        traj_ys, traj_xs = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0:2]
+        traj_ys, _ = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0:2]
         # create filtering distribution given the ys
         tds, traj_ys = compute_filtering_posteriors(table=table, num_obs=traj_length, dim=dim, ys=traj_ys)
 
@@ -1484,7 +1515,7 @@ def sample_filtering_state_occupancy(traj_length, td):
 
     for k in range(NUM_SAMPLES):
         # generate a set of ys using the true model parameters
-        traj_ys, traj_xs = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0:2]
+        traj_ys, _ = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0:2]
         # create filtering distribution given the ys
         tds, traj_ys = compute_filtering_posteriors(table=table, num_obs=traj_length, dim=dim, ys=traj_ys)
 
@@ -1509,17 +1540,31 @@ def sample_filtering_state_occupancy(traj_length, td):
 
     return torch.stack(state_occupancy, dim=1)
 
+def plot_mean_diffs(means, quantiles, traj_length, ent_coef, loss_type):
+    basic_plot(data=means, quantiles=quantiles, traj_length=traj_length, ent_coef=ent_coef, loss_type=loss_type,
+               label='mean(filtering posterior) - mean(rl proposal)',
+               xlabel='Trajectory Step (of {})'.format(traj_length), ylabel='Mean Difference',
+               title='Difference of Means of Filtering Posterior and RL Proposal\n(Loss Type: {} Coef: {})'.format(loss_type, ent_coef),
+               save_path='{}/Difference of Means traj_len: {} ent_coef: {} loss_type: {}.pdf'.format(TODAY, traj_length, ent_coef, loss_type))
+
 def plot_variance_ratios(vrs, quantiles, traj_length, ent_coef, loss_type):
-    lwr, med, upr = torch.quantile(vrs, quantiles, dim=0)
+    basic_plot(data=vrs, quantiles=quantiles, traj_length=traj_length, ent_coef=ent_coef, loss_type=loss_type,
+               label='var(filtering posterior) / var(rl proposal)',
+               xlabel='Trajectory Step (of {})'.format(traj_length), ylabel='Variance Ratio',
+               title='Ratio of Variances of Filtering Posterior and RL Proposal\n(Loss Type: {} Coef: {})'.format(loss_type, ent_coef),
+               save_path='{}/Variance Ratio traj_len: {} ent_coef: {} loss_type: {}.pdf'.format(TODAY, traj_length, ent_coef, loss_type))
+
+def basic_plot(data, quantiles, traj_length, ent_coef, loss_type, label, xlabel, ylabel, title, save_path):
+    lwr, med, upr = torch.quantile(data, quantiles, dim=0)
     x_data = torch.arange(1, traj_length+1)
-    plt.plot(x_data, med.squeeze(), label='var(filtering posterior) / var(rl proposal)')
+    plt.plot(x_data, med.squeeze(), label=label)
     plt.fill_between(x_data, y1=lwr, y2=upr, alpha=0.3)
-    plt.xlabel('Trajectory Step (of {})'.format(traj_length))
-    plt.ylabel('Variance Ratio')
-    plt.title('Ratio of Variances of Filtering Posterior and RL Proposal\n(Loss Type: {} Coef: {})'.format(loss_type, ent_coef))
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+    plt.title(title)
     plt.legend()
-    plt.savefig('{}/Variance Ratio traj_len: {} ent_coef: {} loss_type: {}.pdf'.format(TODAY, traj_length, ent_coef, loss_type))
-    wandb.save('{}/Variance Ratio traj_len: {} ent_coef: {} loss_type: {}.pdf'.format(TODAY, traj_length, ent_coef, loss_type))
+    plt.savefig(save_path)
+    wandb.save(save_path)
     plt.close()
 
 def plot_state_occupancy(state_occupancies, quantiles, traj_length, ent_coef, loss_type):
@@ -1537,10 +1582,10 @@ def plot_state_occupancy(state_occupancies, quantiles, traj_length, ent_coef, lo
     wandb.save('{}/State Occupancy traj_len: {} ent_coef: {} loss_type: {}.pdf'.format(TODAY, traj_length, ent_coef, loss_type))
     plt.close()
 
-def execute_variance_ratio_runs(t_len, ent_coef, loss_type):
-    model_name = MODEL.format(ent_coef, loss_type, t_len, 1)
-    vrs = sample_variance_ratios(traj_length=t_len, model_name=model_name)
+def execute_variance_ratio_runs(t_len, ent_coef, loss_type, model_name):
+    means, vrs = sample_variance_ratios(traj_length=t_len, model_name=model_name)
     quantiles = torch.tensor([0.05, 0.5, 0.95])
+    plot_mean_diffs(means=means, quantiles=quantiles, traj_length=t_len, ent_coef=ent_coef, loss_type=loss_type)
     plot_variance_ratios(vrs=vrs, quantiles=quantiles, traj_length=t_len, ent_coef=ent_coef, loss_type=loss_type)
 
 def execute_state_occupancy(traj_length, ent_coef, loss_type):
@@ -1599,6 +1644,21 @@ def get_env_type_from_arg(env_type_arg):
         return AllObservationsLinearGaussianEnv
     elif env_type_arg == 'LinearGaussianEnv':
         return LinearGaussianEnv
+
+def compute_conditional_kl(td_fps, policy, prev_xt, ys):
+    # filtering dist
+    dst = td_fps.condition(y_values=ys, x_value=prev_xt)
+    filtering_dist = dst.get_dist()
+
+    # policy dist
+    obs = torch.cat([prev_xt, ys[0].reshape(1)]).reshape(1, dim+1)
+    pd = policy.get_distribution(obs).distribution
+    covs = []
+    for i in range(pd.scale.shape[0]):
+        covs.append(torch.diag(pd.scale[i, :]))
+    policy_dist = dist.MultivariateNormal(pd.mean, torch.stack(covs))
+
+    return dist.kl_divergence(filtering_dist, policy_dist)
 
 
 if __name__ == "__main__":
@@ -1680,6 +1740,9 @@ if __name__ == "__main__":
     elif subroutine == '3d_state_occupancy':
         print('executing: {}'.format('3d_state_occupancy'))
         execute_3d_state_occupancy(traj_length=traj_length, ent_coef=ent_coef, loss_type=loss_type)
+    elif subroutine == 'variance_ratio':
+        print('executing: {}'.format('variance_ratio'))
+        execute_variance_ratio_runs(t_len=traj_length, ent_coef=ent_coef, loss_type=loss_type, model_name=model_name)
     else:
         print('executing: {}'.format('custom'))
         table = create_dimension_table(torch.tensor([dim]), random=False)

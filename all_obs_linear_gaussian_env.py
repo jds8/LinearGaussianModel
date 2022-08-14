@@ -6,6 +6,7 @@ import torch.distributions as dist
 import numpy as np
 from generative_model import y_dist, sample_y, generate_trajectory, score_y, score_initial_state, score_state_transition
 from linear_gaussian_prob_prog import GaussianRandomVariable, LinearGaussian
+from filtering_posterior import _compute_filtering_posteriors
 
 
 class AllObservationsAbstractLinearGaussianEnv(gym.Env):
@@ -43,9 +44,13 @@ class AllObservationsAbstractLinearGaussianEnv(gym.Env):
         self.rewards = []
         self.states = []
         self.actions = []
+        self.prev_xts = [self.prev_xt]
 
         # whether we are using entropy or KL regularization
         self.using_entropy_loss = torch.tensor(using_entropy_loss, dtype=torch.float32)
+
+        # compute analytical filtering distributions
+        self.tds = None
 
     def compute_conditionals(self):
         self.w = GaussianRandomVariable(mu=0., sigma=torch.sqrt(self.Q), name='w')
@@ -103,6 +108,7 @@ class AllObservationsAbstractLinearGaussianEnv(gym.Env):
 
         # update previous xt
         self.prev_xt = xt
+        self.prev_xts.append(self.prev_xt)
 
         # update num ys to mask
         self.num_mask += 1
@@ -123,9 +129,16 @@ class AllObservationsAbstractLinearGaussianEnv(gym.Env):
         self.states = []
         self.actions = []
         self.p_log_probs = []
+        self.liks = []
+        self.rewards = []
+        self.prev_xts = [self.prev_xt]
 
         if self.sample:
             self.ys = self.generate()
+
+        # create filtering distribution given the ys
+        self.tds, _ = _compute_filtering_posteriors(A=self.A, Q=self.Q, C=self.C, R=self.R, mu_0=self.mu_0, Q_0=self.Q_0,
+                                                    num_obs=len(self.ys), dim=self.prev_xt.nelement(), ys=self.ys)
 
         prev_state_shape = self.prev_xt.nelement()
         self.num_mask = torch.tensor(0.)
