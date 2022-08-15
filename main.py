@@ -30,7 +30,7 @@ import pandas as pd
 from get_args import get_args
 from pathlib import Path
 from data_loader import load_ess_data
-from plot import plot_ess_data, plot_3d_state_occupancy
+from plot import plot_ess_data, plot_state_occupancy, plot_3d_state_occupancy
 from linear_policy import LinearActorCriticPolicy
 from rl_models import load_rl_model
 
@@ -1553,21 +1553,6 @@ def basic_plot(data, quantiles, traj_length, ent_coef, loss_type, label, xlabel,
     wandb.save(save_path)
     plt.close()
 
-def plot_state_occupancy(state_occupancies, quantiles, traj_length, ent_coef, loss_type):
-    for state_occupancy, name in state_occupancies:
-        quants = torch.tensor(quantiles, dtype=state_occupancy.dtype)
-        lwr, med, upr = torch.quantile(state_occupancy, quants, dim=0)
-        x_data = torch.arange(1, traj_length+1)
-        plt.plot(x_data, med.squeeze(), label=name)
-        plt.fill_between(x_data, y1=lwr, y2=upr, alpha=0.3)
-    plt.xlabel('Trajectory Step (of {})'.format(traj_length))
-    plt.ylabel('xt')
-    plt.title('Values of state xt at each time step t\n(Loss Type: {} Coef: {})'.format(loss_type, ent_coef))
-    plt.legend()
-    plt.savefig('{}/State Occupancy traj_len: {} ent_coef: {} loss_type: {}.pdf'.format(TODAY, traj_length, ent_coef, loss_type))
-    wandb.save('{}/State Occupancy traj_len: {} ent_coef: {} loss_type: {}.pdf'.format(TODAY, traj_length, ent_coef, loss_type))
-    plt.close()
-
 def execute_variance_ratio_runs(t_len, ent_coef, loss_type, model_name):
     means, vrs = sample_variance_ratios(traj_length=t_len, model_name=model_name)
     quantiles = torch.tensor([0.05, 0.5, 0.95])
@@ -1654,7 +1639,7 @@ def compute_conditional_kl(td_fps, policy, prev_xt, ys):
 
     return dist.kl_divergence(filtering_dist, policy_dist)
 
-def execute_evaluate_agent_until(linear_gaussian_env_type, traj_lengths, dim, loss_type, ent_coef):
+def execute_evaluate_agent_until(linear_gaussian_env_type, traj_lengths, dim, loss_type, ent_coef, epsilon):
     table = create_dimension_table(torch.tensor([dim]), random=False)
     num_samples_data = []
     for traj_length in traj_lengths:
@@ -1665,7 +1650,7 @@ def execute_evaluate_agent_until(linear_gaussian_env_type, traj_lengths, dim, lo
             model_name = get_model_name(traj_length=traj_length, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
             eval_obj = evaluate_agent_until(posterior_evidence, linear_gaussian_env_type, traj_length=traj_length,
                                             dim=dim, model_name=model_name,
-                                            using_entropy_loss=(loss_type == ENTROPY_LOSS), epsilon=0.8)
+                                            using_entropy_loss=(loss_type == ENTROPY_LOSS), epsilon=epsilon)
 
             # add rl estimator
             rl_estimator = rl_output.add_rl_estimator(running_log_estimates=eval_obj.running_log_estimates,
@@ -1680,7 +1665,7 @@ def execute_evaluate_agent_until(linear_gaussian_env_type, traj_lengths, dim, lo
     plt.plot(traj_lengths, num_samples_data)
     plt.xlabel('Trajectory Length')
     plt.ylabel('Num Samples')
-    plt.title('Num Samples Required for |truth / estimate| - 1 < eps')
+    plt.title('Num Samples Required for |truth / estimate| - 1 < {}'.format(epsilon))
 
     save_path = '{}/ent_coef_{}_loss_type_{}_dim_{}RequiredSampleSize.pdf'.format(rl_estimator.save_dir, ent_coef, loss_type, dim)
     plt.savefig(save_path)
@@ -1715,6 +1700,7 @@ if __name__ == "__main__":
     clip_range = args.clip_range
 
     NUM_SAMPLES = args.num_samples
+    epsilon = args.epsilon
 
     if subroutine == 'train_agent':
         print('executing: {}'.format('train_agent'))
@@ -1734,7 +1720,7 @@ if __name__ == "__main__":
         print('executing: {}'.format('evaluate_until'))
         execute_evaluate_agent_until(linear_gaussian_env_type=linear_gaussian_env_type,
                                      traj_lengths=ess_traj_lengths, dim=dim, loss_type=loss_type,
-                                     ent_coef=ent_coef)
+                                     ent_coef=ent_coef, epsilon=epsilon)
     elif subroutine == 'ess_traj':
         print('executing: {}'.format('ess_traj'))
         traj_lengths = torch.cat([torch.arange(2, 11), torch.arange(12, 17)])
