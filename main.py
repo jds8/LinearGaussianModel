@@ -1569,7 +1569,8 @@ def execute_state_occupancy(traj_length, ent_coef):
     plot_state_occupancy(state_occupancies=[(forward_state_occupancy, 'Forward KL agent'),
                                             (reverse_state_occupancy, 'Reverse KL agent'),
                                             (filtering_state_occupancy, 'Filtering Posterior')],
-                         quantiles=quantiles, traj_length=traj_length, ent_coef=ent_coef, loss_type=loss_type)
+                         quantiles=quantiles, traj_length=traj_length, ent_coef=ent_coef, loss_type=loss_type,
+                         today_dir=TODAY)
 
 def execute_3d_state_occupancy(traj_length, ent_coef):
     forward_model_name = get_model_name(traj_length=traj_length, dim=1, ent_coef=ent_coef, loss_type='forward_kl')

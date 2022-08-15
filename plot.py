@@ -30,7 +30,7 @@ def plot_ess_data(data_obj: DataWithColumns):
     plt.plot(x_vals, med.squeeze(), label=data_label)
     plt.fill_between(x_vals, y1=lower_ci, y2=upper_ci, alpha=0.3)
 
-def plot_state_occupancy(state_occupancies, quantiles, traj_length, ent_coef, loss_type):
+def plot_state_occupancy(state_occupancies, quantiles, traj_length, ent_coef, loss_type, today_dir):
     for state_occupancy, name in state_occupancies:
         quants = torch.tensor(quantiles, dtype=state_occupancy.dtype)
         lwr, med, upr = torch.quantile(state_occupancy, quants, dim=0)
@@ -41,8 +41,8 @@ def plot_state_occupancy(state_occupancies, quantiles, traj_length, ent_coef, lo
     plt.ylabel('xt')
     plt.title('Values of state xt at each time step t\n(Loss Type: {} Coef: {})'.format(loss_type, ent_coef))
     plt.legend()
-    plt.savefig('{}/State Occupancy traj_len: {} ent_coef: {} loss_type: {}.pdf'.format(TODAY, traj_length, ent_coef, loss_type))
-    wandb.save('{}/State Occupancy traj_len: {} ent_coef: {} loss_type: {}.pdf'.format(TODAY, traj_length, ent_coef, loss_type))
+    plt.savefig('{}/State Occupancy traj_len: {} ent_coef: {} loss_type: {}.pdf'.format(today_dir, traj_length, ent_coef, loss_type))
+    wandb.save('{}/State Occupancy traj_len: {} ent_coef: {} loss_type: {}.pdf'.format(today_dir, traj_length, ent_coef, loss_type))
     plt.close()
 
 def plot_3d_state_occupancy(state_occupancy_dict, quantiles, traj_length, ent_coef, loss_type, today_dir):
