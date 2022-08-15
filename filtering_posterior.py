@@ -111,8 +111,8 @@ def old_compute_filtering_posterior(t, num_obs, xs, ys, p_y_next_given_x, A, C):
 
     return FilteringPosterior(numerator, denominator.left + [x for x in [denominator.right] if x is not None])
 
-def compute_filtering_posterior(t, num_obs, xs, ys, A, C):
-    rest_of_ys = ys[t+1:]
+def compute_filtering_posterior(t, num_obs, xs, ys, A, C, m=0):
+    rest_of_ys = ys[t+1:] if m == 0 else ys[t+1:t+m]
     rvars = [ys[t], xs[t]] + rest_of_ys
     rvars += [xs[t-1]] if t > 0 else []
     jvs = JointVariables(rvars, A=A, C=C)
@@ -145,7 +145,7 @@ def old_compute_filtering_posteriors(table, num_obs, dim, ys=None):
         fps.append(filtering_posterior)
     return fps, ys
 
-def compute_filtering_posteriors(table, num_obs, dim, ys=None):
+def compute_filtering_posteriors(table, num_obs, dim, m=0, ys=None):
     A = table[dim]['A']
     Q = table[dim]['Q']
     C = table[dim]['C']
@@ -153,9 +153,9 @@ def compute_filtering_posteriors(table, num_obs, dim, ys=None):
     mu_0 = table[dim]['mu_0']
     Q_0 = table[dim]['Q_0']
 
-    return _compute_filtering_posteriors(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, num_obs=num_obs, dim=dim, ys=ys)
+    return _compute_filtering_posteriors(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, num_obs=num_obs, dim=dim, m=m, ys=ys)
 
-def _compute_filtering_posteriors(A, Q, C, R, mu_0, Q_0, num_obs, dim, ys=None):
+def _compute_filtering_posteriors(A, Q, C, R, mu_0, Q_0, num_obs, dim, m=0, ys=None):
     if ys is None:
         ys = generate_trajectory(num_obs, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0]
 
@@ -169,7 +169,7 @@ def _compute_filtering_posteriors(A, Q, C, R, mu_0, Q_0, num_obs, dim, ys=None):
 
     fps = []
     for t in range(num_obs):
-        filtering_posterior = compute_filtering_posterior(t, num_obs, lgv.xs, lgv.ys, A, C)
+        filtering_posterior = compute_filtering_posterior(t, num_obs, lgv.xs, lgv.ys, A, C, m=m)
         fps.append(filtering_posterior)
     return fps, ys
 
@@ -191,13 +191,7 @@ def test_filtering_posterior():
     fp_dist = fp2.condition(mu)
     fp_dist.mean(value=torch.tensor(1.))
 
-
-if __name__ == "__main__":
-    dim = 1
-    num_obs = 2
-    table = create_dimension_table(torch.tensor([dim]), random=False)
-    fps, ys = compute_filtering_posteriors(table=table, num_obs=num_obs, dim=dim)
-
+def compare_truncated_posterior(table, num_obs, dim, condition_length):
     A = table[dim]['A']
     Q = table[dim]['Q']
     C = table[dim]['C']
@@ -205,8 +199,46 @@ if __name__ == "__main__":
     mu_0 = table[dim]['mu_0']
     Q_0 = table[dim]['Q_0']
 
-    from linear_gaussian_env import LinearGaussianEnv
-    env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, ys=ys, sample=True)
+    # generate a set of ys using the true model parameters
+    traj_ys, traj_xs = generate_trajectory(num_obs, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0:2]
 
-    from evaluation import evaluate_filtering_posterior
-    evaluate_filtering_posterior(ys=ys, N=2, tds=fps, env=env)
+    fps, _ = compute_filtering_posteriors(table, num_obs, dim, m=0, ys=traj_ys)
+    fps_m, _ = compute_filtering_posteriors(table, num_obs, dim, m=condition_length, ys=traj_ys)
+    # we only want to look at trajectories of length num_obs - condition_length
+    fps_m = fps_m[0:num_obs-condition_length]
+
+    kls = []
+    for i, (f, f_m) in enumerate(zip(fps, fps_m)):
+        if i == 0:
+            td = f.condition(y_values=traj_ys)
+            td_m = f_m.condition(y_values=traj_ys[0:condition_length])
+        else:
+            prev_xt = traj_xs[i-1].reshape(1)
+            td = f.condition(y_values=traj_ys[i:], x_value=prev_xt)
+            td_m = f_m.condition(y_values=traj_ys[i:i+condition_length], x_value=prev_xt)
+
+        kls.append(dist.kl_divergence(td.get_dist(), td_m.get_dist()))
+    return kls
+
+
+if __name__ == "__main__":
+    dim = 1
+    num_obs = 20
+    table = create_dimension_table(torch.tensor([dim]), random=False)
+    for condition_length in np.arange(2, 15):
+        kls = compare_truncated_posterior(table, num_obs, dim, condition_length=condition_length)
+        print(kls)
+
+
+    # A = table[dim]['A']
+    # Q = table[dim]['Q']
+    # C = table[dim]['C']
+    # R = table[dim]['R']
+    # mu_0 = table[dim]['mu_0']
+    # Q_0 = table[dim]['Q_0']
+
+    # from linear_gaussian_env import LinearGaussianEnv
+    # env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, ys=ys, sample=True)
+
+    # from evaluation import evaluate_filtering_posterior
+    # evaluate_filtering_posterior(ys=ys, N=2, tds=fps, env=env)

@@ -10,7 +10,7 @@ from filtering_posterior import _compute_filtering_posteriors
 
 
 class AllObservationsAbstractLinearGaussianEnv(gym.Env):
-    def __init__(self, A, Q, C, R, mu_0, Q_0, using_entropy_loss=False, traj_length=1, ys=None, sample=False):
+    def __init__(self, A, Q, C, R, mu_0, Q_0, condition_length, using_entropy_loss=False, traj_length=1, ys=None, sample=False):
         # data
         self.ys = ys
         y_len = len(ys) if ys is not None else 0
@@ -20,12 +20,10 @@ class AllObservationsAbstractLinearGaussianEnv(gym.Env):
         # define action space
         self.action_space = gym.spaces.Box(low=-math.inf, high=math.inf, shape=(mu_0.shape[0],), dtype=float)
 
-        # observations are the concatenation of (previous state, an integer representing number of ys to mask, total number of ys * dimensionality of a y)
-        self.observation_space = gym.spaces.Box(low=-math.inf, high=math.inf, shape=(mu_0.shape[0] + 1 + self.traj_length * R.shape[0], 1), dtype=float)
+        self.observation_space = gym.spaces.Box(low=-math.inf, high=math.inf, shape=(mu_0.shape[0] + condition_length * R.shape[0], 1), dtype=float)
 
         # current index into data and max index
         self.index = 0
-        self.num_mask = torch.tensor(0.)
 
         # true parameters
         self.A = A
@@ -34,6 +32,9 @@ class AllObservationsAbstractLinearGaussianEnv(gym.Env):
         self.R = R
         self.mu_0 = mu_0
         self.Q_0 = Q_0
+
+        # number of observations on which to condition
+        self.condition_length = condition_length
 
         # store previous hidden state xt
         self.prev_state = None
@@ -83,7 +84,7 @@ class AllObservationsAbstractLinearGaussianEnv(gym.Env):
         else:
             xt = torch.tensor(action, dtype=torch.float32)
 
-        # get liklihood score
+        # get likelihood score
         lik_reward = self.compute_lik_reward(xt)
         self.liks.append(lik_reward)
 
@@ -98,7 +99,7 @@ class AllObservationsAbstractLinearGaussianEnv(gym.Env):
         self.rewards.append(reward)
 
         # check done
-        done = self.index >= self.traj_length
+        done = self.index+self.condition_length >= self.traj_length
 
         # add p(y_i|x_i), p(x_i|x_{i-1}), x_i, x_{i-1} to info for future estimates
         info = {'prior_reward': prior_reward,
@@ -106,14 +107,13 @@ class AllObservationsAbstractLinearGaussianEnv(gym.Env):
                 'action': xt,
                 'xt': self.prev_xt}
 
+        condition_ys = self.ys[self.index:self.index+self.condition_length]
+
         # update previous xt
         self.prev_xt = xt
         self.prev_xts.append(self.prev_xt)
 
-        # update num ys to mask
-        self.num_mask += 1
-
-        self.prev_state = torch.cat([self.prev_xt.reshape(-1, 1), self.num_mask.reshape(-1, 1), self.ys.reshape(-1, 1)])
+        self.prev_state = torch.cat([self.prev_xt.reshape(-1, 1), condition_ys.reshape(-1, 1)])
 
         # return stuff
         return self.prev_state, reward.item(), done, info
@@ -141,17 +141,17 @@ class AllObservationsAbstractLinearGaussianEnv(gym.Env):
                                                     num_obs=len(self.ys), dim=self.prev_xt.nelement(), ys=self.ys)
 
         prev_state_shape = self.prev_xt.nelement()
-        self.num_mask = torch.tensor(0.)
 
         # see observation space in __init__ for details on why prev_state is defined this way
-        self.prev_state = torch.cat([self.prev_xt.reshape(prev_state_shape, 1), self.num_mask.reshape(-1, 1), self.ys.reshape(-1, 1)])
+        self.prev_state = torch.cat([self.prev_xt.reshape(prev_state_shape, 1), self.ys[self.index:self.index+self.condition_length].reshape(-1, 1)])
 
         return self.prev_state
 
 
 class AllObservationsLinearGaussianEnv(AllObservationsAbstractLinearGaussianEnv):
-    def __init__(self, A, Q, C, R, mu_0, Q_0, using_entropy_loss, traj_length=1, ys=None, sample=False):
-        super().__init__(A, Q, C, R, mu_0, Q_0, using_entropy_loss, traj_length=traj_length, ys=ys, sample=sample)
+    def __init__(self, A, Q, C, R, mu_0, Q_0, using_entropy_loss, condition_length, traj_length=1, ys=None, sample=False):
+        super().__init__(A, Q, C, R, mu_0, Q_0, condition_length, using_entropy_loss,
+                         traj_length=traj_length, ys=ys, sample=sample)
 
     def compute_lik_reward(self, xt):
         # get y test and increment index

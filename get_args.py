@@ -18,6 +18,7 @@ def get_args():
     parser.add_argument('--ess_dims', type=int, default=1, help='dimensions for ess', nargs='*')
     parser.add_argument('--ess_traj_lengths', type=int, default=1, help='traj_lengths for ess', nargs='*')
     parser.add_argument('--epsilon', type=float, default=0.1, help='the largest deviation between the evidence estimate ratio and 1')
+    parser.add_argument('--condition_length', type=int, default=0, help='the number of observations on which to condition')
 
     # hyperparameters
     parser.add_argument('--learning_rate', type=float, default=1e-4, help='what file to load')

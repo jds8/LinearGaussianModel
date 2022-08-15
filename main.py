@@ -207,7 +207,7 @@ def get_loss_type(model_name):
     model = model_name.split('/')[1]
     return model.split('_')[0]
 
-def train(traj_length, env, dim, ent_coef=1.0, loss_type='forward_kl', learning_rate=3e-4, clip_range=0.2):
+def train(traj_length, env, dim, condition_length, ent_coef=1.0, loss_type='forward_kl', learning_rate=3e-4, clip_range=0.2):
     params = {}
     run = wandb.init(project='linear_gaussian_model training', save_code=True, config=params, entity='iai')
 
@@ -217,13 +217,12 @@ def train(traj_length, env, dim, ent_coef=1.0, loss_type='forward_kl', learning_
     # we only want the x part of the hidden_dimension, so we exclude the y part
     print('assuming that the observation ys have dimensionality 1')
     # prior = lambda batch_obs: get_stacked_state_transition_dist(batch_obs[:, 0:-traj_length-1, :], A=env.A, Q=env.Q)
-    prior = lambda batch_obs: get_stacked_state_transition_dist(batch_obs[:, 0:-1, :], A=env.A, Q=env.Q)
+    prior = lambda batch_obs: get_stacked_state_transition_dist(batch_obs[:, 0:-condition_length, :], A=env.A, Q=env.Q)
+    # prior = lambda batch_obs: get_stacked_state_transition_dist(batch_obs[:, 0:-1, :], A=env.A, Q=env.Q)
 
-    policy_kwargs = dict(hidden_state_dimension=dim)
     model = PPO(LinearActorCriticPolicy, env, ent_coef=ent_coef, device='cpu',
                 verbose=1, loss_type=loss_type, prior=prior,
-                learning_rate=learning_rate, clip_range=clip_range,
-                policy_kwargs=policy_kwargs)
+                learning_rate=learning_rate, clip_range=clip_range)
 
     # train policy
     model.learn(total_timesteps=RL_TIMESTEPS, callback=CustomCallback(env, verbose=1))
@@ -702,7 +701,7 @@ class EventPlotter(Plotter):
         return super().plot_IS(traj_lengths, As, Qs, num_samples=num_samples, num_repeats=num_repeats)
 
 
-def train_dimensions(traj_length, dimensions, table):
+def train_dimensions(traj_length, dimensions, table, condition_length):
     os.makedirs(TODAY, exist_ok=True)
     for dim in dimensions:
         dimension = dim.item()
@@ -714,7 +713,7 @@ def train_dimensions(traj_length, dimensions, table):
         Q_0 = table[dimension]['Q_0']
         env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0,
                                 ys=None, traj_length=traj_length, sample=True)
-        train(traj_length, env, dim=dimension)
+        train(traj_length, env, dim=dimension, condition_length=condition_length)
 
 def compute_posterior(A, Q, R, C, num_observations, dim):
     w = MultiGaussianRandomVariable(mu=0., sigma=torch.sqrt(Q), name="w")
@@ -1329,7 +1328,7 @@ def verify_filtering_posterior():
         score += td.condition(y_values=ys[i:], x_value=actions[i]).log_prob(action)
     print('filtering posterior score: ', score)
 
-def test_train(traj_length, dim, ent_coef, loss_type, learning_rate, clip_range, linear_gaussian_env_type):
+def test_train(traj_length, dim, condition_length, ent_coef, loss_type, learning_rate, clip_range, linear_gaussian_env_type):
     table = create_dimension_table(torch.tensor([dim]), random=False)
     posterior_evidence = compute_evidence(table, traj_length, dim)
 
@@ -1343,7 +1342,8 @@ def test_train(traj_length, dim, ent_coef, loss_type, learning_rate, clip_range,
     env = linear_gaussian_env_type(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0,
                                    using_entropy_loss=(loss_type==ENTROPY_LOSS),
                                    ys=posterior_evidence.ys, sample=True)
-    train(traj_length=traj_length, env=env, dim=dim, ent_coef=ent_coef, loss_type=loss_type,
+    train(traj_length=traj_length, env=env, dim=dim, condition_length=condition_length,
+          ent_coef=ent_coef, loss_type=loss_type,
           learning_rate=learning_rate, clip_range=clip_range)
 
 def sample_variance_ratios(traj_length, model_name):
@@ -1619,9 +1619,9 @@ def plot_ess_from_data(filenames):
     wandb.save('{}/ess_{}.pdf'.format(TODAY, ess_type))
     plt.close()
 
-def get_env_type_from_arg(env_type_arg):
+def get_env_type_from_arg(env_type_arg, condition_length=0):
     if env_type_arg == 'AllObservationsLinearGaussianEnv':
-        return AllObservationsLinearGaussianEnv
+        return lambda **kwargs: AllObservationsLinearGaussianEnv(**kwargs, condition_length=condition_length)
     elif env_type_arg == 'LinearGaussianEnv':
         return LinearGaussianEnv
 
@@ -1695,7 +1695,8 @@ if __name__ == "__main__":
     filenames = args.filenames
     ess_dims = args.ess_dims
     ess_traj_lengths = args.ess_traj_lengths
-    linear_gaussian_env_type = get_env_type_from_arg(args.env_type)
+    condition_length = args.condition_length if args.condition_length > 0 else traj_length
+    linear_gaussian_env_type = get_env_type_from_arg(args.env_type, condition_length=condition_length)
 
     learning_rate = args.learning_rate
     clip_range = args.clip_range
@@ -1705,16 +1706,16 @@ if __name__ == "__main__":
 
     if subroutine == 'train_agent':
         print('executing: {}'.format('train_agent'))
-        test_train(traj_length=traj_length, dim=dim, ent_coef=ent_coef,
-                   loss_type=loss_type, learning_rate=learning_rate,
+        test_train(traj_length=traj_length, dim=dim, condition_length=condition_length,
+                   ent_coef=ent_coef, loss_type=loss_type, learning_rate=learning_rate,
                    clip_range=clip_range, linear_gaussian_env_type=linear_gaussian_env_type)
     elif subroutine == 'evaluate_agent':
         print('executing: {}'.format('evaluate_agent'))
         evaluate_agent(linear_gaussian_env_type, traj_length, dim, model_name)
     elif subroutine == 'train_and_eval':
         print('executing: {}'.format('train_and_eval'))
-        test_train(traj_length=traj_length, dim=dim, ent_coef=ent_coef,
-                   loss_type=loss_type, learning_rate=learning_rate,
+        test_train(traj_length=traj_length, dim=dim, condition_length=condition_length,
+                   ent_coef=ent_coef, loss_type=loss_type, learning_rate=learning_rate,
                    clip_range=clip_range, linear_gaussian_env_type=linear_gaussian_env_type)
         evaluate_agent(linear_gaussian_env_type, traj_length, dim, model_name)
     elif subroutine == 'evaluate_until':
