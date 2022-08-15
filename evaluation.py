@@ -11,17 +11,15 @@ import torch.nn as nn
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 from copy import deepcopy
-from generative_model import y_dist, sample_y, generate_trajectory, \
-    gen_A, gen_Q, gen_C, gen_R, gen_mu_0, gen_Q_0, \
-    test_A, test_Q, test_C, test_R, test_mu_0, test_Q_0, \
-    state_transition, score_state_transition, gen_covariance_matrix, \
-    score_initial_state, score_y
-    # A, Q, C, R, mu_0, Q_0, \
+from generative_model import score_state_transition, score_initial_state, score_y
 import wandb
-from linear_gaussian_env import LinearGaussianEnv, LinearGaussianSingleYEnv
+from linear_gaussian_env import LinearGaussianEnv
+from all_obs_linear_gaussian_env import AllObservationsAbstractLinearGaussianEnv
 from math_utils import logvarexp, importance_sampled_confidence_interval, log_effective_sample_size, log_max_weight_proportion, log_mean
 from plot_utils import legend_without_duplicate_labels
 from linear_gaussian_prob_prog import MultiGaussianRandomVariable, GaussianRandomVariable, MultiLinearGaussian, LinearGaussian, VecLinearGaussian
+from rl_models import load_rl_model
+from dimension_table import create_dimension_table
 
 
 class EvaluationObject:
@@ -56,18 +54,9 @@ class EvaluationObject:
         self.ess_sigma_est = self.sigma_est / self.log_weight_mean.exp()
 
 
-def evaluate(ys, d, N, env=None):
+def evaluate(ys, d, N, env):
     run = wandb.init(project='linear_gaussian_model evaluation', save_code=True, entity='iai')
     print('\nevaluating...')
-    if env is None:
-        # create env
-        if env is None:
-            env = LinearGaussianEnv(A=gen_A, Q=gen_Q,
-                                    C=gen_C, R=gen_R,
-                                    mu_0=gen_mu_0,
-                                    Q_0=gen_Q_0, ys=ys,
-                                    sample=False)
-
     # evidence estimate
     evidence_est = torch.tensor(0.).reshape(1, -1)
     log_evidence_est = torch.tensor(0.).reshape(1, -1)
@@ -134,16 +123,85 @@ def evaluate(ys, d, N, env=None):
                             xts=xts, states=states, actions=actions, priors=priors, liks=liks,
                             log_weights=log_p_y_over_qs)
 
-def evaluate_filtering_posterior(ys, N, tds, epsilon, env=None):
-    if env is None:
-        # create env
-        if env is None:
-            env = LinearGaussianEnv(A=gen_A, Q=gen_Q,
-                                    C=gen_C, R=gen_R,
-                                    mu_0=gen_mu_0,
-                                    Q_0=gen_Q_0, ys=ys,
-                                    sample=False)
+def evaluate_until(d, truth, env, epsilon, max_samples=100000):
+    run = wandb.init(project='linear_gaussian_model evaluation', save_code=True, entity='iai')
+    print('\nevaluating...')
 
+    # evidence estimate
+    evidence_est = torch.tensor(0.).reshape(1, -1)
+    log_evidence_est = torch.tensor(0.).reshape(1, -1)
+    total_rewards = []
+    # collect log( p(x,y)/q(x) )
+    log_p_y_over_qs = torch.tensor([0.])
+    # keep track of log evidence estimates up to N sample trajectories
+    running_log_evidence_estimates = []
+    # keep track of (log) weights p(x) / q(x)
+    log_weights = []
+    # flag when to finish
+    outside_epsilon = True
+    # evaluate at most max_samples times
+    i = 0
+    while outside_epsilon or i > max_samples:
+        i += 1
+        done = False
+        # get first obs
+        obs = env.reset()
+        # keep track of xs
+        xs = []
+        # keep track of prior over actions p(x)
+        log_p_x = torch.tensor(0.).reshape(1, -1)
+        log_p_y_given_x = torch.tensor(0.).reshape(1, -1)
+        # collect actions, likelihoods
+        states = [obs]
+        actions = []
+        priors = []
+        liks = []
+        xts = []
+        total_reward = 0.
+        while not done:
+            xt = d.predict(obs, deterministic=False)[0]
+            xts.append(env.prev_xt)
+            obs, reward, done, info = env.step(xt)
+            total_reward += reward
+            states.append(obs)
+            priors.append(info['prior_reward'])
+            liks.append(info['lik_reward'])
+            log_p_x += info['prior_reward']
+            log_p_y_given_x += info['lik_reward']
+            actions.append(info['action'])
+            xs.append(xt)
+        if isinstance(xs[0], torch.Tensor):
+            xs = torch.cat(xs).reshape(-1, env.traj_length)
+        else:
+            xs = torch.tensor(np.array(xs)).reshape(-1, env.traj_length)
+
+        # log p(x,y)
+        log_p_y_x = log_p_y_given_x + log_p_x
+        log_qrobs = torch.zeros(len(env.states))
+        for j in range(len(env.states)):
+            state = env.states[j]
+            action = actions[j]
+            log_qrobs[j] = d.evaluate_actions(obs=state.t(), actions=action)[1].sum().item()
+
+        log_q = torch.sum(log_qrobs)
+        log_p_y_over_qs = torch.cat([log_p_y_over_qs, (log_p_y_x - log_q).reshape(1)])
+        running_log_evidence_estimates.append(torch.logsumexp(log_p_y_over_qs[0:i+1], -1) - torch.log(torch.tensor(i+1.)))
+        log_weights.append(log_p_x - log_q)  # ignore these since we consider the weights to be p(y|x)p(x)/q(x)
+        total_rewards.append(total_reward)
+        wandb.log({'total_reward_in_evaluate': total_reward})
+
+        log_ratio = running_log_evidence_estimates[-1] - truth
+        ratio = min(log_ratio, -log_ratio).exp()
+        outside_epsilon = (ratio - 1) > epsilon
+
+    # calculate variance estmate as
+    # $\hat{\sigma}_{int}^2=(n(n-1))^{-1}\sum_{i=1}^n(f_iW_i-\overline{fW})^2$
+    sigma_est = torch.sqrt( (logvarexp(log_p_y_over_qs) - torch.log(torch.tensor(len(log_p_y_over_qs) - 1, dtype=torch.float32))).exp() )
+    return EvaluationObject(running_log_estimates=torch.tensor(running_log_evidence_estimates), sigma_est=sigma_est,
+                            xts=xts, states=states, actions=actions, priors=priors, liks=liks,
+                            log_weights=log_p_y_over_qs)
+
+def evaluate_filtering_posterior(ys, N, tds, epsilon, env):
     # evidence estimate
     evidence_est = torch.tensor(0.).reshape(1, -1)
     log_evidence_est = torch.tensor(0.).reshape(1, -1)
@@ -219,3 +277,19 @@ def evaluate_filtering_posterior(ys, N, tds, epsilon, env=None):
     return EvaluationObject(running_log_estimates=torch.tensor(running_log_evidence_estimates), sigma_est=sigma_est,
                             xts=xts, states=states, actions=actions, priors=priors, liks=liks,
                             log_weights=log_p_y_over_qs)
+
+def evaluate_agent_until(posterior_evidence, linear_gaussian_env_type, using_entropy_loss, traj_length, dim, model_name, epsilon=0.5):
+    _, policy = load_rl_model(model_name, device='cpu')
+
+    table = create_dimension_table(torch.tensor([dim]), random=False)
+    A = table[dim]['A']
+    Q = table[dim]['Q']
+    C = table[dim]['C']
+    R = table[dim]['R']
+    mu_0 = table[dim]['mu_0']
+    Q_0 = table[dim]['Q_0']
+
+    env = linear_gaussian_env_type(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, ys=posterior_evidence.ys,
+                                   using_entropy_loss=using_entropy_loss, sample=False)
+
+    return evaluate_until(d=policy, truth=posterior_evidence.evidence, env=env, epsilon=epsilon)

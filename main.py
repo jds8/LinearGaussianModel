@@ -23,7 +23,7 @@ from all_obs_linear_gaussian_env import AllObservationsLinearGaussianEnv
 from math_utils import logvarexp, importance_sampled_confidence_interval, log_effective_sample_size, log_max_weight_proportion, log_mean
 from plot_utils import legend_without_duplicate_labels
 from linear_gaussian_prob_prog import MultiGaussianRandomVariable, GaussianRandomVariable, MultiLinearGaussian, LinearGaussian, VecLinearGaussian
-from evaluation import EvaluationObject, evaluate, evaluate_filtering_posterior
+from evaluation import EvaluationObject, evaluate, evaluate_filtering_posterior, evaluate_agent_until
 from dimension_table import create_dimension_table
 from filtering_posterior import compute_filtering_posteriors
 import pandas as pd
@@ -32,18 +32,19 @@ from pathlib import Path
 from data_loader import load_ess_data
 from plot import plot_ess_data, plot_3d_state_occupancy
 from linear_policy import LinearActorCriticPolicy
+from rl_models import load_rl_model
 
 # model name
 # MODEL = 'trial_linear_gaussian_model_(traj_{}_dim_{})'
 # MODEL = 'linear_gaussian_model_(traj_{}_dim_{})'
-# MODEL = 'agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{})'
+MODEL = 'agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{})'
 # MODEL = 'from_borg/rl_agents/linear_gaussian_model_(traj_{}_dim_{})'
 # MODEL = 'new_linear_gaussian_model_(traj_{}_dim_{})'
 
 TODAY = date.today().strftime("%b-%d-%Y")
 
-RL_TIMESTEPS = 1000000
-NUM_SAMPLES = 100
+RL_TIMESTEPS = 100000
+NUM_SAMPLES = 1000
 NUM_VARIANCE_SAMPLES = 10
 NUM_REPEATS = 20
 
@@ -263,19 +264,6 @@ class ProposalDist:
         return (state_transition(prev_xt, self.A, self.Q), None)
 
 
-def load_rl_model(model_name, device):
-    # load model
-    while model_name.endswith('.zip'):
-        model_name = model_name[0:-4]
-    try:
-        model = PPO.load(model_name)
-        print('loaded model {}'.format(model_name))
-    except:
-        model = PPO.load(model_name+'.zip')
-        print('loaded model {}'.format(model_name)+'.zip')
-    policy = model.policy.to(device)
-    return model, policy
-
 def importance_estimate(ys, A, Q, C, R, mu_0, Q_0, N, env=None, sample=False, traj_length=0):
     if ys is not None:
         traj_length = len(ys)
@@ -327,6 +315,12 @@ class Estimator:
         self.ess_ci = ess_ci
         self.label = label
         self.distribution_type = self._get_distribution_type()
+        self.save_dir = self.create_save_dir()
+
+    def create_save_dir(self):
+        save_dir = '{}/{}'.format(TODAY, self.distribution_type)
+        os.makedirs(save_dir, exist_ok=True)
+        return save_dir
 
     def add_repeat(self, running_log_estimates, ess):
         self.running_log_estimate_repeats.append(running_log_estimates)
@@ -343,7 +337,6 @@ class Estimator:
         self._plot_nice(xlen=self.running_log_estimate_repeats[0].squeeze().nelement(),
                         data=torch.stack(self.running_log_estimate_repeats).exp(),
                         quantiles=torch.tensor([0.05, 0.5, 0.95]))
-
     def plot_ess(self):
         self._plot_nice(xlen=self.ess[0].squeeze().nelement(),
                         data=torch.stack(self.ess),
@@ -386,10 +379,10 @@ class Estimator:
         number of rows
         """
         estimates_df = pd.DataFrame(torch.stack(self.running_log_estimate_repeats).numpy())
-        estimates_df.to_csv('{}/{}/{}_LogEstimates.csv'.format(TODAY, self.distribution_type, self.label))
+        estimates_df.to_csv('{}/{}_LogEstimates.csv'.format(save_dir, self.label))
 
         ess_df = pd.DataFrame(torch.stack(self.ess).numpy())
-        ess_df.to_csv('{}/{}/{}_ESS.csv'.format(TODAY, self.distribution_type, self.label))
+        ess_df.to_csv('{}/{}_ESS.csv'.format(save_dir, self.label))
 
 
 class ISEstimator(Estimator):
@@ -856,13 +849,6 @@ def compute_evidence(table, traj_length, dim):
     mu_0 = table[dim]['mu_0']
     Q_0 = table[dim]['Q_0']
 
-    # ys = generate_trajectory(traj_length, A=single_gen_A, Q=single_gen_Q, C=single_gen_C, R=single_gen_R, mu_0=single_gen_mu_0, Q_0=single_gen_Q_0)[0]
-    # env = LinearGaussianEnv(A=single_gen_A, Q=single_gen_Q,
-    #                         C=single_gen_C, R=single_gen_R,
-    #                         mu_0=single_gen_mu_0,
-    #                         Q_0=single_gen_Q_0, ys=ys,
-    #                         sample=True)
-
     ys = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0]
     env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, using_entropy_loss=True, ys=ys, sample=True)
 
@@ -902,7 +888,6 @@ def get_rl_output(linear_gaussian_env_type, table, ys, dim, sample, model_name, 
     if ys is not None:
         traj_length = len(ys)
     rl_output = ImportanceOutput(traj_length=traj_length, ys=ys, dim=dim)
-    name = '{}(traj_len {} dim {})'.format(RL_DISTRIBUTION, traj_length, dim)
 
     A = table[dim]['A']
     Q = table[dim]['Q']
@@ -925,9 +910,9 @@ def get_rl_output(linear_gaussian_env_type, table, ys, dim, sample, model_name, 
                                                   ci=eval_obj.ci, weight_mean=eval_obj.log_weight_mean.exp(),
                                                   max_weight_prop=eval_obj.log_max_weight_prop.exp(),
                                                   ess=eval_obj.log_effective_sample_size.exp(),
-                                                  ess_ci=eval_obj.ess_ci, idstr=name)
+                                                  ess_ci=eval_obj.ess_ci, idstr=model_name)
     rl_estimator.save_data()
-    return OutputWithName(rl_output, name)
+    return OutputWithName(rl_output, model_name)
 
 def get_perturbed_posterior_output(posterior_evidence, dim, epsilon, name):
     ys = posterior_evidence.ys
@@ -998,7 +983,7 @@ def get_perturbed_posterior_outputs(posterior_evidence, dim, epsilons):
 def get_perturbed_posterior_filtering_outputs(table, posterior_evidence, dim, epsilons):
     outputs = []
     for epsilon in epsilons:
-        name = '{}(epsilon: {} dim: {} traj_len: {})'.format(POSTERIOR_FILTERING_DISTRIBUTION, epsilon, dim, len(posterior_evidence.ys))
+        name = '{}(epsilon: {} dim: {} traj_len: {})'.format(FILTERING_POSTERIOR_DISTRIBUTION, epsilon, dim, len(posterior_evidence.ys))
         outputs += [get_perturbed_posterior_filtering_output(table, posterior_evidence, dim, epsilon, name)]
     return outputs
 
@@ -1305,7 +1290,7 @@ def execute_ess_dim(linear_gaussian_env_type, table, traj_length, dims, epsilons
 
 def trial_evidence(table, traj_length, dim):
     posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
-    return posterior_evidence.truth
+    return posterior_evidence.evidence
 
 def execute_filtering_posterior_convergence(table, traj_lengths, epsilons, dim):
     os.makedirs(TODAY, exist_ok=True)
@@ -1409,6 +1394,8 @@ def sample_variance_ratios(traj_length, model_name):
             td_fps = tds[j]
             y = traj_ys[j:]
 
+            # import pdb; pdb.set_trace()
+
             # filtering dis
             dst = td_fps.condition(y_values=y, x_value=xt)
             filtering_mean = dst.mean()
@@ -1428,8 +1415,6 @@ def sample_variance_ratios(traj_length, model_name):
             variance_ratio = (filtering_variance / rl_variance).reshape(1, 1)
             variance_ratio_steps = torch.cat((variance_ratio_steps.reshape(1, -1), variance_ratio), dim=1)
 
-            print('filtering_variance: {}'.format(filtering_variance))
-            print('rl_variance: {}'.format(rl_variance))
             # if torch.abs(variance_ratio[0, 0] - variance_ratio_steps[0, 0]).item() > 0.001:
             #     import pdb; pdb.set_trace()
 
@@ -1493,7 +1478,7 @@ def sample_empirical_state_occupancy(traj_length, model_name):
 
     return torch.stack(state_occupancy, dim=1)
 
-def sample_filtering_state_occupancy(traj_length, td):
+def sample_filtering_state_occupancy(traj_length):
     """
     This function generates NUM_SAMPLES trajectories of length traj_length
     and computes the ratios of the filtering posterior variance to that of the rl agent.
@@ -1555,6 +1540,7 @@ def plot_variance_ratios(vrs, quantiles, traj_length, ent_coef, loss_type):
                save_path='{}/Variance Ratio traj_len: {} ent_coef: {} loss_type: {}.pdf'.format(TODAY, traj_length, ent_coef, loss_type))
 
 def basic_plot(data, quantiles, traj_length, ent_coef, loss_type, label, xlabel, ylabel, title, save_path):
+    data = data.detach()
     lwr, med, upr = torch.quantile(data, quantiles, dim=0)
     x_data = torch.arange(1, traj_length+1)
     plt.plot(x_data, med.squeeze(), label=label)
@@ -1588,20 +1574,28 @@ def execute_variance_ratio_runs(t_len, ent_coef, loss_type, model_name):
     plot_mean_diffs(means=means, quantiles=quantiles, traj_length=t_len, ent_coef=ent_coef, loss_type=loss_type)
     plot_variance_ratios(vrs=vrs, quantiles=quantiles, traj_length=t_len, ent_coef=ent_coef, loss_type=loss_type)
 
-def execute_state_occupancy(traj_length, ent_coef, loss_type):
-    model_name = get_model_name(traj_length=traj_length, dim=1, ent_coef=ent_coef, loss_type=loss_type)
-    state_occupancy = sample_empirical_state_occupancy(traj_length, model_name)
-    filtering_state_occupancy = sample_filtering_state_occupancy(traj_length, model_name)
-    quantiles = torch.tensor([0.05, 0.5, 0.95], dtype=state_occupancy.dtype)
-    plot_state_occupancy(state_occupancies=[(state_occupancy, 'RL agent'), (filtering_state_occupancy, 'Filtering Posterior')],
+def execute_state_occupancy(traj_length, ent_coef):
+    forward_model_name = get_model_name(traj_length=traj_length, dim=1, ent_coef=ent_coef, loss_type='forward_kl')
+    reverse_model_name = get_model_name(traj_length=traj_length, dim=1, ent_coef=ent_coef, loss_type='reverse_kl')
+    forward_state_occupancy = sample_empirical_state_occupancy(traj_length, forward_model_name)
+    reverse_state_occupancy = sample_empirical_state_occupancy(traj_length, reverse_model_name)
+    filtering_state_occupancy = sample_filtering_state_occupancy(traj_length)
+    quantiles = torch.tensor([0.05, 0.5, 0.95], dtype=filtering_state_occupancy.dtype)
+    plot_state_occupancy(state_occupancies=[(forward_state_occupancy, 'Forward KL agent'),
+                                            (reverse_state_occupancy, 'Reverse KL agent'),
+                                            (filtering_state_occupancy, 'Filtering Posterior')],
                          quantiles=quantiles, traj_length=traj_length, ent_coef=ent_coef, loss_type=loss_type)
 
-def execute_3d_state_occupancy(traj_length, ent_coef, loss_type):
-    model_name = get_model_name(traj_length=traj_length, dim=1, ent_coef=ent_coef, loss_type=loss_type)
-    state_occupancy = sample_empirical_state_occupancy(traj_length, model_name)
-    filtering_state_occupancy = sample_filtering_state_occupancy(traj_length, model_name)
-    quantiles = torch.tensor([0.05, 0.5, 0.95], dtype=state_occupancy.dtype)
-    plot_3d_state_occupancy(state_occupancy_dict={'RL agent':state_occupancy, 'Filtering Posterior':filtering_state_occupancy},
+def execute_3d_state_occupancy(traj_length, ent_coef):
+    forward_model_name = get_model_name(traj_length=traj_length, dim=1, ent_coef=ent_coef, loss_type='forward_kl')
+    reverse_model_name = get_model_name(traj_length=traj_length, dim=1, ent_coef=ent_coef, loss_type='reverse_kl')
+    forward_state_occupancy = sample_empirical_state_occupancy(traj_length, forward_model_name)
+    reverse_state_occupancy = sample_empirical_state_occupancy(traj_length, reverse_model_name)
+    filtering_state_occupancy = sample_filtering_state_occupancy(traj_length)
+    quantiles = torch.tensor([0.05, 0.5, 0.95], dtype=filtering_state_occupancy.dtype)
+    plot_3d_state_occupancy(state_occupancy_dict={'Forward KL agent':forward_state_occupancy,
+                                                  'Reverse KL agent':reverse_state_occupancy,
+                                                  'Filtering Posterior':filtering_state_occupancy},
                             quantiles=quantiles, traj_length=traj_length, ent_coef=ent_coef, loss_type=loss_type,
                             today_dir=TODAY)
 
@@ -1660,12 +1654,45 @@ def compute_conditional_kl(td_fps, policy, prev_xt, ys):
 
     return dist.kl_divergence(filtering_dist, policy_dist)
 
+def execute_evaluate_agent_until(linear_gaussian_env_type, traj_lengths, dim, loss_type, ent_coef):
+    table = create_dimension_table(torch.tensor([dim]), random=False)
+    num_samples_data = []
+    for traj_length in traj_lengths:
+        posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
+        rl_output = ImportanceOutput(traj_length=traj_length, ys=posterior_evidence.ys, dim=dim)
+        name = '{}(traj_len {} dim {})'.format(RL_DISTRIBUTION, traj_length, dim)
+        for _ in range(NUM_REPEATS):
+            model_name = get_model_name(traj_length=traj_length, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
+            eval_obj = evaluate_agent_until(posterior_evidence, linear_gaussian_env_type, traj_length=traj_length,
+                                            dim=dim, model_name=model_name,
+                                            using_entropy_loss=(loss_type == ENTROPY_LOSS), epsilon=0.8)
+
+            # add rl estimator
+            rl_estimator = rl_output.add_rl_estimator(running_log_estimates=eval_obj.running_log_estimates,
+                                                      ci=eval_obj.ci, weight_mean=eval_obj.log_weight_mean.exp(),
+                                                      max_weight_prop=eval_obj.log_max_weight_prop.exp(),
+                                                      ess=eval_obj.log_effective_sample_size.exp(),
+                                                      ess_ci=eval_obj.ess_ci, idstr=name)
+        rl_estimator.save_data()
+        avg_num_samples = np.mean([len(repeat) for repeat in rl_estimator.running_log_estimate_repeats])
+        num_samples_data.append(avg_num_samples)
+
+    plt.plot(traj_lengths, num_samples_data)
+    plt.xlabel('Trajectory Length')
+    plt.ylabel('Num Samples')
+    plt.title('Num Samples Required for |truth / estimate| - 1 < eps')
+
+    save_path = '{}/ent_coef_{}_loss_type_{}_dim_{}RequiredSampleSize.pdf'.format(rl_estimator.save_dir, ent_coef, loss_type, dim)
+    plt.savefig(save_path)
+    wandb.save(save_path)
+    plt.close()
+
 
 if __name__ == "__main__":
     args, _ = get_args()
     subroutine = args.subroutine
     save_dir = args.save_dir
-    MODEL = 'agents/'+save_dir+'/{}_{}_linear_gaussian_model_(traj_{}_dim_{})'
+    # MODEL = 'agents/'+save_dir+'/{}_{}_linear_gaussian_model_(traj_{}_dim_{})'
     if subroutine != 'train_agent':
         run = wandb.init(project='linear_gaussian_model', save_code=True, entity='iai')
         os.makedirs(save_dir, exist_ok=True)
@@ -1677,7 +1704,8 @@ if __name__ == "__main__":
     dim = args.dim
     ent_coef = args.ent_coef
     loss_type = args.loss_type
-    model_name = MODEL.format(ent_coef, loss_type, traj_length, dim)
+    # model_name = MODEL.format(ent_coef, loss_type, traj_length, dim)
+    model_name = get_model_name(traj_length=traj_length, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
     filenames = args.filenames
     ess_dims = args.ess_dims
     ess_traj_lengths = args.ess_traj_lengths
@@ -1685,6 +1713,8 @@ if __name__ == "__main__":
 
     learning_rate = args.learning_rate
     clip_range = args.clip_range
+
+    NUM_SAMPLES = args.num_samples
 
     if subroutine == 'train_agent':
         print('executing: {}'.format('train_agent'))
@@ -1694,6 +1724,17 @@ if __name__ == "__main__":
     elif subroutine == 'evaluate_agent':
         print('executing: {}'.format('evaluate_agent'))
         evaluate_agent(linear_gaussian_env_type, traj_length, dim, model_name)
+    elif subroutine == 'train_and_eval':
+        print('executing: {}'.format('train_and_eval'))
+        test_train(traj_length=traj_length, dim=dim, ent_coef=ent_coef,
+                   loss_type=loss_type, learning_rate=learning_rate,
+                   clip_range=clip_range, linear_gaussian_env_type=linear_gaussian_env_type)
+        evaluate_agent(linear_gaussian_env_type, traj_length, dim, model_name)
+    elif subroutine == 'evaluate_until':
+        print('executing: {}'.format('evaluate_until'))
+        execute_evaluate_agent_until(linear_gaussian_env_type=linear_gaussian_env_type,
+                                     traj_lengths=ess_traj_lengths, dim=dim, loss_type=loss_type,
+                                     ent_coef=ent_coef)
     elif subroutine == 'ess_traj':
         print('executing: {}'.format('ess_traj'))
         traj_lengths = torch.cat([torch.arange(2, 11), torch.arange(12, 17)])
@@ -1736,10 +1777,10 @@ if __name__ == "__main__":
         plot_ess_from_data(filenames)
     elif subroutine == 'state_occupancy':
         print('executing: {}'.format('state_occupancy'))
-        execute_state_occupancy(traj_length=traj_length, ent_coef=ent_coef, loss_type=loss_type)
+        execute_state_occupancy(traj_length=traj_length, ent_coef=ent_coef)
     elif subroutine == '3d_state_occupancy':
         print('executing: {}'.format('3d_state_occupancy'))
-        execute_3d_state_occupancy(traj_length=traj_length, ent_coef=ent_coef, loss_type=loss_type)
+        execute_3d_state_occupancy(traj_length=traj_length, ent_coef=ent_coef)
     elif subroutine == 'variance_ratio':
         print('executing: {}'.format('variance_ratio'))
         execute_variance_ratio_runs(t_len=traj_length, ent_coef=ent_coef, loss_type=loss_type, model_name=model_name)

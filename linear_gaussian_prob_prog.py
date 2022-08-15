@@ -339,8 +339,6 @@ class GaussianDistribution:
         return dist.MultivariateNormal(mu_x_given_z.reshape(-1), sigma_x_given_z)
 
     def condition(self, z_rvs):
-        # import pdb; pdb.set_trace()
-
         z_inds = [self.left.index(var.r_var) for var in z_rvs]
         all_vars = [var for var in self.left]
         z_values = torch.cat([var.value for var in z_rvs])
@@ -374,6 +372,8 @@ class JointVariables:
 
     def _compute_joint_dist(self):
         mu = torch.cat([rv.mu for rv in self.rvs], dim=0).squeeze()
+        if mu.shape == torch.Size([]):
+            mu = mu.reshape(1)
         cov = torch.block_diag(*[rv.sigma for rv in self.rvs])
         i = 0
         j = 0

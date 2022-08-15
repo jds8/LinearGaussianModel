@@ -28,6 +28,9 @@ def get_args():
     # environment type
     parser.add_argument('--env_type', type=str, default='LinearGaussianEnv', help='the type of environment')
 
+    # Number of samples to take
+    parser.add_argument('--num_samples', type=int, default=100, help='the number of samples to take for ESS, state occupancy, etc.')
+
     # parse
     args, _ = parser.parse_known_args()
 
