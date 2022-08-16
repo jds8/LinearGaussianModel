@@ -1529,7 +1529,7 @@ def sample_filtering_state_occupancy(traj_length):
 
 def plot_mean_diffs(means, quantiles, traj_length, ent_coef, loss_type, labels):
     basic_plot(datas=means, quantiles=quantiles, traj_length=traj_length, ent_coef=ent_coef, loss_type=loss_type,
-               label='mean(filtering posterior) - mean(rl proposal)',
+               labels=labels,
                xlabel='Trajectory Step (of {})'.format(traj_length), ylabel='Mean Difference',
                title='Difference of Means of Filtering Posterior and RL Proposal\n(Loss Type: {} Coef: {})'.format(loss_type, ent_coef),
                save_path='{}/Difference of Means traj_len: {} ent_coef: {} loss_type: {}.pdf'.format(TODAY, traj_length, ent_coef, loss_type))
@@ -1541,8 +1541,8 @@ def plot_variance_ratios(vrs, quantiles, traj_length, ent_coef, loss_type, label
                title='Ratio of Variances of Filtering Posterior and RL Proposal\n(Loss Type: {} Coef: {})'.format(loss_type, ent_coef),
                save_path='{}/Variance Ratio traj_len: {} ent_coef: {} loss_type: {}.pdf'.format(TODAY, traj_length, ent_coef, loss_type))
 
-def basic_plot(datas, quantiles, traj_length, label, xlabel, ylabel, title, save_path):
-    for data in datas:
+def basic_plot(datas, quantiles, traj_length, labels, xlabel, ylabel, title, save_path):
+    for data, label in zip(datas, labels):
         data = data.detach()
         lwr, med, upr = torch.quantile(data, quantiles, dim=0)
         x_data = torch.arange(1, traj_length+1)
