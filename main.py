@@ -1783,7 +1783,7 @@ if __name__ == "__main__":
     elif subroutine == 'variance_ratio':
         print('executing: {}'.format('variance_ratio'))
         # execute_variance_ratio_runs(t_len=traj_length, ent_coef=ent_coef, loss_type=loss_type, model_name=model_name)
-        execute_variance_ratio_runs(t_len=traj_length, ent_coef=ent_coef, loss_type=loss_type)
+        execute_variance_ratio_runs(t_len=traj_length, ent_coef=ent_coef)
     else:
         print('executing: {}'.format('custom'))
         table = create_dimension_table(torch.tensor([dim]), random=False)
