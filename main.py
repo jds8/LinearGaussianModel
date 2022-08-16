@@ -315,11 +315,12 @@ class Estimator:
         self.ess = [ess]
         self.ess_ci = ess_ci
         self.label = label
-        self.distribution_type = self._get_distribution_type()
+        # self.distribution_type = self._get_distribution_type()
         self.save_dir = self.create_save_dir()
 
     def create_save_dir(self):
-        save_dir = '{}/{}'.format(TODAY, self.distribution_type)
+        # save_dir = '{}/{}'.format(TODAY, self.distribution_type)
+        save_dir = '{}/{}'.format(TODAY, self.label)
         os.makedirs(save_dir, exist_ok=True)
         return save_dir
 
@@ -361,17 +362,17 @@ class Estimator:
         estimate = self.compute_evidence_estimate(quantile)
         return torch.abs((estimate.log() - true.log()).exp() - 1)
 
-    def _get_distribution_type(self):
-        if RL_DISTRIBUTION in self.label:
-            return RL_DISTRIBUTION
-        elif FILTERING_POSTERIOR_DISTRIBUTION in self.label:
-            return FILTERING_POSTERIOR_DISTRIBUTION
-        elif POSTERIOR_DISTRIBUTION in self.label:
-            return POSTERIOR_DISTRIBUTION
-        elif PRIOR_DISTRIBUTION in self.label:
-            return PRIOR_DISTRIBUTION
-        else:
-            raise NotImplementedError
+    # def _get_distribution_type(self):
+    #     if RL_DISTRIBUTION in self.label:
+    #         return RL_DISTRIBUTION
+    #     elif FILTERING_POSTERIOR_DISTRIBUTION in self.label:
+    #         return FILTERING_POSTERIOR_DISTRIBUTION
+    #     elif POSTERIOR_DISTRIBUTION in self.label:
+    #         return POSTERIOR_DISTRIBUTION
+    #     elif PRIOR_DISTRIBUTION in self.label:
+    #         return PRIOR_DISTRIBUTION
+    #     else:
+    #         return self.label
 
     def save_data(self):
         """
@@ -1419,6 +1420,7 @@ def sample_variance_ratios(traj_length, model_name):
 
             # if torch.abs(variance_ratio[0, 0] - variance_ratio_steps[0, 0]).item() > 0.001:
             #     import pdb; pdb.set_trace()
+            #     dst = td_fps.condition(y_values=y, x_value=xt)
 
             # get next hidden state
             xt = traj_xs[j].reshape(1)
@@ -1528,15 +1530,13 @@ def sample_filtering_state_occupancy(traj_length):
     return torch.stack(state_occupancy, dim=1)
 
 def plot_mean_diffs(means, quantiles, traj_length, ent_coef, loss_type, labels):
-    basic_plot(datas=means, quantiles=quantiles, traj_length=traj_length, ent_coef=ent_coef, loss_type=loss_type,
-               labels=labels,
+    basic_plot(datas=means, quantiles=quantiles, traj_length=traj_length, labels=labels,
                xlabel='Trajectory Step (of {})'.format(traj_length), ylabel='Mean Difference',
                title='Difference of Means of Filtering Posterior and RL Proposal\n(Loss Type: {} Coef: {})'.format(loss_type, ent_coef),
                save_path='{}/Difference of Means traj_len: {} ent_coef: {} loss_type: {}.pdf'.format(TODAY, traj_length, ent_coef, loss_type))
 
 def plot_variance_ratios(vrs, quantiles, traj_length, ent_coef, loss_type, labels):
-    basic_plot(datas=vrs, quantiles=quantiles, traj_length=traj_length, ent_coef=ent_coef, loss_type=loss_type,
-               labels=labels,
+    basic_plot(datas=vrs, quantiles=quantiles, traj_length=traj_length, labels=labels,
                xlabel='Trajectory Step (of {})'.format(traj_length), ylabel='Variance Ratio',
                title='Ratio of Variances of Filtering Posterior and RL Proposal\n(Loss Type: {} Coef: {})'.format(loss_type, ent_coef),
                save_path='{}/Variance Ratio traj_len: {} ent_coef: {} loss_type: {}.pdf'.format(TODAY, traj_length, ent_coef, loss_type))
