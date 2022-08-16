@@ -192,7 +192,9 @@ class CustomCallback(BaseCallback):
 
             # compute KL between filtering posterior and policy at the last state (env.index - 1)
             td = self.env.tds[self.env.index-1]
-            kl = compute_conditional_kl(td_fps=td, policy=self.model.policy, prev_xt=self.env.prev_xts[-2], ys=self.env.ys[self.env.index-1:])
+            kl = compute_conditional_kl(td_fps=td, policy=self.model.policy,
+                                        prev_xt=self.env.prev_xts[-2], ys=self.env.ys[self.env.index-1:],
+                                        condition_length=self.env.condition_length)
             wandb.log({'kl divergence with filtering posterior': kl})
 
         return True
@@ -217,7 +219,7 @@ def train(traj_length, env, dim, condition_length, ent_coef=1.0, loss_type='forw
     # we only want the x part of the hidden_dimension, so we exclude the y part
     print('assuming that the observation ys have dimensionality 1')
     # prior = lambda batch_obs: get_stacked_state_transition_dist(batch_obs[:, 0:-traj_length-1, :], A=env.A, Q=env.Q)
-    prior = lambda batch_obs: get_stacked_state_transition_dist(batch_obs[:, 0:-condition_length, :], A=env.A, Q=env.Q)
+    prior = lambda batch_obs: get_stacked_state_transition_dist(batch_obs[:, 0:dim, :], A=env.A, Q=env.Q)
     # prior = lambda batch_obs: get_stacked_state_transition_dist(batch_obs[:, 0:-1, :], A=env.A, Q=env.Q)
 
     model = PPO(LinearActorCriticPolicy, env, ent_coef=ent_coef, device='cpu',
@@ -1625,14 +1627,15 @@ def get_env_type_from_arg(env_type_arg, condition_length=0):
     elif env_type_arg == 'LinearGaussianEnv':
         return LinearGaussianEnv
 
-def compute_conditional_kl(td_fps, policy, prev_xt, ys):
+def compute_conditional_kl(td_fps, policy, prev_xt, ys, condition_length):
     # filtering dist
     dst = td_fps.condition(y_values=ys, x_value=prev_xt)
     filtering_dist = dst.get_dist()
 
     # policy dist
-    obs = torch.cat([prev_xt, ys[0].reshape(1)]).reshape(1, dim+1)
+    obs = torch.cat([prev_xt, ys[0:condition_length]]).reshape(1, -1)
     pd = policy.get_distribution(obs).distribution
+
     covs = []
     for i in range(pd.scale.shape[0]):
         covs.append(torch.diag(pd.scale[i, :]))
