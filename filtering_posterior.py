@@ -94,12 +94,7 @@ def old_compute_filtering_posterior(t, num_obs, xs, ys, p_y_next_given_x, A, C):
         lik = ys[0].likelihood()
         cond_ys = lik * p_y_next_given_x[0]
         prior = xs[0].prior()
-        try:
-            numerator = cond_ys * prior
-        except:
-            import pdb; pdb.set_trace()
-            numerator = cond_ys * prior
-
+        numerator = cond_ys * prior
         denominator = JointVariables(ys, A=A, C=C).dist
     else:
         lik = xs[t].likelihood()
