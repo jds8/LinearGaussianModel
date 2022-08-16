@@ -331,13 +331,13 @@ class Estimator:
     def plot(self):
         # plot prob estimates
         x_vals = torch.arange(1, self.running_log_estimate_repeats[0].squeeze().nelement()+1)
-        lower_ci, med, upper_ci = torch.quantile(torch.stack(self.running_log_estimate_repeats).exp(), torch.tensor([0.05, 0.5, 0.95]), dim=0)
+        lower_ci, med, upper_ci = torch.quantile(torch.stack(self.running_log_estimate_repeats), torch.tensor([0.05, 0.5, 0.95]), dim=0)
         plt.plot(x_vals, med.squeeze(), label=self.label)
         plt.fill_between(x_vals, y1=lower_ci, y2=upper_ci, alpha=0.3)
 
     def plot_running_log_estimates(self):
         self._plot_nice(xlen=self.running_log_estimate_repeats[0].squeeze().nelement(),
-                        data=torch.stack(self.running_log_estimate_repeats).exp(),
+                        data=torch.stack(self.running_log_estimate_repeats),
                         quantiles=torch.tensor([0.05, 0.5, 0.95]))
     def plot_ess(self):
         self._plot_nice(xlen=self.ess[0].squeeze().nelement(),
@@ -354,7 +354,7 @@ class Estimator:
         plt.fill_between(x_vals, y1=lower_ci, y2=upper_ci, alpha=0.3)
 
     def compute_evidence_estimate(self, quantile=torch.tensor([0.5])):
-        data = torch.stack(self.running_log_estimate_repeats).exp()
+        data = torch.stack(self.running_log_estimate_repeats)
         estimate = torch.quantile(data, quantile, dim=0).squeeze()
         return estimate[-1]
 
@@ -834,15 +834,19 @@ def evaluate_posterior(ys, N, td, env=None):
 
 
 class PosteriorEvidence:
-    def __init__(self, td, ys, evidence, env):
+    def __init__(self, td, ys, evidence, env, condition_length):
         self.td = td
         self.ys = ys
         self.evidence = evidence
         self.env = env
+        self.condition_length = condition_length
 
 
-def compute_evidence(table, traj_length, dim):
+def compute_evidence(table, traj_length, dim, condition_length=0):
     os.makedirs(TODAY, exist_ok=True)
+
+    condition_length = condition_length if condition_length > 0 else traj_length
+    end_len = traj_length-condition_length+1
 
     A = table[dim]['A']
     Q = table[dim]['Q']
@@ -855,13 +859,16 @@ def compute_evidence(table, traj_length, dim):
     env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, using_entropy_loss=True, ys=ys, sample=True)
 
     posterior = compute_posterior(A=A, Q=Q, C=C, R=R, num_observations=len(ys), dim=dim)
-    td = condition_posterior(posterior, ys)
+    _td = condition_posterior(posterior, ys)
+    td = dist.MultivariateNormal(_td.mean[0:end_len], _td.covariance_matrix[0:end_len, 0:end_len])
 
-    eval_obj = evaluate_posterior(ys=ys, N=1, td=td, env=env)
-    true = eval_obj.running_log_estimates[0].exp()
+    end_ys = ys[0:end_len]
+
+    eval_obj = evaluate_posterior(ys=end_ys, N=1, td=td, env=env)
+    true = eval_obj.running_log_estimates[0]
     # print('True evidence: {}'.format(true))
 
-    return PosteriorEvidence(td, ys, true, env)
+    return PosteriorEvidence(td, ys, true, env, condition_length=condition_length)
 
 def get_prior_output(table, ys, dim, sample, traj_length=0):
     A = table[dim]['A']
@@ -1135,8 +1142,8 @@ class RLConvergence(EvidenceConvergence):
         return get_rl_output(self.linear_gaussian_env_type, table=table, ys=self.posterior_evidence.ys, dim=self.dim, sample=False)
 
 
-def compare_convergence(linear_gaussian_env_type, table, traj_length, dim, epsilons, model_name):
-    posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
+def compare_convergence(linear_gaussian_env_type, table, traj_length, dim, epsilons, model_name, condition_length):
+    posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim, condition_length=condition_length)
     posterior_convergence(posterior_evidence=posterior_evidence, dim=dim, epsilons=epsilons)
     prior_convergence(table=table, ys=posterior_evidence.ys, truth=posterior_evidence.evidence, dim=dim)
     try:
@@ -1146,12 +1153,12 @@ def compare_convergence(linear_gaussian_env_type, table, traj_length, dim, epsil
     except:
         pass
 
-def get_posterior_ess_outputs(table, traj_length, dim, epsilon):
-    posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
+def get_posterior_ess_outputs(table, traj_length, dim, epsilon, condition_length):
+    posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim, condition_length=condition_length)
     return get_perturbed_posterior_outputs(posterior_evidence, dim, [epsilon])
 
-def get_posterior_filtering_ess_outputs(table, traj_length, dim, epsilon):
-    posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
+def get_posterior_filtering_ess_outputs(table, traj_length, dim, epsilon, condition_length):
+    posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim, condition_length=condition_length)
     return get_perturbed_posterior_filtering_outputs(table=table, posterior_evidence=posterior_evidence, dim=dim, epsilons=[epsilon])
 
 def posterior_ess_traj(table, traj_lengths, dim, epsilon):
@@ -1290,14 +1297,14 @@ def execute_ess_dim(linear_gaussian_env_type, table, traj_length, dims, epsilons
     # prior_ess_dim(table=table, traj_length=traj_length, dims=dims)
     # rl_ess_dim(linear_gaussian_env_type, table=table, traj_length=traj_length, dims=dims, ent_coef=ent_coef, loss_type=loss_type)
 
-def trial_evidence(table, traj_length, dim):
-    posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
+def trial_evidence(table, traj_length, dim, condition_length):
+    posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim, condition_length=condition_length)
     return posterior_evidence.evidence
 
-def execute_filtering_posterior_convergence(table, traj_lengths, epsilons, dim):
+def execute_filtering_posterior_convergence(table, traj_lengths, epsilons, dim, condition_length):
     os.makedirs(TODAY, exist_ok=True)
     for traj_length in traj_lengths:
-        posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
+        posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim, condition_length=condition_length)
         posterior_filtering_convergence(table=table, posterior_evidence=posterior_evidence, dim=dim, epsilons=epsilons)
 
 def verify_filtering_posterior():
@@ -1333,7 +1340,7 @@ def verify_filtering_posterior():
 
 def test_train(traj_length, dim, condition_length, ent_coef, loss_type, learning_rate, clip_range, linear_gaussian_env_type):
     table = create_dimension_table(torch.tensor([dim]), random=False)
-    posterior_evidence = compute_evidence(table, traj_length, dim)
+    posterior_evidence = compute_evidence(table, traj_length, dim, condition_length=condition_length)
 
     A = table[dim]['A']
     Q = table[dim]['Q']
@@ -1595,9 +1602,9 @@ def execute_3d_state_occupancy(traj_length, ent_coef):
                             quantiles=quantiles, traj_length=traj_length, ent_coef=ent_coef, loss_type=loss_type,
                             today_dir=TODAY)
 
-def evaluate_agent(linear_gaussian_env_type, traj_length, dim, model_name):
+def evaluate_agent(linear_gaussian_env_type, traj_length, dim, model_name, condition_length):
     table = create_dimension_table(torch.tensor([dim]), random=False)
-    posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
+    posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim, condition_length=condition_length)
     rl_convergence(linear_gaussian_env_type, table=table, ys=posterior_evidence.ys,
                    truth=posterior_evidence.evidence, dim=dim,
                    model_name=model_name)
@@ -1651,11 +1658,11 @@ def compute_conditional_kl(td_fps, policy, prev_xt, ys, condition_length):
 
     return dist.kl_divergence(filtering_dist, policy_dist)
 
-def execute_evaluate_agent_until(linear_gaussian_env_type, traj_lengths, dim, loss_type, ent_coef, epsilon):
+def execute_evaluate_agent_until(linear_gaussian_env_type, traj_lengths, dim, loss_type, ent_coef, epsilon, condition_length):
     table = create_dimension_table(torch.tensor([dim]), random=False)
     num_samples_data = []
     for traj_length in traj_lengths:
-        posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
+        posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim, condition_length=condition_length)
         rl_output = ImportanceOutput(traj_length=traj_length, ys=posterior_evidence.ys, dim=dim)
         name = '{}(traj_len {} dim {})'.format(RL_DISTRIBUTION, traj_length, dim)
         for _ in range(NUM_REPEATS):
@@ -1722,7 +1729,7 @@ if __name__ == "__main__":
                    clip_range=clip_range, linear_gaussian_env_type=linear_gaussian_env_type)
     elif subroutine == 'evaluate_agent':
         print('executing: {}'.format('evaluate_agent'))
-        evaluate_agent(linear_gaussian_env_type, traj_length, dim, model_name)
+        evaluate_agent(linear_gaussian_env_type, traj_length, dim, model_name, condition_length=condition_length)
     elif subroutine == 'train_and_eval':
         print('executing: {}'.format('train_and_eval'))
         test_train(traj_length=traj_length, dim=dim, condition_length=condition_length,
@@ -1787,7 +1794,7 @@ if __name__ == "__main__":
     else:
         print('executing: {}'.format('custom'))
         table = create_dimension_table(torch.tensor([dim]), random=False)
-        posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
+        posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim, condition_length=condition_length)
         epsilons = [-5e-3, 5e-3]
         posterior_filtering_convergence(table, posterior_evidence, dim, epsilons)
 
