@@ -845,7 +845,6 @@ class PosteriorEvidence:
 def compute_evidence(table, traj_length, dim, condition_length=0):
     os.makedirs(TODAY, exist_ok=True)
 
-    condition_length = condition_length if condition_length > 0 else traj_length
     end_len = traj_length-condition_length+1
 
     A = table[dim]['A']
@@ -1356,7 +1355,7 @@ def test_train(traj_length, dim, condition_length, ent_coef, loss_type, learning
           ent_coef=ent_coef, loss_type=loss_type,
           learning_rate=learning_rate, clip_range=clip_range)
 
-def sample_variance_ratios(traj_length, model_name):
+def sample_variance_ratios(traj_length, model_name, condition_length):
     """
     This function generates NUM_SAMPLES trajectories of length traj_length
     and computes the ratios of the filtering posterior variance to that of the rl agent.
@@ -1393,7 +1392,7 @@ def sample_variance_ratios(traj_length, model_name):
 
         # get first obs
         xt = traj_xs[0].reshape(1)
-        y0 = traj_ys[0]
+        y0 = traj_ys[0:condition_length]
         obs = torch.cat([torch.zeros_like(xt), y0.reshape(1)]).reshape(1, dim+1)
 
         # collect ratio of mean and variance at each step
@@ -1563,12 +1562,12 @@ def basic_plot(datas, quantiles, traj_length, labels, xlabel, ylabel, title, sav
     wandb.save(save_path)
     plt.close()
 
-def execute_variance_ratio_runs(t_len, ent_coef):
+def execute_variance_ratio_runs(t_len, ent_coef, condition_length):
     labels = [FORWARD_KL, REVERSE_KL]
     forward_model_name = get_model_name(traj_length=traj_length, dim=dim, ent_coef=ent_coef, loss_type=FORWARD_KL)
     reverse_model_name = get_model_name(traj_length=traj_length, dim=dim, ent_coef=ent_coef, loss_type=REVERSE_KL)
-    forward_means, forward_vrs = sample_variance_ratios(traj_length=t_len, model_name=forward_model_name)
-    reverse_means, reverse_vrs = sample_variance_ratios(traj_length=t_len, model_name=reverse_model_name)
+    forward_means, forward_vrs = sample_variance_ratios(traj_length=t_len, model_name=forward_model_name, condition_length=condition_length)
+    reverse_means, reverse_vrs = sample_variance_ratios(traj_length=t_len, model_name=reverse_model_name, condition_length=condition_length)
     quantiles = torch.tensor([0.05, 0.5, 0.95])
     plot_mean_diffs(means=[forward_means, reverse_means], quantiles=quantiles, traj_length=t_len,
                     ent_coef=ent_coef, loss_type=loss_type, labels=labels)
@@ -1790,7 +1789,7 @@ if __name__ == "__main__":
     elif subroutine == 'variance_ratio':
         print('executing: {}'.format('variance_ratio'))
         # execute_variance_ratio_runs(t_len=traj_length, ent_coef=ent_coef, loss_type=loss_type, model_name=model_name)
-        execute_variance_ratio_runs(t_len=traj_length, ent_coef=ent_coef)
+        execute_variance_ratio_runs(t_len=traj_length, ent_coef=ent_coef, condition_length=condition_length)
     else:
         print('executing: {}'.format('custom'))
         table = create_dimension_table(torch.tensor([dim]), random=False)
