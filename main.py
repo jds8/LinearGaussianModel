@@ -1552,7 +1552,7 @@ def basic_plot(datas, quantiles, traj_length, labels, xlabel, ylabel, title, sav
     for data, label in zip(datas, labels):
         data = data.detach()
         lwr, med, upr = torch.quantile(data, quantiles, dim=0)
-        x_data = torch.arange(1, traj_length+1)
+        x_data = torch.arange(1, med.nelement()+1)
         plt.plot(x_data, med.squeeze(), label=label)
         plt.fill_between(x_data, y1=lwr, y2=upr, alpha=0.3)
     plt.xlabel(xlabel)
