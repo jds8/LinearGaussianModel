@@ -1527,26 +1527,27 @@ def sample_filtering_state_occupancy(traj_length):
 
     return torch.stack(state_occupancy, dim=1)
 
-def plot_mean_diffs(means, quantiles, traj_length, ent_coef, loss_type):
-    basic_plot(data=means, quantiles=quantiles, traj_length=traj_length, ent_coef=ent_coef, loss_type=loss_type,
+def plot_mean_diffs(means, quantiles, traj_length, ent_coef, loss_type, labels):
+    basic_plot(datas=means, quantiles=quantiles, traj_length=traj_length, ent_coef=ent_coef, loss_type=loss_type,
                label='mean(filtering posterior) - mean(rl proposal)',
                xlabel='Trajectory Step (of {})'.format(traj_length), ylabel='Mean Difference',
                title='Difference of Means of Filtering Posterior and RL Proposal\n(Loss Type: {} Coef: {})'.format(loss_type, ent_coef),
                save_path='{}/Difference of Means traj_len: {} ent_coef: {} loss_type: {}.pdf'.format(TODAY, traj_length, ent_coef, loss_type))
 
-def plot_variance_ratios(vrs, quantiles, traj_length, ent_coef, loss_type):
-    basic_plot(data=vrs, quantiles=quantiles, traj_length=traj_length, ent_coef=ent_coef, loss_type=loss_type,
-               label='var(filtering posterior) / var(rl proposal)',
+def plot_variance_ratios(vrs, quantiles, traj_length, ent_coef, loss_type, labels):
+    basic_plot(datas=vrs, quantiles=quantiles, traj_length=traj_length, ent_coef=ent_coef, loss_type=loss_type,
+               labels=labels,
                xlabel='Trajectory Step (of {})'.format(traj_length), ylabel='Variance Ratio',
                title='Ratio of Variances of Filtering Posterior and RL Proposal\n(Loss Type: {} Coef: {})'.format(loss_type, ent_coef),
                save_path='{}/Variance Ratio traj_len: {} ent_coef: {} loss_type: {}.pdf'.format(TODAY, traj_length, ent_coef, loss_type))
 
-def basic_plot(data, quantiles, traj_length, ent_coef, loss_type, label, xlabel, ylabel, title, save_path):
-    data = data.detach()
-    lwr, med, upr = torch.quantile(data, quantiles, dim=0)
-    x_data = torch.arange(1, traj_length+1)
-    plt.plot(x_data, med.squeeze(), label=label)
-    plt.fill_between(x_data, y1=lwr, y2=upr, alpha=0.3)
+def basic_plot(datas, quantiles, traj_length, label, xlabel, ylabel, title, save_path):
+    for data in datas:
+        data = data.detach()
+        lwr, med, upr = torch.quantile(data, quantiles, dim=0)
+        x_data = torch.arange(1, traj_length+1)
+        plt.plot(x_data, med.squeeze(), label=label)
+        plt.fill_between(x_data, y1=lwr, y2=upr, alpha=0.3)
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
     plt.title(title)
@@ -1555,15 +1556,22 @@ def basic_plot(data, quantiles, traj_length, ent_coef, loss_type, label, xlabel,
     wandb.save(save_path)
     plt.close()
 
-def execute_variance_ratio_runs(t_len, ent_coef, loss_type, model_name):
-    means, vrs = sample_variance_ratios(traj_length=t_len, model_name=model_name)
+def execute_variance_ratio_runs(t_len, ent_coef):
+    labels = [FORWARD_KL, REVERSE_KL]
+    forward_model_name = get_model_name(traj_length=traj_length, dim=dim, ent_coef=ent_coef, loss_type=FORWARD_KL)
+    reverse_model_name = get_model_name(traj_length=traj_length, dim=dim, ent_coef=ent_coef, loss_type=REVERSE_KL)
+    forward_means, forward_vrs = sample_variance_ratios(traj_length=t_len, model_name=forward_model_name)
+    reverse_means, reverse_vrs = sample_variance_ratios(traj_length=t_len, model_name=reverse_model_name)
     quantiles = torch.tensor([0.05, 0.5, 0.95])
-    plot_mean_diffs(means=means, quantiles=quantiles, traj_length=t_len, ent_coef=ent_coef, loss_type=loss_type)
-    plot_variance_ratios(vrs=vrs, quantiles=quantiles, traj_length=t_len, ent_coef=ent_coef, loss_type=loss_type)
+    plot_mean_diffs(means=[forward_means, reverse_means], quantiles=quantiles, traj_length=t_len,
+                    ent_coef=ent_coef, loss_type=loss_type, labels=labels)
+    plot_variance_ratios(vrs=[forward_vrs, reverse_vrs], quantiles=quantiles, traj_length=t_len,
+                         ent_coef=ent_coef, loss_type=loss_type, labels=labels)
 
 def execute_state_occupancy(traj_length, ent_coef):
-    forward_model_name = get_model_name(traj_length=traj_length, dim=1, ent_coef=ent_coef, loss_type='forward_kl')
-    reverse_model_name = get_model_name(traj_length=traj_length, dim=1, ent_coef=ent_coef, loss_type='reverse_kl')
+    labels = [FORWARD_KL, REVERSE_KL]
+    forward_model_name = get_model_name(traj_length=traj_length, dim=1, ent_coef=ent_coef, loss_type=FORWARD_KL)
+    reverse_model_name = get_model_name(traj_length=traj_length, dim=1, ent_coef=ent_coef, loss_type=REVERSE_KL)
     forward_state_occupancy = sample_empirical_state_occupancy(traj_length, forward_model_name)
     reverse_state_occupancy = sample_empirical_state_occupancy(traj_length, reverse_model_name)
     filtering_state_occupancy = sample_filtering_state_occupancy(traj_length)
@@ -1774,7 +1782,8 @@ if __name__ == "__main__":
         execute_3d_state_occupancy(traj_length=traj_length, ent_coef=ent_coef)
     elif subroutine == 'variance_ratio':
         print('executing: {}'.format('variance_ratio'))
-        execute_variance_ratio_runs(t_len=traj_length, ent_coef=ent_coef, loss_type=loss_type, model_name=model_name)
+        # execute_variance_ratio_runs(t_len=traj_length, ent_coef=ent_coef, loss_type=loss_type, model_name=model_name)
+        execute_variance_ratio_runs(t_len=traj_length, ent_coef=ent_coef, loss_type=loss_type)
     else:
         print('executing: {}'.format('custom'))
         table = create_dimension_table(torch.tensor([dim]), random=False)
