@@ -1624,7 +1624,7 @@ def execute_3d_state_occupancy(traj_length, ent_coef):
     except:
         pass
     filtering_state_occupancy = sample_filtering_state_occupancy(traj_length)
-        state_occupancy_dict['Filtering Posterior'] = filtering_state_occupancy
+    state_occupancy_dict['Filtering Posterior'] = filtering_state_occupancy
     quantiles = torch.tensor([0.05, 0.5, 0.95], dtype=filtering_state_occupancy.dtype)
     plot_3d_state_occupancy(state_occupancy_dict=state_occupancy_dict,
                             quantiles=quantiles, traj_length=traj_length, ent_coef=ent_coef, loss_type=loss_type,
