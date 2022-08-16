@@ -1385,7 +1385,8 @@ def sample_variance_ratios(traj_length, model_name, condition_length):
         # generate a set of ys using the true model parameters
         traj_ys, traj_xs = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0:2]
         # create filtering distribution given the ys
-        tds, traj_ys = compute_filtering_posteriors(table=table, num_obs=traj_length, dim=dim, ys=traj_ys)
+        _tds, traj_ys = compute_filtering_posteriors(table=table, num_obs=traj_length, dim=dim, ys=traj_ys)
+        tds = _tds[0:traj_length-condition_length+1]
 
         # get first filtering distribution p(x0 | y0:yT)
         td = tds[0].condition(y_values=traj_ys)
@@ -1393,7 +1394,7 @@ def sample_variance_ratios(traj_length, model_name, condition_length):
         # get first obs
         xt = traj_xs[0].reshape(1)
         y0 = traj_ys[0:condition_length]
-        obs = torch.cat([torch.zeros_like(xt), y0.reshape(1)]).reshape(1, dim+1)
+        obs = torch.cat([torch.zeros_like(xt), y0]).reshape(1, -1)
 
         # collect ratio of mean and variance at each step
         policy_dist_zero = policy.get_distribution(obs).distribution
@@ -1411,7 +1412,7 @@ def sample_variance_ratios(traj_length, model_name, condition_length):
             filtering_variance = dst.covariance()
 
             # policy dist
-            obs = torch.cat([xt, y[0].reshape(1)]).reshape(1, dim+1)
+            obs = torch.cat([xt, y[0:condition_length]]).reshape(1, -1)
             policy_dist = policy.get_distribution(obs).distribution
 
             # mean ratio
@@ -1566,38 +1567,66 @@ def execute_variance_ratio_runs(t_len, ent_coef, condition_length):
     labels = [FORWARD_KL, REVERSE_KL]
     forward_model_name = get_model_name(traj_length=traj_length, dim=dim, ent_coef=ent_coef, loss_type=FORWARD_KL)
     reverse_model_name = get_model_name(traj_length=traj_length, dim=dim, ent_coef=ent_coef, loss_type=REVERSE_KL)
-    forward_means, forward_vrs = sample_variance_ratios(traj_length=t_len, model_name=forward_model_name, condition_length=condition_length)
-    reverse_means, reverse_vrs = sample_variance_ratios(traj_length=t_len, model_name=reverse_model_name, condition_length=condition_length)
+    means = []
+    vrs = []
+    try:
+        forward_means, forward_vrs = sample_variance_ratios(traj_length=t_len, model_name=forward_model_name, condition_length=condition_length)
+        means.append(forward_means)
+        vrs.append(forward_means)
+    except:
+        pass
+    try:
+        reverse_means, reverse_vrs = sample_variance_ratios(traj_length=t_len, model_name=reverse_model_name, condition_length=condition_length)
+        means.append(reverse_means)
+        vrs.append(reverse_means)
+    except:
+        pass
     quantiles = torch.tensor([0.05, 0.5, 0.95])
-    plot_mean_diffs(means=[forward_means, reverse_means], quantiles=quantiles, traj_length=t_len,
+    plot_mean_diffs(means=means, quantiles=quantiles, traj_length=t_len,
                     ent_coef=ent_coef, loss_type=loss_type, labels=labels)
-    plot_variance_ratios(vrs=[forward_vrs, reverse_vrs], quantiles=quantiles, traj_length=t_len,
+    plot_variance_ratios(vrs=vrs, quantiles=quantiles, traj_length=t_len,
                          ent_coef=ent_coef, loss_type=loss_type, labels=labels)
 
 def execute_state_occupancy(traj_length, ent_coef):
     labels = [FORWARD_KL, REVERSE_KL]
     forward_model_name = get_model_name(traj_length=traj_length, dim=1, ent_coef=ent_coef, loss_type=FORWARD_KL)
     reverse_model_name = get_model_name(traj_length=traj_length, dim=1, ent_coef=ent_coef, loss_type=REVERSE_KL)
-    forward_state_occupancy = sample_empirical_state_occupancy(traj_length, forward_model_name)
-    reverse_state_occupancy = sample_empirical_state_occupancy(traj_length, reverse_model_name)
+    state_occupancies = []
+    try:
+        forward_state_occupancy = sample_empirical_state_occupancy(traj_length, forward_model_name)
+        state_occupancies.append((forward_state_occupancy, 'Forward KL agent'))
+    except:
+        pass
+    try:
+        reverse_state_occupancy = sample_empirical_state_occupancy(traj_length, reverse_model_name)
+        state_occupancies.append((reverse_state_occupancy, 'Reverse KL agent'))
+    except:
+        pass
     filtering_state_occupancy = sample_filtering_state_occupancy(traj_length)
+    state_occupancies.append((filtering_state_occupancy, 'Filtering Posterior'))
     quantiles = torch.tensor([0.05, 0.5, 0.95], dtype=filtering_state_occupancy.dtype)
-    plot_state_occupancy(state_occupancies=[(forward_state_occupancy, 'Forward KL agent'),
-                                            (reverse_state_occupancy, 'Reverse KL agent'),
-                                            (filtering_state_occupancy, 'Filtering Posterior')],
+    plot_state_occupancy(state_occupancies=state_occupancies,
                          quantiles=quantiles, traj_length=traj_length, ent_coef=ent_coef, loss_type=loss_type,
                          today_dir=TODAY)
 
 def execute_3d_state_occupancy(traj_length, ent_coef):
     forward_model_name = get_model_name(traj_length=traj_length, dim=1, ent_coef=ent_coef, loss_type='forward_kl')
     reverse_model_name = get_model_name(traj_length=traj_length, dim=1, ent_coef=ent_coef, loss_type='reverse_kl')
-    forward_state_occupancy = sample_empirical_state_occupancy(traj_length, forward_model_name)
-    reverse_state_occupancy = sample_empirical_state_occupancy(traj_length, reverse_model_name)
+    state_occupancy_dict = {}
+    try:
+        forward_state_occupancy = sample_empirical_state_occupancy(traj_length, forward_model_name)
+        state_occupancy_dict['Forward KL agent'] = forward_state_occupancy
+    except:
+        pass
+    try:
+        reverse_state_occupancy = sample_empirical_state_occupancy(traj_length, reverse_model_name)
+        state_occupancy_dict['Reverse KL agent'] = reverse_state_occupancy
+    except:
+        pass
     filtering_state_occupancy = sample_filtering_state_occupancy(traj_length)
+        state_occupancy_dict['Filtering Posterior'] = filtering_state_occupancy
     quantiles = torch.tensor([0.05, 0.5, 0.95], dtype=filtering_state_occupancy.dtype)
-    plot_3d_state_occupancy(state_occupancy_dict={'Forward KL agent':forward_state_occupancy,
-                                                  'Reverse KL agent':reverse_state_occupancy,
-                                                  'Filtering Posterior':filtering_state_occupancy},
+    plot_3d_state_occupancy(state_occupancy_dict=state_occupancy_dict,
                             quantiles=quantiles, traj_length=traj_length, ent_coef=ent_coef, loss_type=loss_type,
                             today_dir=TODAY)
 
