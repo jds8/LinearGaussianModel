@@ -96,10 +96,13 @@ def evaluate(ys, d, N, env):
             log_p_y_given_x += info['lik_reward']
             actions.append(info['action'])
             xs.append(xt)
-        if isinstance(xs[0], torch.Tensor):
-            xs = torch.cat(xs).reshape(-1, env.traj_length)
-        else:
-            xs = torch.tensor(np.array(xs)).reshape(-1, env.traj_length)
+        try:
+            if isinstance(xs[0], torch.Tensor):
+                xs = torch.cat(xs).reshape(-1, env.traj_length)
+            else:
+                xs = torch.tensor(np.array(xs)).reshape(-1, env.traj_length)
+        except:
+            pass
 
         # log p(x,y)
         log_p_y_x = log_p_y_given_x + log_p_x
@@ -170,10 +173,13 @@ def evaluate_until(d, truth, env, epsilon, max_samples=100000):
             log_p_y_given_x += info['lik_reward']
             actions.append(info['action'])
             xs.append(xt)
-        if isinstance(xs[0], torch.Tensor):
-            xs = torch.cat(xs).reshape(-1, env.traj_length)
-        else:
-            xs = torch.tensor(np.array(xs)).reshape(-1, env.traj_length)
+        try:
+            if isinstance(xs[0], torch.Tensor):
+                xs = torch.cat(xs).reshape(-1, env.traj_length)
+            else:
+                xs = torch.tensor(np.array(xs)).reshape(-1, env.traj_length)
+        except:
+            pass
 
         # log p(x,y)
         log_p_y_x = log_p_y_given_x + log_p_x
