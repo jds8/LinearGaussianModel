@@ -6,7 +6,7 @@ import torch.distributions as dist
 import numpy as np
 from generative_model import y_dist, sample_y, generate_trajectory, score_y, score_initial_state, score_state_transition
 from linear_gaussian_prob_prog import GaussianRandomVariable, LinearGaussian
-from filtering_posterior import _compute_filtering_posteriors
+from filtering_posterior import _compute_conditional_filtering_posteriors
 
 
 class AbstractLinearGaussianEnv(gym.Env):
@@ -138,8 +138,8 @@ class AbstractLinearGaussianEnv(gym.Env):
             self.ys = self.generate()
 
         # create filtering distribution given the ys
-        self.tds, _ = _compute_filtering_posteriors(A=self.A, Q=self.Q, C=self.C, R=self.R, mu_0=self.mu_0, Q_0=self.Q_0,
-                                                    num_obs=len(self.ys), dim=self.prev_xt.nelement(), ys=self.ys)
+        self.tds, _ = _compute_conditional_filtering_posteriors(A=self.A, Q=self.Q, C=self.C, R=self.R, mu_0=self.mu_0, Q_0=self.Q_0,
+                                                                num_obs=len(self.ys), dim=self.prev_xt.nelement(), ys=self.ys)
 
         first_y = self.ys[0]
 

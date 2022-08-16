@@ -89,7 +89,7 @@ def compute_filtering_data_structures(dim, num_obs):
         current_index -= 1
     return xs, ys, p_y_next_given_x
 
-def old_compute_filtering_posterior(t, num_obs, xs, ys, p_y_next_given_x, A, C):
+def old_compute_conditional_filtering_posterior(t, num_obs, xs, ys, p_y_next_given_x, A, C):
     if t == 0:
         lik = ys[0].likelihood()
         cond_ys = lik * p_y_next_given_x[0]
@@ -106,7 +106,7 @@ def old_compute_filtering_posterior(t, num_obs, xs, ys, p_y_next_given_x, A, C):
 
     return FilteringPosterior(numerator, denominator.left + [x for x in [denominator.right] if x is not None])
 
-def compute_filtering_posterior(t, num_obs, xs, ys, A, C, m=0):
+def compute_conditional_filtering_posterior(t, num_obs, xs, ys, A, C, m=0):
     rest_of_ys = ys[t+1:] if m == 0 else ys[t+1:t+m]
     rvars = [ys[t], xs[t]] + rest_of_ys
     rvars += [xs[t-1]] if t > 0 else []
@@ -115,7 +115,14 @@ def compute_filtering_posterior(t, num_obs, xs, ys, A, C, m=0):
     condition_vars = condition_vars + [xs[t-1]] if t > 0 else condition_vars
     return FilteringPosterior(jvs.dist, condition_vars)
 
-def old_compute_filtering_posteriors(table, num_obs, dim, ys=None):
+def compute_filtering_posterior(t, num_obs, xs, ys, A, C, m=0):
+    rest_of_ys = ys[t+1:] if m == 0 else ys[t+1:t+m]
+    rvars = [ys[t], xs[t]] + rest_of_ys
+    jvs = JointVariables(rvars, A=A, C=C)
+    condition_vars = [ys[t]] + rest_of_ys
+    return FilteringPosterior(jvs.dist, condition_vars)
+
+def old_compute_conditional_filtering_posteriors(table, num_obs, dim, ys=None):
     A = table[dim]['A']
     Q = table[dim]['Q']
     C = table[dim]['C']
@@ -136,11 +143,11 @@ def old_compute_filtering_posteriors(table, num_obs, dim, ys=None):
 
     fps = []
     for t in range(num_obs):
-        filtering_posterior = old_compute_filtering_posterior(t, num_obs, fp_xs, fp_ys, p_y_next_given_x, A, C)
+        filtering_posterior = old_compute_conditional_filtering_posterior(t, num_obs, fp_xs, fp_ys, p_y_next_given_x, A, C)
         fps.append(filtering_posterior)
     return fps, ys
 
-def compute_filtering_posteriors(table, num_obs, dim, m=0, ys=None):
+def compute_conditional_filtering_posteriors(table, num_obs, dim, m=0, condition_on_x=True, ys=None):
     A = table[dim]['A']
     Q = table[dim]['Q']
     C = table[dim]['C']
@@ -148,14 +155,10 @@ def compute_filtering_posteriors(table, num_obs, dim, m=0, ys=None):
     mu_0 = table[dim]['mu_0']
     Q_0 = table[dim]['Q_0']
 
-    return _compute_filtering_posteriors(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, num_obs=num_obs, dim=dim, m=m, ys=ys)
+    return _compute_conditional_filtering_posteriors(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0,
+                                                     num_obs=num_obs, dim=dim, m=m, condition_on_x=condition_on_x, ys=ys)
 
-def _compute_filtering_posteriors(A, Q, C, R, mu_0, Q_0, num_obs, dim, m=0, ys=None):
-    if ys is None:
-        ys = generate_trajectory(num_obs, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0]
-
-    assert(num_obs == len(ys))
-
+def _compute_conditional_filtering_posteriors(A, Q, C, R, mu_0, Q_0, num_obs, dim, m=0, condition_on_x=True, ys=None):
     lgv = get_linear_gaussian_variables(dim=dim, num_obs=num_obs)
 
     # true evidence
@@ -164,9 +167,12 @@ def _compute_filtering_posteriors(A, Q, C, R, mu_0, Q_0, num_obs, dim, m=0, ys=N
 
     fps = []
     for t in range(num_obs):
-        filtering_posterior = compute_filtering_posterior(t, num_obs, lgv.xs, lgv.ys, A, C, m=m)
+        if condition_on_x:
+            filtering_posterior = compute_conditional_filtering_posterior(t, num_obs, lgv.xs, lgv.ys, A, C, m=m)
+        else:
+            filtering_posterior = compute_filtering_posterior(t, num_obs, lgv.xs, lgv.ys, A, C, m=m)
         fps.append(filtering_posterior)
-    return fps, ys
+    return fps
 
 def test_filtering_posterior():
     dim = 1
@@ -177,10 +183,10 @@ def test_filtering_posterior():
     C = table[dim]['C']
 
     xs, ys, p_y_next_given_x = compute_filtering_data_structures(dim=dim, num_obs=num_obs)
-    fp1 = old_compute_filtering_posterior(t=0, num_obs=num_obs, xs=xs, ys=ys, p_y_next_given_x=p_y_next_given_x, A=A, C=C)
-    fp2 = old_compute_filtering_posterior(t=1, num_obs=num_obs, xs=xs, ys=ys, p_y_next_given_x=p_y_next_given_x, A=A, C=C)
-    fp3 = old_compute_filtering_posterior(t=2, num_obs=num_obs, xs=xs, ys=ys, p_y_next_given_x=p_y_next_given_x, A=A, C=C)
-    fp4 = old_compute_filtering_posterior(t=3, num_obs=num_obs, xs=xs, ys=ys, p_y_next_given_x=p_y_next_given_x, A=A, C=C)
+    fp1 = old_compute_conditional_filtering_posterior(t=0, num_obs=num_obs, xs=xs, ys=ys, p_y_next_given_x=p_y_next_given_x, A=A, C=C)
+    fp2 = old_compute_conditional_filtering_posterior(t=1, num_obs=num_obs, xs=xs, ys=ys, p_y_next_given_x=p_y_next_given_x, A=A, C=C)
+    fp3 = old_compute_conditional_filtering_posterior(t=2, num_obs=num_obs, xs=xs, ys=ys, p_y_next_given_x=p_y_next_given_x, A=A, C=C)
+    fp4 = old_compute_conditional_filtering_posterior(t=3, num_obs=num_obs, xs=xs, ys=ys, p_y_next_given_x=p_y_next_given_x, A=A, C=C)
 
     mu = fp2.denominator.mean(value=torch.ones(1))
     fp_dist = fp2.condition(mu)
@@ -194,24 +200,17 @@ def compare_truncated_posterior(table, num_obs, dim, condition_length):
     mu_0 = table[dim]['mu_0']
     Q_0 = table[dim]['Q_0']
 
-    # generate a set of ys using the true model parameters
-    traj_ys, traj_xs = generate_trajectory(num_obs, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0:2]
+    traj_ys, _ = generate_trajectory(num_obs, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0:2]
 
-    fps, _ = compute_filtering_posteriors(table, num_obs, dim, m=0, ys=traj_ys)
-    fps_m, _ = compute_filtering_posteriors(table, num_obs, dim, m=condition_length, ys=traj_ys)
+    fps = compute_conditional_filtering_posteriors(table, num_obs, dim, m=0, condition_on_x=False, ys=None)
+    fps_m = compute_conditional_filtering_posteriors(table, num_obs, dim, m=condition_length, condition_on_x=False, ys=None)
     # we only want to look at trajectories of length num_obs - condition_length
     fps_m = fps_m[0:num_obs-condition_length]
 
     kls = []
     for i, (f, f_m) in enumerate(zip(fps, fps_m)):
-        if i == 0:
-            td = f.condition(y_values=traj_ys)
-            td_m = f_m.condition(y_values=traj_ys[0:condition_length])
-        else:
-            prev_xt = traj_xs[i-1].reshape(1)
-            td = f.condition(y_values=traj_ys[i:], x_value=prev_xt)
-            td_m = f_m.condition(y_values=traj_ys[i:i+condition_length], x_value=prev_xt)
-
+        td = f.condition(y_values=traj_ys)
+        td_m = f_m.condition(y_values=traj_ys[0:condition_length])
         kls.append(dist.kl_divergence(td.get_dist(), td_m.get_dist()))
     return kls
 

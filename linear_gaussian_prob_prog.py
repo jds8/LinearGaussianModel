@@ -302,7 +302,9 @@ class GaussianDistribution:
     @staticmethod
     def _condition_helper(dd, x_inds, z_inds, all_vars, z_values):
         # find indices which correspond to x_inds ( dimensionality might be > 1 )
-        x_dims = [len(var.mu) for var in np.array(all_vars)[x_inds.numpy()]]
+        x_dims = []
+        if x_inds.nelement() > 0:
+            x_dims = [len(var.mu) for var in np.array(all_vars)[x_inds.numpy()]]
         z_dims = [len(var.mu) for var in np.array(all_vars)[z_inds.numpy()]]
 
         start_inds = [0]

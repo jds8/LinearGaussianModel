@@ -25,7 +25,7 @@ from plot_utils import legend_without_duplicate_labels
 from linear_gaussian_prob_prog import MultiGaussianRandomVariable, GaussianRandomVariable, MultiLinearGaussian, LinearGaussian, VecLinearGaussian
 from evaluation import EvaluationObject, evaluate, evaluate_filtering_posterior, evaluate_agent_until
 from dimension_table import create_dimension_table
-from filtering_posterior import compute_filtering_posteriors
+from filtering_posterior import compute_conditional_filtering_posteriors
 import pandas as pd
 from get_args import get_args
 from pathlib import Path
@@ -946,7 +946,7 @@ def get_perturbed_posterior_filtering_output(table, posterior_evidence, dim, eps
     ys = posterior_evidence.ys
     true_posterior = posterior_evidence.td
     env = posterior_evidence.env
-    fps, ys = compute_filtering_posteriors(table=table, num_obs=len(posterior_evidence.ys), dim=dim, ys=posterior_evidence.ys)
+    fps = compute_conditional_filtering_posteriors(table=table, num_obs=len(posterior_evidence.ys), dim=dim, ys=posterior_evidence.ys)
 
     posterior_output = ImportanceOutput(traj_length=len(ys), ys=ys, dim=dim)
     # get importance weighted score for comparison
@@ -1316,7 +1316,8 @@ def verify_filtering_posterior():
     traj_length = 5
     posterior_evidence = compute_evidence(table, traj_length, dim)
 
-    fps, ys = compute_filtering_posteriors(table=table, num_obs=traj_length, dim=dim, ys=posterior_evidence.ys)
+    ys = posterior_evidence.ys
+    fps = compute_conditional_filtering_posteriors(table=table, num_obs=traj_length, dim=dim, ys=posterior_evidence.ys)
 
     A = table[dim]['A']
     Q = table[dim]['Q']
@@ -1385,7 +1386,7 @@ def sample_variance_ratios(traj_length, model_name, condition_length):
         # generate a set of ys using the true model parameters
         traj_ys, traj_xs = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0:2]
         # create filtering distribution given the ys
-        _tds, traj_ys = compute_filtering_posteriors(table=table, num_obs=traj_length, dim=dim, ys=traj_ys)
+        _tds = compute_conditional_filtering_posteriors(table=table, num_obs=traj_length, dim=dim, ys=traj_ys)
         tds = _tds[0:traj_length-condition_length+1]
 
         # get first filtering distribution p(x0 | y0:yT)
@@ -1462,7 +1463,7 @@ def sample_empirical_state_occupancy(traj_length, model_name):
         # generate a set of ys using the true model parameters
         traj_ys, _ = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0:2]
         # create filtering distribution given the ys
-        tds, traj_ys = compute_filtering_posteriors(table=table, num_obs=traj_length, dim=dim, ys=traj_ys)
+        tds = compute_conditional_filtering_posteriors(table=table, num_obs=traj_length, dim=dim, ys=traj_ys)
 
         for i in range(NUM_VARIANCE_SAMPLES):
             # get first filtering distribution p(x0 | y0:yT)
@@ -1513,7 +1514,7 @@ def sample_filtering_state_occupancy(traj_length):
         # generate a set of ys using the true model parameters
         traj_ys, _ = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0:2]
         # create filtering distribution given the ys
-        tds, traj_ys = compute_filtering_posteriors(table=table, num_obs=traj_length, dim=dim, ys=traj_ys)
+        tds = compute_conditional_filtering_posteriors(table=table, num_obs=traj_length, dim=dim, ys=traj_ys)
 
         for i in range(NUM_VARIANCE_SAMPLES):
             # get first filtering distribution p(x0 | y0:yT)
@@ -1572,18 +1573,19 @@ def execute_variance_ratio_runs(t_len, ent_coef, condition_length):
     try:
         forward_means, forward_vrs = sample_variance_ratios(traj_length=t_len, model_name=forward_model_name, condition_length=condition_length)
         means.append(forward_means)
-        vrs.append(forward_means)
+        vrs.append(forward_vrs)
     except:
         pass
     try:
         reverse_means, reverse_vrs = sample_variance_ratios(traj_length=t_len, model_name=reverse_model_name, condition_length=condition_length)
         means.append(reverse_means)
-        vrs.append(reverse_means)
+        vrs.append(reverse_vrs)
     except:
         pass
     quantiles = torch.tensor([0.05, 0.5, 0.95])
     plot_mean_diffs(means=means, quantiles=quantiles, traj_length=t_len,
                     ent_coef=ent_coef, loss_type=loss_type, labels=labels)
+    plt.figure()
     plot_variance_ratios(vrs=vrs, quantiles=quantiles, traj_length=t_len,
                          ent_coef=ent_coef, loss_type=loss_type, labels=labels)
 
