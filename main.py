@@ -1440,9 +1440,9 @@ def sample_variance_ratios(traj_length, model_name, condition_length):
             variance_ratio = (filtering_variance / rl_variance).reshape(1, 1)
             variance_ratio_steps = torch.cat((variance_ratio_steps.reshape(1, -1), variance_ratio), dim=1)
 
-            if torch.abs(variance_ratio[0, 0] - variance_ratio_steps[0, 0]).item() > 0.001:
-                import pdb; pdb.set_trace()
-                dst = td_fps.condition(y_values=y, x_value=xt)
+            # if torch.abs(variance_ratio[0, 0] - variance_ratio_steps[0, 0]).item() > 0.001:
+            #     import pdb; pdb.set_trace()
+            #     dst = td_fps.condition(y_values=y, x_value=xt)
 
             # get next hidden state
             xt = traj_xs[j].reshape(1)
