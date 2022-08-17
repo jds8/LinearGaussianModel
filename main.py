@@ -865,12 +865,11 @@ def compute_evidence(table, traj_length, dim, condition_length):
     eval_obj = evaluate_posterior(ys=end_ys, N=3, td=td, env=env)
     true = eval_obj.running_log_estimates[0]
 
-    # true evidence
-    lgv = get_linear_gaussian_variables(dim=dim, num_obs=traj_length)
-    jvs = JointVariables(lgv.ys[0:2], A=A, C=C)
-
-    print('true evidence: ', jvs.dist.log_prob(end_ys))
-    print('True evidence: {}'.format(true))
+    # # true evidence
+    # lgv = get_linear_gaussian_variables(dim=dim, num_obs=traj_length)
+    # jvs = JointVariables(lgv.ys[0:2], A=A, C=C)
+    # print('true evidence: ', jvs.dist.log_prob(end_ys))
+    # print('True evidence: {}'.format(true))
 
     return PosteriorEvidence(td, ys, true, env, condition_length=condition_length)
 
@@ -1802,7 +1801,7 @@ if __name__ == "__main__":
         test_train(traj_length=traj_length, dim=dim, condition_length=condition_length,
                    ent_coef=ent_coef, loss_type=loss_type, learning_rate=learning_rate,
                    clip_range=clip_range, linear_gaussian_env_type=linear_gaussian_env_type)
-        evaluate_agent(linear_gaussian_env_type, traj_length, dim, model_name)
+        evaluate_agent(linear_gaussian_env_type, traj_length, dim, model_name, condition_length=condition_length)
     elif subroutine == 'evaluate_until':
         print('executing: {}'.format('evaluate_until'))
         execute_evaluate_agent_until(linear_gaussian_env_type=linear_gaussian_env_type,
