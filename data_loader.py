@@ -41,7 +41,7 @@ def load_dataset(names, qtiles):
         dataset.append(load_data(name, qtiles))
     return dataset
 
-def load_ess_data(filename):
+def load_ess_data(filename, data_type):
     df = pd.read_csv(filename, index_col=0)
 
     # get all of the non index columns
@@ -49,12 +49,4 @@ def load_ess_data(filename):
 
     data_label = Path(filename).stem.split('(')[0]
 
-    if filename.endswith('dim.csv'):
-        data_type = 'dim'
-    elif filename.endswith('traj.csv'):
-        data_type = 'traj'
-    else:
-        raise NotImplementedError
-
     return DataWithColumns(data, df.columns, data_label, data_type)
-

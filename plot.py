@@ -18,7 +18,7 @@ def plot_ess_quantile_data(dataset: List[QuantileData]):
         plt.plot(x_vals, med.squeeze(), label=data_label)
         plt.fill_between(x_vals, y1=lower_ci, y2=upper_ci, alpha=0.3)
 
-def plot_ess_data(data_obj: DataWithColumns):
+def plot_ess_data(data_obj: DataWithColumns, i=1):
     data = data_obj.data
     columns = data_obj.columns
     data_label = data_obj.data_label
@@ -26,7 +26,7 @@ def plot_ess_data(data_obj: DataWithColumns):
     quantiles = torch.tensor([0.05, 0.5, 0.95], dtype=data.dtype)
     lower_ci, med, upper_ci = torch.quantile(data, quantiles, dim=0)
 
-    x_vals = torch.arange(1, len(med)+1)
+    x_vals = torch.arange(i, len(med)+i)
     plt.plot(x_vals, med.squeeze(), label=data_label)
     plt.fill_between(x_vals, y1=lower_ci, y2=upper_ci, alpha=0.3)
 

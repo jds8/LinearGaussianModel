@@ -1647,11 +1647,11 @@ def get_full_name_of_ess_type(ess_type):
     else:
         raise NotImplementedError
 
-def plot_ess_from_data(filenames):
+def plot_ess_from_data(filenames, data_type):
     assert filenames
-    for filename in filenames:
-        data_with_columns = load_ess_data(filename)
-        plot_ess_data(data_with_columns)
+    for j, filename in enumerate(filenames):
+        data_with_columns = load_ess_data(filename, data_type)
+        plot_ess_data(data_with_columns, i=j+1)
         ess_type = data_with_columns.data_type
     xlabel = get_full_name_of_ess_type(ess_type)
 
@@ -1661,7 +1661,37 @@ def plot_ess_from_data(filenames):
     plt.xlabel('{}'.format(xlabel))
     plt.ylabel('Effective Sample Size')
     plt.title('Effective Sample Size vs. {}'.format(xlabel))
-    plt.legend()
+    legend_without_duplicate_labels(plt.gca())
+    plt.savefig('{}/ess_{}.pdf'.format(TODAY, ess_type))
+    wandb.save('{}/ess_{}.pdf'.format(TODAY, ess_type))
+    plt.close()
+
+def plot_ess_from_partial_data(filenames, data_type):
+    assert filenames
+    data = None
+    for j, filename in enumerate(filenames):
+        data_with_columns = load_ess_data(filename, data_type)
+        ess_type = data_with_columns.data_type
+        data_label = data_with_columns.data_label
+        if data is None:
+            data = data_with_columns.data
+        else:
+            data = torch.cat([data, data_with_columns.data], dim=1)
+    quantiles = torch.tensor([0.05, 0.5, 0.95], dtype=data.dtype)
+    lower_ci, med, upper_ci = torch.quantile(data, quantiles, dim=0)
+
+    x_vals = torch.arange(1, med.nelement()+1)
+
+    plt.plot(x_vals, med.squeeze(), label=data_label)
+    plt.fill_between(x_vals, y1=lower_ci, y2=upper_ci, alpha=0.3)
+
+    xlabel = get_full_name_of_ess_type(ess_type)
+    ax = plt.gca()
+    ax.xaxis.get_major_locator().set_params(integer=True)
+    plt.xlabel('{}'.format(xlabel))
+    plt.ylabel('Effective Sample Size')
+    plt.title('Effective Sample Size vs. {}'.format(xlabel))
+    legend_without_duplicate_labels(plt.gca())
     plt.savefig('{}/ess_{}.pdf'.format(TODAY, ess_type))
     wandb.save('{}/ess_{}.pdf'.format(TODAY, ess_type))
     plt.close()
@@ -1741,6 +1771,7 @@ if __name__ == "__main__":
     # model_name = MODEL.format(ent_coef, loss_type, traj_length, dim)
     model_name = get_model_name(traj_length=traj_length, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
     filenames = args.filenames
+    data_type = args.data_type
     ess_dims = args.ess_dims
     ess_traj_lengths = args.ess_traj_lengths
     condition_length = args.condition_length if args.condition_length > 0 else traj_length
@@ -1808,9 +1839,12 @@ if __name__ == "__main__":
         print('executing: {}'.format('rl_ess_dim'))
         table = create_dimension_table(torch.tensor(ess_dims), random=False)
         rl_ess_dim(linear_gaussian_env_type, table=table, traj_length=traj_length, dims=ess_dims, ent_coef=ent_coef, loss_type=loss_type)
+    elif subroutine == 'load_ess_partial_data':
+        print('executing: {}'.format('load_ess_dim'))
+        plot_ess_from_partial_data(filenames, data_type)
     elif subroutine == 'load_ess_data':
         print('executing: {}'.format('load_ess_dim'))
-        plot_ess_from_data(filenames)
+        plot_ess_from_data(filenames, data_type)
     elif subroutine == 'state_occupancy':
         print('executing: {}'.format('state_occupancy'))
         execute_state_occupancy(traj_length=traj_length, ent_coef=ent_coef)

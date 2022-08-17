@@ -15,6 +15,7 @@ def get_args():
     parser.add_argument('--ent_coef', type=float, default=0.1, help='coefficient on KL regularization term (loss_type)')
     parser.add_argument('--subroutine', type=str, default='train_agent', help='what subroutine to run (train_agent, evaluate_agent, ess_dim, ess_traj, load_ess_dim)')
     parser.add_argument('--filenames', type=str, default='', help='what file to load', nargs='*')
+    parser.add_argument('--data_type', type=str, default='', help='what type of data (traj or dim) to load')
     parser.add_argument('--ess_dims', type=int, default=1, help='dimensions for ess', nargs='*')
     parser.add_argument('--ess_traj_lengths', type=int, default=1, help='traj_lengths for ess', nargs='*')
     parser.add_argument('--epsilon', type=float, default=0.1, help='the largest deviation between the evidence estimate ratio and 1')
