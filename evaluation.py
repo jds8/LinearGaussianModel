@@ -54,7 +54,7 @@ class EvaluationObject:
         self.ess_sigma_est = self.sigma_est / self.log_weight_mean.exp()
 
 
-def evaluate(ys, d, N, env):
+def evaluate(d, N, env, deterministic=False):
     run = wandb.init(project='linear_gaussian_model evaluation', save_code=True, entity='iai')
     print('\nevaluating...')
     # evidence estimate
@@ -85,12 +85,7 @@ def evaluate(ys, d, N, env):
         xts = []
         total_reward = 0.
         while not done:
-            try:
-                xt = d.predict(obs, deterministic=False)[0]
-            except:
-                import pdb; pdb.set_trace()
-                xt = d.predict(obs, deterministic=False)[0]
-
+            xt = d.predict(obs, deterministic=deterministic)[0]
             xts.append(env.prev_xt)
             obs, reward, done, info = env.step(xt)
             total_reward += reward

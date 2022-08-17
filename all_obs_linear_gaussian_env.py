@@ -99,7 +99,7 @@ class AllObservationsAbstractLinearGaussianEnv(gym.Env):
         self.rewards.append(reward)
 
         # check done
-        done = self.index+self.condition_length >= self.traj_length
+        done = self.index+self.condition_length > self.traj_length
 
         # add p(y_i|x_i), p(x_i|x_{i-1}), x_i, x_{i-1} to info for future estimates
         info = {'prior_reward': prior_reward,

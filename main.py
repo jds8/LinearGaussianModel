@@ -285,7 +285,7 @@ def importance_estimate(ys, A, Q, C, R, mu_0, Q_0, N, env=None, sample=False, tr
                                 traj_length=traj_length,
                                 sample=sample)
 
-    return evaluate(ys, pd, N, env)
+    return evaluate(pd, N, env)
 
 def test_importance_sampler(traj_length, A, Q):
     """
@@ -307,7 +307,7 @@ def rl_estimate(ys, dim, N, model_name, env=None, traj_length=0, device='cpu'):
         device = ys.device
     print('\nrl_estimate\n')
     _, policy = load_rl_model(model_name, device)
-    return evaluate(ys, d=policy, N=N, env=env)
+    return evaluate(d=policy, N=N, env=env)
 
 
 class Estimator:
@@ -1421,8 +1421,6 @@ def sample_variance_ratios(traj_length, model_name, condition_length):
             td_fps = tds[j]
             y = traj_ys[j:]
 
-            # import pdb; pdb.set_trace()
-
             # filtering dis
             dst = td_fps.condition(y_values=y, x_value=xt)
             filtering_mean = dst.mean()
@@ -1442,9 +1440,9 @@ def sample_variance_ratios(traj_length, model_name, condition_length):
             variance_ratio = (filtering_variance / rl_variance).reshape(1, 1)
             variance_ratio_steps = torch.cat((variance_ratio_steps.reshape(1, -1), variance_ratio), dim=1)
 
-            # if torch.abs(variance_ratio[0, 0] - variance_ratio_steps[0, 0]).item() > 0.001:
-            #     import pdb; pdb.set_trace()
-            #     dst = td_fps.condition(y_values=y, x_value=xt)
+            if torch.abs(variance_ratio[0, 0] - variance_ratio_steps[0, 0]).item() > 0.001:
+                import pdb; pdb.set_trace()
+                dst = td_fps.condition(y_values=y, x_value=xt)
 
             # get next hidden state
             xt = traj_xs[j].reshape(1)
@@ -1582,8 +1580,10 @@ def basic_plot(datas, quantiles, traj_length, labels, xlabel, ylabel, title, sav
 
 def execute_variance_ratio_runs(t_len, ent_coef, condition_length):
     labels = [FORWARD_KL, REVERSE_KL]
-    forward_model_name = get_model_name(traj_length=traj_length, dim=dim, ent_coef=ent_coef, loss_type=FORWARD_KL)
-    reverse_model_name = get_model_name(traj_length=traj_length, dim=dim, ent_coef=ent_coef, loss_type=REVERSE_KL)
+    forward_model_name = get_model_name(traj_length=traj_length, dim=dim, ent_coef=ent_coef,
+                                        loss_type=FORWARD_KL, condition_length=condition_length)
+    reverse_model_name = get_model_name(traj_length=traj_length, dim=dim, ent_coef=ent_coef,
+                                        loss_type=REVERSE_KL, condition_length=condition_length)
     means = []
     vrs = []
     try:
@@ -1769,6 +1769,34 @@ def execute_evaluate_agent_until(linear_gaussian_env_type, traj_lengths, dim, lo
     wandb.save(save_path)
     plt.close()
 
+def compare_reward(linear_gaussian_env_type, traj_length, dim, loss_type, condition_length, model_name):
+    # evaluate rl policy
+    _, policy = load_rl_model(model_name=model_name, device='cpu')
+
+    table = create_dimension_table(torch.tensor([dim]), random=False)
+    A = table[dim]['A']
+    Q = table[dim]['Q']
+    C = table[dim]['C']
+    R = table[dim]['R']
+    mu_0 = table[dim]['mu_0']
+    Q_0 = table[dim]['Q_0']
+
+    ys, _ = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0:2]
+    env = linear_gaussian_env_type(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0,
+                                   using_entropy_loss=(loss_type==ENTROPY_LOSS),
+                                   ys=ys, sample=True)
+    eval_obj_rl = evaluate(d=policy, N=1, env=env, deterministic=True)
+
+    # evaluate posterior
+    end_len = traj_length-condition_length+1
+    end_ys = ys[0:end_len]
+
+    posterior = compute_posterior(A=A, Q=Q, C=C, R=R, num_observations=len(end_ys), dim=dim)
+    td = condition_posterior(posterior, end_ys)
+
+    eval_obj_posterior = evaluate_posterior(ys=end_ys, N=1, td=td, env=env)
+    true = eval_obj_posterior.running_log_estimates[0]
+
 
 if __name__ == "__main__":
     args, _ = get_args()
@@ -1877,6 +1905,9 @@ if __name__ == "__main__":
         print('executing: {}'.format('variance_ratio'))
         # execute_variance_ratio_runs(t_len=traj_length, ent_coef=ent_coef, loss_type=loss_type, model_name=model_name)
         execute_variance_ratio_runs(t_len=traj_length, ent_coef=ent_coef, condition_length=condition_length)
+    elif subroutine == 'compare_reward':
+        print('executing: {}'.format('compare_reward'))
+        compare_reward(linear_gaussian_env_type, traj_length, dim, loss_type, condition_length, model_name)
     else:
         print('executing: {}'.format('custom'))
         table = create_dimension_table(torch.tensor([dim]), random=False)
