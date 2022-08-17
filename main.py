@@ -1786,16 +1786,16 @@ if __name__ == "__main__":
     dim = args.dim
     ent_coef = args.ent_coef
     loss_type = args.loss_type
-    # model_name = MODEL.format(ent_coef, loss_type, traj_length, dim)
-    model_name = get_model_name(traj_length=traj_length, dim=dim,
-                                ent_coef=ent_coef, loss_type=loss_type,
-                                condition_length=condition_length)
     filenames = args.filenames
     data_type = args.data_type
     ess_dims = args.ess_dims
     ess_traj_lengths = args.ess_traj_lengths
     condition_length = args.condition_length if args.condition_length > 0 else traj_length
     linear_gaussian_env_type = get_env_type_from_arg(args.env_type, condition_length=condition_length)
+
+    model_name = get_model_name(traj_length=traj_length, dim=dim,
+                                ent_coef=ent_coef, loss_type=loss_type,
+                                condition_length=condition_length)
 
     learning_rate = args.learning_rate
     clip_range = args.clip_range
