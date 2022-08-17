@@ -22,7 +22,7 @@ from linear_gaussian_env import LinearGaussianEnv, LinearGaussianSingleYEnv
 from all_obs_linear_gaussian_env import AllObservationsLinearGaussianEnv
 from math_utils import logvarexp, importance_sampled_confidence_interval, log_effective_sample_size, log_max_weight_proportion, log_mean
 from plot_utils import legend_without_duplicate_labels
-from linear_gaussian_prob_prog import MultiGaussianRandomVariable, GaussianRandomVariable, MultiLinearGaussian, LinearGaussian, VecLinearGaussian
+from linear_gaussian_prob_prog import MultiGaussianRandomVariable, GaussianRandomVariable, MultiLinearGaussian, LinearGaussian, VecLinearGaussian, JointVariables, get_linear_gaussian_variables
 from evaluation import EvaluationObject, evaluate, evaluate_filtering_posterior, evaluate_agent_until
 from dimension_table import create_dimension_table
 from filtering_posterior import compute_conditional_filtering_posteriors
@@ -842,7 +842,7 @@ class PosteriorEvidence:
         self.condition_length = condition_length
 
 
-def compute_evidence(table, traj_length, dim, condition_length=0):
+def compute_evidence(table, traj_length, dim, condition_length):
     os.makedirs(TODAY, exist_ok=True)
 
     end_len = traj_length-condition_length+1
@@ -857,15 +857,20 @@ def compute_evidence(table, traj_length, dim, condition_length=0):
     ys = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0]
     env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, using_entropy_loss=True, ys=ys, sample=True)
 
-    posterior = compute_posterior(A=A, Q=Q, C=C, R=R, num_observations=len(ys), dim=dim)
-    _td = condition_posterior(posterior, ys)
-    td = dist.MultivariateNormal(_td.mean[0:end_len], _td.covariance_matrix[0:end_len, 0:end_len])
+    posterior = compute_posterior(A=A, Q=Q, C=C, R=R, num_observations=len(ys)-condition_length+1, dim=dim)
+    td = condition_posterior(posterior, ys[0:end_len])
 
     end_ys = ys[0:end_len]
 
-    eval_obj = evaluate_posterior(ys=end_ys, N=1, td=td, env=env)
+    eval_obj = evaluate_posterior(ys=end_ys, N=3, td=td, env=env)
     true = eval_obj.running_log_estimates[0]
-    # print('True evidence: {}'.format(true))
+
+    # true evidence
+    lgv = get_linear_gaussian_variables(dim=dim, num_obs=traj_length)
+    jvs = JointVariables(lgv.ys[0:2], A=A, C=C)
+
+    print('true evidence: ', jvs.dist.log_prob(end_ys))
+    print('True evidence: {}'.format(true))
 
     return PosteriorEvidence(td, ys, true, env, condition_length=condition_length)
 
@@ -1314,7 +1319,8 @@ def verify_filtering_posterior():
     table = create_dimension_table(torch.tensor([dim]), random=False)
 
     traj_length = 5
-    posterior_evidence = compute_evidence(table, traj_length, dim)
+    condition_length = 3
+    posterior_evidence = compute_evidence(table, traj_length, dim, condition_length=condition_length)
 
     ys = posterior_evidence.ys
     fps = compute_conditional_filtering_posteriors(table=table, num_obs=traj_length, dim=dim, ys=posterior_evidence.ys)
@@ -1683,7 +1689,7 @@ def plot_ess_from_partial_data(filenames, data_type):
     x_vals = torch.arange(1, med.nelement()+1)
 
     plt.plot(x_vals, med.squeeze(), label=data_label)
-    plt.fill_between(x_vals, y1=lower_ci, y2=upper_ci, alpha=0.3)
+    # plt.fill_between(x_vals, y1=lower_ci, y2=upper_ci, alpha=0.3)
 
     xlabel = get_full_name_of_ess_type(ess_type)
     ax = plt.gca()

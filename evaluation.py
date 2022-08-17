@@ -85,7 +85,12 @@ def evaluate(ys, d, N, env):
         xts = []
         total_reward = 0.
         while not done:
-            xt = d.predict(obs, deterministic=False)[0]
+            try:
+                xt = d.predict(obs, deterministic=False)[0]
+            except:
+                import pdb; pdb.set_trace()
+                xt = d.predict(obs, deterministic=False)[0]
+
             xts.append(env.prev_xt)
             obs, reward, done, info = env.step(xt)
             total_reward += reward
