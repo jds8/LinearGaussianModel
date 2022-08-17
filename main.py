@@ -38,6 +38,7 @@ from rl_models import load_rl_model
 # MODEL = 'trial_linear_gaussian_model_(traj_{}_dim_{})'
 # MODEL = 'linear_gaussian_model_(traj_{}_dim_{})'
 MODEL = 'agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{})'
+MODEL_W_CONDITION = 'agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{}_condition_length_{})'
 # MODEL = 'from_borg/rl_agents/linear_gaussian_model_(traj_{}_dim_{})'
 # MODEL = 'new_linear_gaussian_model_(traj_{}_dim_{})'
 
@@ -199,8 +200,10 @@ class CustomCallback(BaseCallback):
 
         return True
 
-def get_model_name(traj_length, dim, ent_coef, loss_type):
-    return MODEL.format(ent_coef, loss_type, traj_length, dim)+'.zip'
+def get_model_name(traj_length, dim, ent_coef, loss_type, condition_length):
+    if condition_length == traj_length:
+        return MODEL.format(ent_coef, loss_type, traj_length, dim)+'.zip'
+    return MODEL_W_CONDITION.format(ent_coef, loss_type, traj_length, dim, condition_length)+'.zip'
 
 def model_without_directory(model):
     return Path(model).parts[-1]
@@ -230,7 +233,9 @@ def train(traj_length, env, dim, condition_length, ent_coef=1.0, loss_type='forw
     model.learn(total_timesteps=RL_TIMESTEPS, callback=CustomCallback(env, verbose=1))
 
     # save model
-    model_name = get_model_name(traj_length=traj_length, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
+    model_name = get_model_name(traj_length=traj_length, dim=dim,
+                                ent_coef=ent_coef, loss_type=loss_type,
+                                condition_length=condition_length)
     model.save(model_name)
 
 
@@ -1232,12 +1237,15 @@ def prior_ess_dim(table, traj_length, dims):
                            num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, dims=dims,
                            xlabel='Latent Dimension', distribution_type=distribution_type, name='prior')
 
-def rl_ess_traj(linear_gaussian_env_type, table, traj_lengths, dim, ent_coef, loss_type):
+def rl_ess_traj(linear_gaussian_env_type, table, traj_lengths,
+                dim, ent_coef, loss_type, condition_length):
     distribution_type = RL_DISTRIBUTION
     os.makedirs('{}/{}'.format(TODAY, distribution_type), exist_ok=True)
     outputs = []
     for traj_length in traj_lengths:
-        model_name = get_model_name(traj_length=traj_length, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
+        model_name = get_model_name(traj_length=traj_length, dim=dim,
+                                    ent_coef=ent_coef, loss_type=loss_type,
+                                    condition_length=condition_length)
         outputs += [get_rl_output(linear_gaussian_env_type, table=table, ys=None, dim=dim, sample=True, model_name=model_name, traj_length=traj_length)]
     save_outputs_with_names_traj(outputs, distribution_type,
                                  '{}_{}(traj_lengths_{}_dim_{})'.format(distribution_type, loss_type, traj_lengths, dim))
@@ -1283,10 +1291,13 @@ def execute_compare_convergence_dim(table, traj_length, epsilons, dims, model_na
                             dim=dim, epsilons=epsilons,
                             model_name=model_name)
 
-def execute_ess_traj(linear_gaussian_env_type, traj_lengths, dim, epsilons, ent_coef, loss_type):
+def execute_ess_traj(linear_gaussian_env_type, traj_lengths, dim,
+                     epsilons, ent_coef, loss_type, condition_length):
     table = create_dimension_table(torch.tensor([dim]), random=False)
     os.makedirs(TODAY, exist_ok=True)
-    rl_ess_traj(linear_gaussian_env_type, table=table, traj_lengths=traj_lengths, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
+    rl_ess_traj(linear_gaussian_env_type, table=table, traj_lengths=traj_lengths,
+                dim=dim, ent_coef=ent_coef, loss_type=loss_type,
+                condition_length=condition_length)
     for epsilon in epsilons:
         # posterior_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, epsilon=epsilon)
         posterior_filtering_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, epsilon=epsilon)
@@ -1731,7 +1742,9 @@ def execute_evaluate_agent_until(linear_gaussian_env_type, traj_lengths, dim, lo
         rl_output = ImportanceOutput(traj_length=traj_length, ys=posterior_evidence.ys, dim=dim)
         name = '{}(traj_len {} dim {})'.format(RL_DISTRIBUTION, traj_length, dim)
         for _ in range(NUM_REPEATS):
-            model_name = get_model_name(traj_length=traj_length, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
+            model_name = get_model_name(traj_length=traj_length, dim=dim,
+                                        ent_coef=ent_coef, loss_type=loss_type,
+                                        condition_length=condition_length)
             eval_obj = evaluate_agent_until(posterior_evidence, linear_gaussian_env_type, traj_length=traj_length,
                                             dim=dim, model_name=model_name,
                                             using_entropy_loss=(loss_type == ENTROPY_LOSS), epsilon=epsilon)
@@ -1774,7 +1787,9 @@ if __name__ == "__main__":
     ent_coef = args.ent_coef
     loss_type = args.loss_type
     # model_name = MODEL.format(ent_coef, loss_type, traj_length, dim)
-    model_name = get_model_name(traj_length=traj_length, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
+    model_name = get_model_name(traj_length=traj_length, dim=dim,
+                                ent_coef=ent_coef, loss_type=loss_type,
+                                condition_length=condition_length)
     filenames = args.filenames
     data_type = args.data_type
     ess_dims = args.ess_dims
@@ -1811,7 +1826,9 @@ if __name__ == "__main__":
         print('executing: {}'.format('ess_traj'))
         traj_lengths = torch.cat([torch.arange(2, 11), torch.arange(12, 17)])
         epsilons = [-5e-3]
-        execute_ess_traj(linear_gaussian_env_type, traj_lengths=traj_lengths, dim=dim, epsilons=epsilons, ent_coef=ent_coef, loss_type=loss_type)
+        execute_ess_traj(linear_gaussian_env_type, traj_lengths=traj_lengths,
+                         dim=dim, epsilons=epsilons, ent_coef=ent_coef, loss_type=loss_type,
+                         condition_length=condition_length)
     elif subroutine == 'posterior_filtering_ess_traj':
         print('executing: {}'.format('posterior_filtering_ess_traj'))
         epsilons = [-5e-3]
