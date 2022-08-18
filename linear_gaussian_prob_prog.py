@@ -332,7 +332,13 @@ class GaussianDistribution:
         product = torch.mm(sigma_xz, torch.inverse(sigma_zz))
 
         mu_x_given_z = mu_x + torch.mm(product, (z_values - mu_z).reshape(product.shape[1], -1)).reshape(mu_x.shape)
-        sigma_x_given_z = sigma_xx - torch.mm(torch.mm(sigma_xz, torch.inverse(sigma_zz)), sigma_zx)
+        sigma_x_given_z = sigma_xx - torch.mm(sigma_xz, torch.mm(torch.inverse(sigma_zz), sigma_zx))
+
+        # print('sigma_xx {}'.format(sigma_xx))
+        # print('sigma_xz {}'.format(sigma_xz))
+        # print('sigma_zz {}'.format(sigma_zz))
+        # print('other {}'.format(torch.mm(torch.mm(sigma_xz, torch.inverse(sigma_zz)), sigma_zx)))
+
         return dist.MultivariateNormal(mu_x_given_z.reshape(-1), sigma_x_given_z)
 
     def condition(self, z_rvs):

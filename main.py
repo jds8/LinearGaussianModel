@@ -50,6 +50,7 @@ NUM_VARIANCE_SAMPLES = 10
 NUM_REPEATS = 20
 
 FILTERING_POSTERIOR_DISTRIBUTION = 'filtering_posterior'
+FILTERING_POSTERIOR_CONDITIONAL_DISTRIBUTION = 'filtering_posterior_conditional'
 POSTERIOR_DISTRIBUTION = 'posterior'
 PRIOR_DISTRIBUTION = 'prior'
 RL_DISTRIBUTION = 'RL'
@@ -201,7 +202,7 @@ class CustomCallback(BaseCallback):
         return True
 
 def get_model_name(traj_length, dim, ent_coef, loss_type, condition_length):
-    if condition_length == traj_length:
+    if condition_length == 1:
         return MODEL.format(ent_coef, loss_type, traj_length, dim)+'.zip'
     return MODEL_W_CONDITION.format(ent_coef, loss_type, traj_length, dim, condition_length)+'.zip'
 
@@ -951,11 +952,13 @@ def get_perturbed_posterior_output(posterior_evidence, dim, epsilon, name):
     return OutputWithName(posterior_output, name)
 
 
-def get_perturbed_posterior_filtering_output(table, posterior_evidence, dim, epsilon, name):
+def get_perturbed_posterior_filtering_output(table, posterior_evidence, dim, epsilon, name, condition_length):
     ys = posterior_evidence.ys
     true_posterior = posterior_evidence.td
     env = posterior_evidence.env
-    fps = compute_conditional_filtering_posteriors(table=table, num_obs=len(posterior_evidence.ys), dim=dim, ys=posterior_evidence.ys)
+    fps = compute_conditional_filtering_posteriors(table=table, num_obs=len(posterior_evidence.ys),
+                                                   dim=dim, m=condition_length, condition_on_x=True,
+                                                   ys=posterior_evidence.ys)
 
     posterior_output = ImportanceOutput(traj_length=len(ys), ys=ys, dim=dim)
     # get importance weighted score for comparison
@@ -1068,6 +1071,14 @@ def posterior_filtering_convergence(table, posterior_evidence, dim, epsilons):
     traj_length = len(posterior_evidence.ys)
     plot_convergence(posterior_outputs_with_names, traj_length, dim, posterior_evidence.evidence, 'posterior_filtering')
 
+def posterior_filtering_conditional_convergence(table, posterior_evidence, dim, condition_length):
+    name = '{}(dim: {} traj_len: {} condition_length: {})'.format(FILTERING_POSTERIOR_CONDITIONAL_DISTRIBUTION, dim,
+                                                                  len(posterior_evidence.ys), condition_length)
+    posterior_outputs_with_names = [get_perturbed_posterior_filtering_output(table, posterior_evidence, dim, epsilon=0.,
+                                                                             name=name, condition_length=condition_length)]
+    traj_length = len(posterior_evidence.ys)
+    plot_convergence(posterior_outputs_with_names, traj_length, dim, posterior_evidence.evidence, 'posterior_filtering_conditional')
+
 def prior_convergence(table, ys, truth, dim):
     prior_outputs_with_name = get_prior_output(table=table, ys=ys, dim=dim, sample=False)
     traj_length = len(ys)
@@ -1169,6 +1180,13 @@ def get_posterior_filtering_ess_outputs(table, traj_length, dim, epsilon, condit
     posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim, condition_length=condition_length)
     return get_perturbed_posterior_filtering_outputs(table=table, posterior_evidence=posterior_evidence, dim=dim, epsilons=[epsilon])
 
+def get_posterior_filtering_conditional_ess_outputs(table, traj_length, dim, condition_length):
+    posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim, condition_length=condition_length)
+    name = '{}(dim: {} traj_len: {} condition_length: {})'.format(FILTERING_POSTERIOR_CONDITIONAL_DISTRIBUTION, dim,
+                                                                  len(posterior_evidence.ys), condition_length)
+    return [get_perturbed_posterior_filtering_output(table=table, posterior_evidence=posterior_evidence, dim=dim,
+                                                    epsilon=0., name=name, condition_length=condition_length)]
+
 def posterior_ess_traj(table, traj_lengths, dim, epsilon):
     distribution_type = POSTERIOR_DISTRIBUTION
     os.makedirs('{}/{}'.format(TODAY, distribution_type), exist_ok=True)
@@ -1215,6 +1233,18 @@ def posterior_filtering_ess_dim(table, traj_length, dims, epsilon):
                            num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, dims=dims,
                            xlabel='Latent Dimension', distribution_type=distribution_type, name='posterior_{}'.format(epsilon))
 
+def posterior_filtering_conditional_ess_traj(table, traj_lengths, dim, condition_length):
+    distribution_type = FILTERING_POSTERIOR_CONDITIONAL_DISTRIBUTION
+    os.makedirs('{}/{}'.format(TODAY, distribution_type), exist_ok=True)
+    outputs = []
+    for traj_length in traj_lengths:
+        outputs += get_posterior_filtering_conditional_ess_outputs(table, traj_length, dim, condition_length)
+    save_outputs_with_names_traj(outputs, distribution_type,
+                                 '{}(traj_lengths_{}_dim_{}_condition_length_{})'.format(distribution_type, traj_lengths, dim, condition_length))
+    make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=dim,
+                       num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, traj_lengths=traj_lengths,
+                       xlabel='Trajectory Length', distribution_type=distribution_type, name='posterior_filtering (conditioned on {} obs)'.format(condition_length))
+
 def prior_ess_traj(table, traj_lengths, dim):
     distribution_type = PRIOR_DISTRIBUTION
     os.makedirs('{}/{}'.format(TODAY, distribution_type), exist_ok=True)
@@ -1251,7 +1281,7 @@ def rl_ess_traj(linear_gaussian_env_type, table, traj_lengths,
                                  '{}_{}(traj_lengths_{}_dim_{})'.format(distribution_type, loss_type, traj_lengths, dim))
     make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=dim,
                        num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, traj_lengths=traj_lengths,
-                       xlabel='Trajectory Length', distribution_type=distribution_type, name='RL')
+                       xlabel='Trajectory Length', distribution_type=distribution_type, name='{}_RL'.format(loss_type))
 
 def rl_ess_dim(linear_gaussian_env_type, table, traj_length, dims, ent_coef, loss_type):
     distribution_type = RL_DISTRIBUTION
@@ -1320,6 +1350,13 @@ def execute_filtering_posterior_convergence(table, traj_lengths, epsilons, dim, 
     for traj_length in traj_lengths:
         posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim, condition_length=condition_length)
         posterior_filtering_convergence(table=table, posterior_evidence=posterior_evidence, dim=dim, epsilons=epsilons)
+
+def execute_filtering_posterior_conditional_convergence(table, traj_lengths, dim, condition_length):
+    os.makedirs(TODAY, exist_ok=True)
+    for traj_length in traj_lengths:
+        posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim, condition_length=condition_length)
+        posterior_filtering_conditional_convergence(table=table, posterior_evidence=posterior_evidence,
+                                                    dim=dim, condition_length=condition_length)
 
 def verify_filtering_posterior():
     os.makedirs(TODAY, exist_ok=True)
@@ -1398,6 +1435,7 @@ def sample_variance_ratios(traj_length, model_name, condition_length):
     # variance ratios
     mean_diffs = []
     variance_ratios = []
+
     for k in range(NUM_SAMPLES):
         # generate a set of ys using the true model parameters
         traj_ys, traj_xs = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0:2]
@@ -1440,12 +1478,17 @@ def sample_variance_ratios(traj_length, model_name, condition_length):
             variance_ratio = (filtering_variance / rl_variance).reshape(1, 1)
             variance_ratio_steps = torch.cat((variance_ratio_steps.reshape(1, -1), variance_ratio), dim=1)
 
+            # print('filtering_variance: {}'.format(filtering_variance))
+            # print('rl_variance: {}'.format(rl_variance))
+            # print('variance_ratio_steps {}'.format(variance_ratio_steps))
+
             # if torch.abs(variance_ratio[0, 0] - variance_ratio_steps[0, 0]).item() > 0.001:
             #     import pdb; pdb.set_trace()
             #     dst = td_fps.condition(y_values=y, x_value=xt)
 
             # get next hidden state
             xt = traj_xs[j].reshape(1)
+        import pdb; pdb.set_trace()
         mean_diffs.append(mean_diff_steps)
         variance_ratios.append(variance_ratio_steps)
     return torch.stack(mean_diffs).reshape(NUM_SAMPLES, -1), torch.stack(variance_ratios).reshape(NUM_SAMPLES, -1)
@@ -1580,10 +1623,16 @@ def basic_plot(datas, quantiles, traj_length, labels, xlabel, ylabel, title, sav
 
 def execute_variance_ratio_runs(t_len, ent_coef, condition_length):
     labels = [FORWARD_KL, REVERSE_KL]
+    # forward_model_name = get_model_name(traj_length=traj_length, dim=dim, ent_coef=ent_coef,
+    #                                     loss_type=FORWARD_KL, condition_length=condition_length)
     forward_model_name = get_model_name(traj_length=traj_length, dim=dim, ent_coef=ent_coef,
-                                        loss_type=FORWARD_KL, condition_length=condition_length)
+                                        loss_type=FORWARD_KL, condition_length=traj_length)
+    print('WARNING using wrong model_name in variance ratio')
+    # reverse_model_name = get_model_name(traj_length=traj_length, dim=dim, ent_coef=ent_coef,
+    #                                     loss_type=REVERSE_KL, condition_length=condition_length)
     reverse_model_name = get_model_name(traj_length=traj_length, dim=dim, ent_coef=ent_coef,
-                                        loss_type=REVERSE_KL, condition_length=condition_length)
+                                        loss_type=REVERSE_KL, condition_length=traj_length)
+    print('WARNING using wrong model_name in variance ratio')
     means = []
     vrs = []
     try:
@@ -1591,13 +1640,13 @@ def execute_variance_ratio_runs(t_len, ent_coef, condition_length):
         means.append(forward_means)
         vrs.append(forward_vrs)
     except:
-        pass
+        print('error sampling forward variance ratios')
     try:
         reverse_means, reverse_vrs = sample_variance_ratios(traj_length=t_len, model_name=reverse_model_name, condition_length=condition_length)
         means.append(reverse_means)
         vrs.append(reverse_vrs)
     except:
-        pass
+        print('error sampling reverse variance ratios')
     quantiles = torch.tensor([0.05, 0.5, 0.95])
     plot_mean_diffs(means=means, quantiles=quantiles, traj_length=t_len,
                     ent_coef=ent_coef, loss_type=loss_type, labels=labels)
@@ -1663,17 +1712,61 @@ def get_full_name_of_ess_type(ess_type):
     else:
         raise NotImplementedError
 
-def plot_ess_from_data(filenames, data_type):
-    assert filenames
-    for j, filename in enumerate(filenames):
-        data_with_columns = load_ess_data(filename, data_type)
-        plot_ess_data(data_with_columns, i=j+1)
-        ess_type = data_with_columns.data_type
+def _plot_ess(ess_type):
     xlabel = get_full_name_of_ess_type(ess_type)
 
     ax = plt.gca()
     ax.xaxis.get_major_locator().set_params(integer=True)
 
+    plt.xlabel('{}'.format(xlabel))
+    plt.ylabel('Effective Sample Size')
+    plt.title('Effective Sample Size vs. {}'.format(xlabel))
+    legend_without_duplicate_labels(plt.gca())
+    plt.savefig('{}/ess_{}.pdf'.format(TODAY, ess_type))
+    wandb.save('{}/ess_{}.pdf'.format(TODAY, ess_type))
+    plt.close()
+
+def plot_ess_from_data_from_files(filenames, data_type):
+    assert filenames
+    for j, filename in enumerate(filenames):
+        data_with_columns = load_ess_data(filename, data_type)
+        plot_ess_data(data_with_columns, i=j+1)
+        ess_type = data_with_columns.data_type
+    _plot_ess(ess_type)
+
+def plot_ess_from_data(directory, data_type, initial_idx=0):
+    for j, fil in enumerate(os.listdir(os.fsencode(directory))):
+        filename = os.fsdecode(fil)
+        if filename.endswith('ESS.csv'):
+            data_with_columns = load_ess_data(directory+filename, data_type)
+            plot_ess_data(data_with_columns, i=j+1+initial_idx)
+            ess_type = data_with_columns.data_type
+    _plot_ess(ess_type)
+
+def plot_ess_from_dir_partial_data(directory, data_type, initial_idx=0):
+    data = None
+    for j, fil in enumerate(os.listdir(os.fsencode(directory))):
+        filename = os.fsdecode(fil)
+        if filename.endswith('ESS.csv'):
+            data_with_columns = load_ess_data(directory+filename, data_type)
+            data_label = data_with_columns.data_label
+            plot_ess_data(data_with_columns, i=j+1+initial_idx)
+            ess_type = data_with_columns.data_type
+            if data is None:
+                data = data_with_columns.data
+            else:
+                data = torch.cat([data, data_with_columns.data], dim=1)
+    quantiles = torch.tensor([0.05, 0.5, 0.95], dtype=data.dtype)
+    lower_ci, med, upper_ci = torch.quantile(data, quantiles, dim=0)
+
+    x_vals = torch.arange(initial_idx, initial_idx+med.nelement())
+
+    plt.plot(x_vals, med.squeeze(), label=data_label)
+    # plt.fill_between(x_vals, y1=lower_ci, y2=upper_ci, alpha=0.3)
+
+    xlabel = get_full_name_of_ess_type(ess_type)
+    ax = plt.gca()
+    ax.xaxis.get_major_locator().set_params(integer=True)
     plt.xlabel('{}'.format(xlabel))
     plt.ylabel('Effective Sample Size')
     plt.title('Effective Sample Size vs. {}'.format(xlabel))
@@ -1815,10 +1908,12 @@ if __name__ == "__main__":
     ent_coef = args.ent_coef
     loss_type = args.loss_type
     filenames = args.filenames
+    ess_dir = args.ess_dir
+    initial_idx = args.initial_idx
     data_type = args.data_type
     ess_dims = args.ess_dims
     ess_traj_lengths = args.ess_traj_lengths
-    condition_length = args.condition_length if args.condition_length > 0 else traj_length
+    condition_length = args.condition_length if args.condition_length > 0 else 1
     linear_gaussian_env_type = get_env_type_from_arg(args.env_type, condition_length=condition_length)
 
     model_name = get_model_name(traj_length=traj_length, dim=dim,
@@ -1851,7 +1946,7 @@ if __name__ == "__main__":
                                      traj_lengths=ess_traj_lengths, dim=dim, loss_type=loss_type,
                                      ent_coef=ent_coef, epsilon=epsilon)
     elif subroutine == 'ess_traj':
-        print('executing: {}'.format('ess_traj'))
+        print('WARNING we probably should NOT be executing: {}\ncheck main.py'.format('ess_traj'))
         traj_lengths = torch.cat([torch.arange(2, 11), torch.arange(12, 17)])
         epsilons = [-5e-3]
         execute_ess_traj(linear_gaussian_env_type, traj_lengths=traj_lengths,
@@ -1862,6 +1957,10 @@ if __name__ == "__main__":
         epsilons = [-5e-3]
         table = create_dimension_table(torch.tensor([dim]), random=False)
         posterior_filtering_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, epsilon=epsilon)
+    elif subroutine == 'posterior_filtering_conditional_ess_traj':
+        print('executing: {}'.format('posterior_filtering_conditional_ess_traj'))
+        table = create_dimension_table(torch.tensor([dim]), random=False)
+        posterior_filtering_conditional_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, condition_length=condition_length)
     elif subroutine == 'prior_ess_traj':
         print('executing: {}'.format('prior_ess_traj'))
         table = create_dimension_table(torch.tensor([dim]), random=False)
@@ -1869,7 +1968,8 @@ if __name__ == "__main__":
     elif subroutine == 'rl_ess_traj':
         print('executing: {}'.format('rl_ess_traj'))
         table = create_dimension_table(torch.tensor([dim]), random=False)
-        rl_ess_traj(linear_gaussian_env_type, table=table, traj_lengths=ess_traj_lengths, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
+        rl_ess_traj(linear_gaussian_env_type, table=table, traj_lengths=ess_traj_lengths, dim=dim,
+                    ent_coef=ent_coef, loss_type=loss_type, condition_length=condition_length)
     elif subroutine == 'ess_dim':
         print('executing: {}'.format('ess_dim'))
         dims = [x for x in range(1, 50)]
@@ -1892,9 +1992,12 @@ if __name__ == "__main__":
     elif subroutine == 'load_ess_partial_data':
         print('executing: {}'.format('load_ess_dim'))
         plot_ess_from_partial_data(filenames, data_type)
+    elif subroutine == 'load_ess_data_from_files':
+        print('executing: {}'.format('load_ess_data_from_files'))
+        plot_ess_from_data_from_files(filenames, data_type)
     elif subroutine == 'load_ess_data':
-        print('executing: {}'.format('load_ess_dim'))
-        plot_ess_from_data(filenames, data_type)
+        print('executing: {}'.format('load_ess_data'))
+        plot_ess_from_dir_partial_data(ess_dir, data_type, initial_idx)
     elif subroutine == 'state_occupancy':
         print('executing: {}'.format('state_occupancy'))
         execute_state_occupancy(traj_length=traj_length, ent_coef=ent_coef)
@@ -1908,6 +2011,10 @@ if __name__ == "__main__":
     elif subroutine == 'compare_reward':
         print('executing: {}'.format('compare_reward'))
         compare_reward(linear_gaussian_env_type, traj_length, dim, loss_type, condition_length, model_name)
+    elif subroutine == 'posterior_filtering_conditional_convergence':
+        print('executing: {}'.format('posterior_filtering_conditional_convergence'))
+        table = create_dimension_table(torch.tensor([dim]), random=False)
+        execute_filtering_posterior_conditional_convergence(table, ess_traj_lengths, dim, condition_length)
     else:
         print('executing: {}'.format('custom'))
         table = create_dimension_table(torch.tensor([dim]), random=False)
