@@ -952,16 +952,43 @@ def get_perturbed_posterior_output(posterior_evidence, dim, epsilon, name):
     return OutputWithName(posterior_output, name)
 
 
+def get_evidence_two_ways(traj_length, dim, env, ys, condition_length):
+    end_len = len(ys)-condition_length+1
+    posterior = compute_posterior(A=env.A, Q=env.Q, C=env.C, R=env.R, num_observations=len(ys)-condition_length+1, dim=dim)
+    td = condition_posterior(posterior, ys[0:end_len])
+
+    end_ys = ys[0:end_len]
+
+    eval_obj = evaluate_posterior(ys=end_ys, N=3, td=td, env=env)
+    true = eval_obj.running_log_estimates[0]
+
+    # true evidence
+    lgv = get_linear_gaussian_variables(dim=dim, num_obs=len(ys))
+    jvs = JointVariables(lgv.ys[0:end_len], A=env.A, C=env.C)
+    print('true evidence: ', jvs.dist.log_prob(end_ys))
+    print('True evidence: {}'.format(true))
+
+
 def get_perturbed_posterior_filtering_output(table, posterior_evidence, dim, epsilon, name, condition_length):
     ys = posterior_evidence.ys
     true_posterior = posterior_evidence.td
     env = posterior_evidence.env
+
     fps = compute_conditional_filtering_posteriors(table=table, num_obs=len(posterior_evidence.ys),
                                                    dim=dim, m=condition_length, condition_on_x=True,
                                                    ys=posterior_evidence.ys)
 
     posterior_output = ImportanceOutput(traj_length=len(ys), ys=ys, dim=dim)
     # get importance weighted score for comparison
+
+
+
+
+
+
+
+
+
 
     for _ in range(NUM_REPEATS):
         eval_obj = evaluate_filtering_posterior(ys=ys, N=NUM_SAMPLES, tds=fps, epsilon=epsilon, env=env)
@@ -1057,7 +1084,7 @@ def plot_convergence(outputs_with_names, traj_length, dim, true, name):
     plt.title('Convergence of Prob. {} Estimate to True Prob. {} \n(trajectory length: {}, dimension: {})'.format('Evidence', 'Evidence', traj_length, dim))
     legend_without_duplicate_labels(plt.gca())
     model_name = model_without_directory(name)
-    plt.savefig(TODAY+'/'+model_name+'Convergence.pdf')
+    plt.savefig(TODAY+'/'+model_name+'(traj_length_{}_dim_{})Convergence.pdf'.format(traj_length, dim))
     wandb.save(TODAY+'/'+model_name+'Convergence.pdf')
     plt.close()
 

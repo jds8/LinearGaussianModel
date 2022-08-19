@@ -106,20 +106,24 @@ def old_compute_conditional_filtering_posterior(t, num_obs, xs, ys, p_y_next_giv
 
     return FilteringPosterior(numerator, denominator.left + [x for x in [denominator.right] if x is not None])
 
-def compute_conditional_filtering_posterior(t, num_obs, xs, ys, A, C, m=0):
+def compute_conditional_filtering_posterior(t, num_obs, xs, ys, A, C, m=1):
     rest_of_ys = ys[t+1:] if m == 0 else ys[t+1:t+m]
-    rvars = [ys[t], xs[t]] + rest_of_ys
+    rvars = [ys[t], xs[t]] if t < len(ys) else []
+    rvars += rest_of_ys
     rvars += [xs[t-1]] if t > 0 else []
     jvs = JointVariables(rvars, A=A, C=C)
-    condition_vars = [ys[t]] + rest_of_ys
+    condition_vars = [ys[t]] if t < len(ys) else []
+    condition_vars += rest_of_ys
     condition_vars = condition_vars + [xs[t-1]] if t > 0 else condition_vars
     return FilteringPosterior(jvs.dist, condition_vars)
 
-def compute_filtering_posterior(t, num_obs, xs, ys, A, C, m=0):
+def compute_filtering_posterior(t, num_obs, xs, ys, A, C, m=1):
     rest_of_ys = ys[t+1:] if m == 0 else ys[t+1:t+m]
-    rvars = [ys[t], xs[t]] + rest_of_ys
+    rvars = [ys[t], xs[t]] if t < len(ys) else []
+    rvars += rest_of_ys
     jvs = JointVariables(rvars, A=A, C=C)
-    condition_vars = [ys[t]] + rest_of_ys
+    condition_vars = [ys[t]] if t < len(ys) else []
+    condition_vars += rest_of_ys
     return FilteringPosterior(jvs.dist, condition_vars)
 
 def old_compute_conditional_filtering_posteriors(table, num_obs, dim, ys=None):
@@ -166,7 +170,8 @@ def _compute_conditional_filtering_posteriors(A, Q, C, R, mu_0, Q_0, num_obs, di
     # print('true evidence: ', jvs.dist.log_prob(ys).exp())
 
     fps = []
-    for t in range(num_obs):
+    offset = m if m > 0 else 1
+    for t in range(num_obs-offset+1):
         if condition_on_x:
             filtering_posterior = compute_conditional_filtering_posterior(t, num_obs, lgv.xs, lgv.ys, A, C, m=m)
         else:
@@ -209,15 +214,15 @@ def compare_truncated_posterior(table, num_obs, dim, condition_length):
 
     kls = []
     for i, (f, f_m) in enumerate(zip(fps, fps_m)):
-        td = f.condition(y_values=traj_ys)
-        td_m = f_m.condition(y_values=traj_ys[0:condition_length])
+        td = f.condition(y_values=traj_ys[i:])
+        td_m = f_m.condition(y_values=traj_ys[i:condition_length+i])
         kls.append(dist.kl_divergence(td.get_dist(), td_m.get_dist()))
     return kls
 
 
 if __name__ == "__main__":
     dim = 1
-    num_obs = 20
+    num_obs = 30
     table = create_dimension_table(torch.tensor([dim]), random=False)
     for condition_length in np.arange(2, 15):
         kls = compare_truncated_posterior(table, num_obs, dim, condition_length=condition_length)
