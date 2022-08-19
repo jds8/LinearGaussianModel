@@ -1624,13 +1624,13 @@ def sample_filtering_state_occupancy(traj_length):
 def plot_mean_diffs(means, quantiles, traj_length, ent_coef, loss_type, labels):
     basic_plot(datas=means, quantiles=quantiles, traj_length=traj_length, labels=labels,
                xlabel='Trajectory Step (of {})'.format(traj_length), ylabel='Mean Difference',
-               title='Difference of Means of Filtering Posterior and RL Proposal\n(Loss Type: {} Coef: {})'.format(loss_type, ent_coef),
+               title='Diff of Means of FP and RL ({} Coef: {})'.format(loss_type, ent_coef),
                save_path='{}/Difference of Means traj_len: {} ent_coef: {} loss_type: {}.pdf'.format(TODAY, traj_length, ent_coef, loss_type))
 
 def plot_variance_ratios(vrs, quantiles, traj_length, ent_coef, loss_type, labels):
     basic_plot(datas=vrs, quantiles=quantiles, traj_length=traj_length, labels=labels,
                xlabel='Trajectory Step (of {})'.format(traj_length), ylabel='Variance Ratio',
-               title='Ratio of Variances of Filtering Posterior and RL Proposal\n(Loss Type: {} Coef: {})'.format(loss_type, ent_coef),
+               title='Ratio of Var of FP RL ({} Coef: {})'.format(loss_type, ent_coef),
                save_path='{}/Variance Ratio traj_len: {} ent_coef: {} loss_type: {}.pdf'.format(TODAY, traj_length, ent_coef, loss_type))
 
 def basic_plot(datas, quantiles, traj_length, labels, xlabel, ylabel, title, save_path):
