@@ -868,7 +868,7 @@ def compute_evidence(table, traj_length, dim, condition_length):
 
     end_ys = ys[0:end_len]
 
-    eval_obj = evaluate_posterior(ys=end_ys, N=3, td=td, env=env)
+    eval_obj = evaluate_posterior(ys=end_ys, N=1, td=td, env=env)
     true = eval_obj.running_log_estimates[0]
 
     # # true evidence
@@ -981,22 +981,14 @@ def get_perturbed_posterior_filtering_output(table, posterior_evidence, dim, eps
     posterior_output = ImportanceOutput(traj_length=len(ys), ys=ys, dim=dim)
     # get importance weighted score for comparison
 
-
-
-
-
-
-
-
-
-
     for _ in range(NUM_REPEATS):
-        eval_obj = evaluate_filtering_posterior(ys=ys, N=NUM_SAMPLES, tds=fps, epsilon=epsilon, env=env)
+        eval_obj = evaluate_filtering_posterior(ys=ys, N=3, tds=fps, epsilon=epsilon, env=env)
         posterior_estimator = posterior_output.add_rl_estimator(running_log_estimates=eval_obj.running_log_estimates,
                                                                 ci=eval_obj.ci, weight_mean=eval_obj.log_weight_mean.exp(),
                                                                 max_weight_prop=eval_obj.log_max_weight_prop.exp(),
                                                                 ess=eval_obj.log_effective_sample_size.exp(),
                                                                 ess_ci=eval_obj.ess_ci, idstr=name)
+
     posterior_estimator.save_data()
     return OutputWithName(posterior_output, name)
 
@@ -1027,7 +1019,7 @@ def get_perturbed_posterior_outputs(posterior_evidence, dim, epsilons):
         outputs += [get_perturbed_posterior_output(posterior_evidence, dim, epsilon, name)]
     return outputs
 
-def get_perturbed_posterior_filtering_outputs(table, posterior_evidence, dim, epsilons):
+def get_perturbed_posterior_filtering_outputs(table, posterior_evidence, dim, epsilons, condition_length):
     outputs = []
     for epsilon in epsilons:
         name = '{}(epsilon: {} dim: {} traj_len: {})'.format(FILTERING_POSTERIOR_DISTRIBUTION, epsilon, dim, len(posterior_evidence.ys))
@@ -1094,7 +1086,7 @@ def posterior_convergence(posterior_evidence, dim, epsilons):
     plot_convergence(posterior_outputs_with_names, traj_length, dim, posterior_evidence.evidence, 'posterior')
 
 def posterior_filtering_convergence(table, posterior_evidence, dim, epsilons):
-    posterior_outputs_with_names = get_perturbed_posterior_filtering_outputs(table, posterior_evidence, dim, epsilons)
+    posterior_outputs_with_names = get_perturbed_posterior_filtering_outputs(table, posterior_evidence, dim, epsilons, condition_length=0)
     traj_length = len(posterior_evidence.ys)
     plot_convergence(posterior_outputs_with_names, traj_length, dim, posterior_evidence.evidence, 'posterior_filtering')
 
@@ -1515,7 +1507,6 @@ def sample_variance_ratios(traj_length, model_name, condition_length):
 
             # get next hidden state
             xt = traj_xs[j].reshape(1)
-        import pdb; pdb.set_trace()
         mean_diffs.append(mean_diff_steps)
         variance_ratios.append(variance_ratio_steps)
     return torch.stack(mean_diffs).reshape(NUM_SAMPLES, -1), torch.stack(variance_ratios).reshape(NUM_SAMPLES, -1)
@@ -2046,7 +2037,8 @@ if __name__ == "__main__":
         print('executing: {}'.format('custom'))
         table = create_dimension_table(torch.tensor([dim]), random=False)
         posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim, condition_length=condition_length)
-        epsilons = [-5e-3, 5e-3]
+        # epsilons = [-5e-3, 5e-3]
+        epsilons = [0.]
         posterior_filtering_convergence(table, posterior_evidence, dim, epsilons)
 
     # epsilons = [-5e-3, 0.0, 5e-3]
