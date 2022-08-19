@@ -511,6 +511,18 @@ def make_ess_plot_nice_dim(outputs_with_names, fixed_feature_string,
     plt.savefig('{}/{}/{}_ess_plot_{}_{}.pdf'.format(TODAY, distribution_type, name, fixed_feature_string, fixed_feature))
     wandb.save('{}/{}/{}_ess_plot_{}_{}.pdf'.format(TODAY, distribution_type, name, fixed_feature_string, fixed_feature))
 
+def make_ess_plot_nice_condition_length(outputs_with_names, fixed_feature_string,
+                                        fixed_feature, num_samples, num_repeats,
+                                        condition_lengths, xlabel, distribution_type, name=''):
+    plot_ess_estimators_condition_length(outputs_with_names, condition_lengths)
+
+    plt.xlabel(xlabel)
+    plt.ylabel('Effective Sample Size')
+    plt.title('Effective Sample Size Versus {}\n (num samples: {}, num repeats: {})'.format(xlabel, num_samples, num_repeats))
+    legend_without_duplicate_labels(plt.gca())
+    plt.savefig('{}/{}/{}_ess_plot_{}_{}.pdf'.format(TODAY, distribution_type, name, fixed_feature_string, fixed_feature))
+    wandb.save('{}/{}/{}_ess_plot_{}_{}.pdf'.format(TODAY, distribution_type, name, fixed_feature_string, fixed_feature))
+
 
 class Plotter:
     def __init__(self, name, A=None, Q=None, C=None,
@@ -982,7 +994,7 @@ def get_perturbed_posterior_filtering_output(table, posterior_evidence, dim, eps
     # get importance weighted score for comparison
 
     for _ in range(NUM_REPEATS):
-        eval_obj = evaluate_filtering_posterior(ys=ys, N=3, tds=fps, epsilon=epsilon, env=env)
+        eval_obj = evaluate_filtering_posterior(ys=ys, N=NUM_SAMPLES, tds=fps, epsilon=epsilon, env=env)
         posterior_estimator = posterior_output.add_rl_estimator(running_log_estimates=eval_obj.running_log_estimates,
                                                                 ci=eval_obj.ci, weight_mean=eval_obj.log_weight_mean.exp(),
                                                                 max_weight_prop=eval_obj.log_max_weight_prop.exp(),
@@ -1006,6 +1018,10 @@ def save_outputs_with_names_dim(outputs, distribution_type, label):
 def save_outputs_with_names_traj(outputs, distribution_type, label):
     columns = [str(output.output.traj_length) for output in outputs]
     save_outputs_with_names(outputs, distribution_type, label, columns, 'traj')
+
+def save_outputs_with_names_general(outputs, distribution_type, label, output_type):
+    columns = [str(output.output.traj_length) for output in outputs]
+    save_outputs_with_names(outputs, distribution_type, label, columns, output_type)
 
 def save_outputs_with_names(outputs, distribution_type, label, columns, output_type):
     ess_output = torch.stack([torch.tensor(output.output[output.name].ess) for output in outputs], dim=1)
@@ -1052,6 +1068,16 @@ def plot_ess_estimators_dim(outputs_with_names, dims):
     lower_ci, med, upper_ci = torch.quantile(outputs, quantiles, dim=0)
     plt.plot(dims, med.squeeze(), label=outputs_with_names[0].name)
     plt.fill_between(dims, y1=lower_ci, y2=upper_ci, alpha=0.3)
+
+    ax = plt.gca()
+    ax.xaxis.get_major_locator().set_params(integer=True)
+
+def plot_ess_estimators_condition_length(outputs_with_names, condition_lengths):
+    outputs = torch.stack([torch.tensor(output.output[output.name].ess) for output in outputs_with_names], dim=1)
+    quantiles = torch.tensor([0.05, 0.5, 0.95])
+    lower_ci, med, upper_ci = torch.quantile(outputs, quantiles, dim=0)
+    plt.plot(condition_lengths, med.squeeze(), label=outputs_with_names[0].name)
+    plt.fill_between(condition_lengths, y1=lower_ci, y2=upper_ci, alpha=0.3)
 
     ax = plt.gca()
     ax.xaxis.get_major_locator().set_params(integer=True)
@@ -1339,6 +1365,20 @@ def execute_compare_convergence_dim(table, traj_length, epsilons, dims, model_na
         compare_convergence(table=table, traj_length=traj_length,
                             dim=dim, epsilons=epsilons,
                             model_name=model_name)
+
+def posterior_filtering_conditional_ess_condition_length(table, traj_length, dim, condition_lengths):
+    distribution_type = FILTERING_POSTERIOR_CONDITIONAL_DISTRIBUTION
+    os.makedirs('{}/{}'.format(TODAY, distribution_type), exist_ok=True)
+    outputs = []
+    for condition_length in condition_lengths:
+        outputs += get_posterior_filtering_conditional_ess_outputs(table, traj_length, dim, condition_length)
+    save_outputs_with_names_general(outputs, distribution_type,
+                                    '{}(traj_length_{}_dim_{}_condition_length_{})'.format(distribution_type, traj_length, dim, condition_length),
+                                    output_type='condition_length')
+    make_ess_plot_nice_condition_length(outputs, fixed_feature_string='traj_length', fixed_feature=traj_length,
+                                        num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, xlabel='Condition Length',
+                                        condition_lengths=condition_lengths,
+                                        distribution_type=distribution_type, name='posterior_filtering')
 
 def execute_ess_traj(linear_gaussian_env_type, traj_lengths, dim,
                      epsilons, ent_coef, loss_type, condition_length):
@@ -1931,6 +1971,7 @@ if __name__ == "__main__":
     data_type = args.data_type
     ess_dims = args.ess_dims
     ess_traj_lengths = args.ess_traj_lengths
+    ess_condition_lengths = args.ess_condition_lengths
     condition_length = args.condition_length if args.condition_length > 0 else 1
     linear_gaussian_env_type = get_env_type_from_arg(args.env_type, condition_length=condition_length)
 
@@ -1979,6 +2020,10 @@ if __name__ == "__main__":
         print('executing: {}'.format('posterior_filtering_conditional_ess_traj'))
         table = create_dimension_table(torch.tensor([dim]), random=False)
         posterior_filtering_conditional_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, condition_length=condition_length)
+    elif subroutine == 'posterior_filtering_conditional_ess_condition_length':
+        print('executing: {}'.format('posterior_filtering_conditional_ess_condition_length'))
+        table = create_dimension_table(torch.tensor([dim]), random=False)
+        posterior_filtering_conditional_ess_condition_length(table=table, traj_length=traj_length, dim=dim, condition_lengths=ess_condition_lengths)
     elif subroutine == 'prior_ess_traj':
         print('executing: {}'.format('prior_ess_traj'))
         table = create_dimension_table(torch.tensor([dim]), random=False)

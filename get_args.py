@@ -20,6 +20,7 @@ def get_args():
     parser.add_argument('--initial_idx', type=int, default=0, help='initial index for x-axis of ESS plot')
     parser.add_argument('--ess_dims', type=int, default=1, help='dimensions for ess', nargs='*')
     parser.add_argument('--ess_traj_lengths', type=int, default=1, help='traj_lengths for ess', nargs='*')
+    parser.add_argument('--ess_condition_lengths', type=int, default=1, help='condition_lengths for ess', nargs='*')
     parser.add_argument('--epsilon', type=float, default=0.1, help='the largest deviation between the evidence estimate ratio and 1')
     parser.add_argument('--condition_length', type=int, default=0, help='the number of observations on which to condition')
 

@@ -170,8 +170,8 @@ def _compute_conditional_filtering_posteriors(A, Q, C, R, mu_0, Q_0, num_obs, di
     # print('true evidence: ', jvs.dist.log_prob(ys).exp())
 
     fps = []
-    offset = m if m > 0 else 1
-    for t in range(num_obs-offset+1):
+    offset = m-1 if m > 0 else 0
+    for t in range(num_obs-offset):
         if condition_on_x:
             filtering_posterior = compute_conditional_filtering_posterior(t, num_obs, lgv.xs, lgv.ys, A, C, m=m)
         else:
@@ -209,8 +209,6 @@ def compare_truncated_posterior(table, num_obs, dim, condition_length):
 
     fps = compute_conditional_filtering_posteriors(table, num_obs, dim, m=0, condition_on_x=False, ys=None)
     fps_m = compute_conditional_filtering_posteriors(table, num_obs, dim, m=condition_length, condition_on_x=False, ys=None)
-    # we only want to look at trajectories of length num_obs - condition_length
-    fps_m = fps_m[0:num_obs-condition_length]
 
     kls = []
     for i, (f, f_m) in enumerate(zip(fps, fps_m)):
@@ -222,7 +220,7 @@ def compare_truncated_posterior(table, num_obs, dim, condition_length):
 
 if __name__ == "__main__":
     dim = 1
-    num_obs = 30
+    num_obs = 20
     table = create_dimension_table(torch.tensor([dim]), random=False)
     for condition_length in np.arange(2, 15):
         kls = compare_truncated_posterior(table, num_obs, dim, condition_length=condition_length)
