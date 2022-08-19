@@ -107,8 +107,6 @@ def old_compute_conditional_filtering_posterior(t, num_obs, xs, ys, p_y_next_giv
     return FilteringPosterior(numerator, denominator.left + [x for x in [denominator.right] if x is not None])
 
 def compute_conditional_filtering_posterior(t, num_obs, xs, ys, A, C, m=1):
-    import pdb; pdb.set_trace()
-
     rest_of_ys = ys[t+1:] if m == 0 else ys[t+1:t+m]
     rvars = [ys[t], xs[t]] if t < len(ys) else []
     rvars += rest_of_ys
