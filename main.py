@@ -1031,7 +1031,7 @@ def get_perturbed_posterior_filtering_outputs(table, posterior_evidence, dim, ep
     outputs = []
     for epsilon in epsilons:
         name = '{}(epsilon: {} dim: {} traj_len: {})'.format(FILTERING_POSTERIOR_DISTRIBUTION, epsilon, dim, len(posterior_evidence.ys))
-        outputs += [get_perturbed_posterior_filtering_output(table, posterior_evidence, dim, epsilon, name)]
+        outputs += [get_perturbed_posterior_filtering_output(table, posterior_evidence, dim, epsilon, name, condition_length)]
     return outputs
 
 def plot_ess_estimators(outputs_with_names, fixed_feature):
