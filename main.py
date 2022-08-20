@@ -863,8 +863,6 @@ class PosteriorEvidence:
 def compute_evidence(table, traj_length, dim, condition_length):
     os.makedirs(TODAY, exist_ok=True)
 
-    end_len = traj_length-condition_length+1
-
     A = table[dim]['A']
     Q = table[dim]['Q']
     C = table[dim]['C']
@@ -875,12 +873,10 @@ def compute_evidence(table, traj_length, dim, condition_length):
     ys = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0]
     env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, using_entropy_loss=True, ys=ys, sample=True)
 
-    posterior = compute_posterior(A=A, Q=Q, C=C, R=R, num_observations=len(ys)-condition_length+1, dim=dim)
-    td = condition_posterior(posterior, ys[0:end_len])
+    posterior = compute_posterior(A=A, Q=Q, C=C, R=R, num_observations=len(ys), dim=dim)
+    td = condition_posterior(posterior, ys)
 
-    end_ys = ys[0:end_len]
-
-    eval_obj = evaluate_posterior(ys=end_ys, N=1, td=td, env=env)
+    eval_obj = evaluate_posterior(ys=ys, N=1, td=td, env=env)
     true = eval_obj.running_log_estimates[0]
 
     # # true evidence
@@ -994,7 +990,7 @@ def get_perturbed_posterior_filtering_output(table, posterior_evidence, dim, eps
     # get importance weighted score for comparison
 
     for _ in range(NUM_REPEATS):
-        eval_obj = evaluate_filtering_posterior(ys=ys, N=NUM_SAMPLES, tds=fps, epsilon=epsilon, env=env)
+        eval_obj = evaluate_filtering_posterior(ys=ys, N=NUM_SAMPLES, tds=fps, epsilon=epsilon, env=env, m=condition_length)
         posterior_estimator = posterior_output.add_rl_estimator(running_log_estimates=eval_obj.running_log_estimates,
                                                                 ci=eval_obj.ci, weight_mean=eval_obj.log_weight_mean.exp(),
                                                                 max_weight_prop=eval_obj.log_max_weight_prop.exp(),
@@ -1221,16 +1217,16 @@ def get_posterior_ess_outputs(table, traj_length, dim, epsilon, condition_length
     posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim, condition_length=condition_length)
     return get_perturbed_posterior_outputs(posterior_evidence, dim, [epsilon])
 
-def get_posterior_filtering_ess_outputs(table, traj_length, dim, epsilon, condition_length):
-    posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim, condition_length=condition_length)
-    return get_perturbed_posterior_filtering_outputs(table=table, posterior_evidence=posterior_evidence, dim=dim, epsilons=[epsilon])
+def get_posterior_filtering_ess_outputs(table, traj_length, dim, epsilon):
+    posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim, condition_length=0)
+    return get_perturbed_posterior_filtering_outputs(table=table, posterior_evidence=posterior_evidence, dim=dim, epsilons=[epsilon], condition_length=0)
 
 def get_posterior_filtering_conditional_ess_outputs(table, traj_length, dim, condition_length):
     posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim, condition_length=condition_length)
     name = '{}(dim: {} traj_len: {} condition_length: {})'.format(FILTERING_POSTERIOR_CONDITIONAL_DISTRIBUTION, dim,
                                                                   len(posterior_evidence.ys), condition_length)
     return [get_perturbed_posterior_filtering_output(table=table, posterior_evidence=posterior_evidence, dim=dim,
-                                                    epsilon=0., name=name, condition_length=condition_length)]
+                                                     epsilon=0., name=name, condition_length=condition_length)]
 
 def posterior_ess_traj(table, traj_lengths, dim, epsilon):
     distribution_type = POSTERIOR_DISTRIBUTION
@@ -1972,7 +1968,7 @@ if __name__ == "__main__":
     ess_dims = args.ess_dims
     ess_traj_lengths = args.ess_traj_lengths
     ess_condition_lengths = args.ess_condition_lengths
-    condition_length = args.condition_length if args.condition_length > 0 else 1
+    condition_length = args.condition_length if args.condition_length > 0 else 0
     linear_gaussian_env_type = get_env_type_from_arg(args.env_type, condition_length=condition_length)
 
     model_name = get_model_name(traj_length=traj_length, dim=dim,

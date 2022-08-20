@@ -207,7 +207,9 @@ def evaluate_until(d, truth, env, epsilon, max_samples=100000):
                             xts=xts, states=states, actions=actions, priors=priors, liks=liks,
                             log_weights=log_p_y_over_qs)
 
-def evaluate_filtering_posterior(ys, N, tds, epsilon, env):
+def evaluate_filtering_posterior(ys, N, tds, epsilon, env, m=0):
+    if m == 0:
+        m = len(ys)
     # evidence estimate
     evidence_est = torch.tensor(0.).reshape(1, -1)
     log_evidence_est = torch.tensor(0.).reshape(1, -1)
@@ -216,24 +218,21 @@ def evaluate_filtering_posterior(ys, N, tds, epsilon, env):
     log_p_y_over_qs = torch.zeros(N)
     # keep track of log evidence estimates up to N sample trajectories
     running_log_evidence_estimates = []
-    # keep track of (log) weights p(x) / q(x)
-    log_weights = []
     # get trajectory length
     n = len(ys)
     # get dimensionality
-    _td = tds[0].condition(y_values=ys)
+    _td = tds[0].condition(y_values=ys[0:m])
     td = dist.MultivariateNormal(_td.mean(), _td.covariance() + epsilon * torch.eye(_td.mean().shape[0]))
+
     d = int(td.mean.nelement())
     for i in range(N):
-        # get first obs
-        obs = env.reset()
         # keep track of xs
         xs = []
         # keep track of prior over actions p(x)
         log_p_x = torch.tensor(0.).reshape(1, -1)
         log_p_y_given_x = torch.tensor(0.).reshape(1, -1)
         # collect actions, likelihoods
-        states = [obs]
+        states = []
         xts = [env.prev_xt]
         xt = td.sample()
         actions = [xt]
@@ -247,7 +246,8 @@ def evaluate_filtering_posterior(ys, N, tds, epsilon, env):
         log_q = td.log_prob(xt)
         for j in range(1, len(tds)):
             td_fps = tds[j]
-            y = ys[j:]
+            y = ys[j:j+m]
+            # import pdb; pdb.set_trace()
             _dst = td_fps.condition(y_values=y, x_value=xt)
             dst = dist.MultivariateNormal(_dst.mean(), _dst.covariance() + epsilon * torch.eye(_dst.mean().shape[0]))
             prev_xt = xt
@@ -264,6 +264,7 @@ def evaluate_filtering_posterior(ys, N, tds, epsilon, env):
             log_p_y_given_x += lik_reward
             xs.append(xt)
             actions.append(xt)
+        # import pdb; pdb.set_trace()
         # log p(x,y)
         log_p_y_x = log_p_y_given_x + log_p_x
         if N == 1:
@@ -272,7 +273,6 @@ def evaluate_filtering_posterior(ys, N, tds, epsilon, env):
         else:
             log_p_y_over_qs[i] = (log_p_y_x - log_q).item()
             running_log_evidence_estimates.append(torch.logsumexp(log_p_y_over_qs[0:i+1], -1) - torch.log(torch.tensor(i+1.)))
-        log_weights.append(log_p_x - log_q)  # ignore these since we consider the weights to be p(y|x)p(x)/q(x)
         total_rewards.append(total_reward)
 
     # print('filtering score:' , log_p_y_over_qs)

@@ -24,18 +24,18 @@ class FilteringPosterior:
         else:
             joint = self.numerator
 
-        names = [y.name for y in self.numerator.left if 'y' in y.name]
-        sorted_idx = np.argsort(names)
-        r_vars = np.array([y for y in self.numerator.left if 'y' in y.name])
-        r_vars = r_vars[sorted_idx]
-        r_vars = list(r_vars) + [self.numerator.right] if self.numerator.right is not None else list(r_vars)
+        # names = [y.name for y in self.numerator.left if 'y' in y.name]
+        # sorted_idx = np.argsort(names)
+        # r_vars = np.array([y for y in self.numerator.left if 'y' in y.name])
+        # r_vars = r_vars[sorted_idx]
+        # r_vars = list(r_vars) + [self.numerator.right] if self.numerator.right is not None else list(r_vars)
 
         if x_value is not None:
             values = torch.cat([y_values, x_value])
             # values = torch.cat([y_values.reshape(x_value.shape[0], -1), x_value.reshape(-1, 1)], dim=1)
         else:
             values = y_values
-        values = values.squeeze()
+        values = values.squeeze().reshape(-1)
 
         rvs = []
         # for r_var, val in zip(r_vars, values):
@@ -170,8 +170,7 @@ def _compute_conditional_filtering_posteriors(A, Q, C, R, mu_0, Q_0, num_obs, di
     # print('true evidence: ', jvs.dist.log_prob(ys).exp())
 
     fps = []
-    offset = m-1 if m > 0 else 0
-    for t in range(num_obs-offset):
+    for t in range(num_obs):
         if condition_on_x:
             filtering_posterior = compute_conditional_filtering_posterior(t, num_obs, lgv.xs, lgv.ys, A, C, m=m)
         else:

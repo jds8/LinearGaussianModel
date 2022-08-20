@@ -138,7 +138,8 @@ class AllObservationsAbstractLinearGaussianEnv(gym.Env):
 
         # create filtering distribution given the ys
         self.tds = _compute_conditional_filtering_posteriors(A=self.A, Q=self.Q, C=self.C, R=self.R, mu_0=self.mu_0, Q_0=self.Q_0,
-                                                             num_obs=len(self.ys), dim=self.prev_xt.nelement(), ys=self.ys)
+                                                             num_obs=len(self.ys), dim=self.prev_xt.nelement(),
+                                                             m=self.condition_length, ys=self.ys)
 
         prev_state_shape = self.prev_xt.nelement()
 
