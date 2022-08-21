@@ -17,10 +17,13 @@ class AllObservationsAbstractLinearGaussianEnv(gym.Env):
         self.traj_length = max(y_len, traj_length)
         self.sample = sample
 
+        # number of observations on which to condition
+        self.condition_length = condition_length if condition_length > 0 else self.traj_length
+
         # define action space
         self.action_space = gym.spaces.Box(low=-math.inf, high=math.inf, shape=(mu_0.shape[0],), dtype=float)
 
-        self.observation_space = gym.spaces.Box(low=-math.inf, high=math.inf, shape=(mu_0.shape[0] + condition_length * R.shape[0], 1), dtype=float)
+        self.observation_space = gym.spaces.Box(low=-math.inf, high=math.inf, shape=(mu_0.shape[0] + self.condition_length * R.shape[0], 1), dtype=float)
 
         # current index into data and max index
         self.index = 0
@@ -32,9 +35,6 @@ class AllObservationsAbstractLinearGaussianEnv(gym.Env):
         self.R = R
         self.mu_0 = mu_0
         self.Q_0 = Q_0
-
-        # number of observations on which to condition
-        self.condition_length = condition_length
 
         # store previous hidden state xt
         self.prev_state = None
@@ -52,6 +52,10 @@ class AllObservationsAbstractLinearGaussianEnv(gym.Env):
 
         # compute analytical filtering distributions
         self.tds = None
+
+        # keep track of the ys we are conditioning on (previous_condition_ys is for logging purposes)
+        self.condition_ys = None
+        self.previous_condition_ys = None
 
     def compute_conditionals(self):
         self.w = GaussianRandomVariable(mu=0., sigma=torch.sqrt(self.Q), name='w')
@@ -99,7 +103,8 @@ class AllObservationsAbstractLinearGaussianEnv(gym.Env):
         self.rewards.append(reward)
 
         # check done
-        done = self.index+self.condition_length > self.traj_length
+        # done = self.index+self.condition_length > self.traj_length
+        done = self.index >= self.traj_length
 
         # add p(y_i|x_i), p(x_i|x_{i-1}), x_i, x_{i-1} to info for future estimates
         info = {'prior_reward': prior_reward,
@@ -107,13 +112,14 @@ class AllObservationsAbstractLinearGaussianEnv(gym.Env):
                 'action': xt,
                 'xt': self.prev_xt}
 
-        condition_ys = self.ys[self.index:self.index+self.condition_length]
+        self.previous_condition_ys = self.condition_ys
+        self.condition_ys = self.get_condition_ys()
 
         # update previous xt
         self.prev_xt = xt
         self.prev_xts.append(self.prev_xt)
 
-        self.prev_state = torch.cat([self.prev_xt.reshape(-1, 1), condition_ys.reshape(-1, 1)])
+        self.prev_state = torch.cat([self.prev_xt.reshape(-1, 1), self.condition_ys.reshape(-1, 1)])
 
         # return stuff
         return self.prev_state, reward.item(), done, info
@@ -121,6 +127,9 @@ class AllObservationsAbstractLinearGaussianEnv(gym.Env):
     def generate(self):
         raise NotImplementedError
         return None
+
+    def get_condition_ys(self):
+        raise NotImplementedError
 
     def reset(self):
         # set initial observation to be 0s
@@ -143,13 +152,17 @@ class AllObservationsAbstractLinearGaussianEnv(gym.Env):
 
         prev_state_shape = self.prev_xt.nelement()
 
+        # set condition_ys and previous_condition_ys to be the same upon reset
+        self.condition_ys = self.get_condition_ys()
+        self.previous_condition_ys = self.condition_ys
+
         # see observation space in __init__ for details on why prev_state is defined this way
-        self.prev_state = torch.cat([self.prev_xt.reshape(prev_state_shape, 1), self.ys[self.index:self.index+self.condition_length].reshape(-1, 1)])
+        self.prev_state = torch.cat([self.prev_xt.reshape(prev_state_shape, 1), self.condition_ys.reshape(-1, 1)])
 
         return self.prev_state
 
 
-class AllObservationsLinearGaussianEnv(AllObservationsAbstractLinearGaussianEnv):
+class AbstractConditionalLinearGaussianEnv(AllObservationsAbstractLinearGaussianEnv):
     def __init__(self, A, Q, C, R, mu_0, Q_0, using_entropy_loss, condition_length, traj_length=1, ys=None, sample=False):
         super().__init__(A, Q, C, R, mu_0, Q_0, condition_length, using_entropy_loss,
                          traj_length=traj_length, ys=ys, sample=sample)
@@ -162,3 +175,21 @@ class AllObservationsLinearGaussianEnv(AllObservationsAbstractLinearGaussianEnv)
 
     def generate(self):
         return generate_trajectory(self.traj_length, A=self.A, Q=self.Q, C=self.C, R=self.R, mu_0=self.mu_0, Q_0=self.Q_0)[0]
+
+
+class AllObservationsLinearGaussianEnv(AbstractConditionalLinearGaussianEnv):
+    def __init__(self, A, Q, C, R, mu_0, Q_0, using_entropy_loss, condition_length, traj_length=1, ys=None, sample=False):
+        super().__init__(A, Q, C, R, mu_0, Q_0, condition_length, using_entropy_loss,
+                         traj_length=traj_length, ys=ys, sample=sample)
+
+    def get_condition_ys(self):
+        return self.ys
+
+
+class ConditionalObservationsLinearGaussianEnv(AbstractConditionalLinearGaussianEnv):
+    def __init__(self, A, Q, C, R, mu_0, Q_0, using_entropy_loss, condition_length, traj_length=1, ys=None, sample=False):
+        super().__init__(A, Q, C, R, mu_0, Q_0, condition_length, using_entropy_loss,
+                         traj_length=traj_length, ys=ys, sample=sample)
+
+    def get_condition_ys(self):
+        return self.ys[self.index:self.index+self.condition_length]

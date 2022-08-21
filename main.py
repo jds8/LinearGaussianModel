@@ -195,7 +195,7 @@ class CustomCallback(BaseCallback):
             # compute KL between filtering posterior and policy at the last state (env.index - 1)
             td = self.env.tds[self.env.index-1]
             kl = compute_conditional_kl(td_fps=td, policy=self.model.policy,
-                                        prev_xt=self.env.prev_xts[-2], ys=self.env.ys[self.env.index-1:],
+                                        prev_xt=self.env.prev_xts[-2], ys=self.env.previous_condition_ys,
                                         condition_length=self.env.condition_length)
             wandb.log({'kl divergence with filtering posterior': kl})
 
@@ -796,8 +796,8 @@ def evaluate_posterior(ys, N, td, env=None):
     d = int(td.mean.nelement()/n)
     for i in range(N):
         done = False
-        # get first obs
-        obs = env.reset()
+        # reset env
+        env.reset()
         # keep track of xs
         xs = td.sample()
         if d > 1:
@@ -806,7 +806,6 @@ def evaluate_posterior(ys, N, td, env=None):
         log_p_x = torch.tensor(0.).reshape(1, -1)
         log_p_y_given_x = torch.tensor(0.).reshape(1, -1)
         # collect actions, likelihoods
-        states = [obs]
         actions = xs
         if len(xs) > 1:
             xts = torch.cat([env.prev_xt.reshape(-1), xs[0:-1].reshape(-1)])
@@ -825,7 +824,6 @@ def evaluate_posterior(ys, N, td, env=None):
                 prior_reward = score_state_transition(xt=xt.reshape(-1), prev_xt=prev_xt, A=env.A, Q=env.Q)
                 lik_reward = score_y(y_test=y, x_t=xt, C=env.C, R=env.R)  # the first likelihood reward
                 total_reward += prior_reward + lik_reward
-                states.append(obs)
                 priors.append(prior_reward)
                 liks.append(lik_reward)
                 log_p_x += prior_reward
@@ -847,7 +845,7 @@ def evaluate_posterior(ys, N, td, env=None):
     # $\hat{\sigma}_{int}^2=(n(n-1))^{-1}\sum_{i=1}^n(f_iW_i-\overline{fW})^2$
     sigma_est = torch.sqrt( (logvarexp(log_p_y_over_qs) - torch.log(torch.tensor(len(log_p_y_over_qs) - 1, dtype=torch.float32))).exp() )
     return EvaluationObject(running_log_estimates=torch.tensor(running_log_evidence_estimates), sigma_est=sigma_est,
-                            xts=xts, states=states, actions=actions, priors=priors, liks=liks,
+                            xts=xts, states=xts, actions=actions, priors=priors, liks=liks,
                             log_weights=log_p_y_over_qs)
 
 
@@ -1872,7 +1870,12 @@ def compute_conditional_kl(td_fps, policy, prev_xt, ys, condition_length):
 
     # policy dist
     obs = torch.cat([prev_xt, ys[0:condition_length]]).reshape(1, -1)
-    pd = policy.get_distribution(obs).distribution
+    try:
+        pd = policy.get_distribution(obs).distribution
+    except:
+        import pdb; pdb.set_trace()
+        pd = policy.get_distribution(obs).distribution
+
 
     covs = []
     for i in range(pd.scale.shape[0]):
@@ -1943,6 +1946,67 @@ def compare_reward(linear_gaussian_env_type, traj_length, dim, loss_type, condit
 
     eval_obj_posterior = evaluate_posterior(ys=end_ys, N=1, td=td, env=env)
     true = eval_obj_posterior.running_log_estimates[0]
+
+def plot_posterior_variance(traj_length, dim, condition_length, true_variances=None):
+    # torch.manual_seed(10)
+    table = create_dimension_table(torch.tensor([dim]), random=False)
+    posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim, condition_length=condition_length)
+    ys = posterior_evidence.ys
+
+    tds = compute_conditional_filtering_posteriors(table=table, num_obs=len(posterior_evidence.ys),
+                                                   dim=dim, m=condition_length, condition_on_x=True,
+                                                   ys=ys)
+
+    m = condition_length if condition_length > 0 else traj_length
+
+    td = tds[0].condition(y_values=ys[0:m])
+    variances = [td.covariance()]
+    xt = td.sample()
+    last_state_of_constant_variance = 1
+    if true_variances:
+        first_state_of_correct_variance = 2 if torch.abs(variances[0] - true_variances[0]) > 0.001 else 1
+    for j in range(1, len(tds)):
+        td_fps = tds[j]
+        y = ys[j:j+m]
+        dst = td_fps.condition(y_values=y, x_value=xt)
+        xt = dst.sample()
+        variance = dst.covariance()
+
+        # find where states have constant variance
+        if torch.abs(variance - variances[-1]) < 0.0001 and last_state_of_constant_variance == j:
+            last_state_of_constant_variance = j+1
+        variances.append(variance)
+
+        # find where variances are equal to the true smoothing posterior
+        if true_variances and torch.abs(variance - true_variances[j]) > 0.0001:
+            first_state_of_correct_variance = j+2
+
+    print(variances)
+
+    x_values = torch.arange(1, traj_length+1)
+    plt.plot(x_values, variances)
+    plt.scatter(x=last_state_of_constant_variance, y=variances[last_state_of_constant_variance-1],
+                label='This state and prior have constant variance', color='r')
+    if true_variances:
+        plt.scatter(x=first_state_of_correct_variance, y=variances[first_state_of_correct_variance-1],
+                    label='This state and after coincide with true smoothing posterior.', color='g')
+    plt.xlabel('States')
+    plt.ylabel('Variance')
+    plt.legend()
+    ax = plt.gca()
+    ax.set_xticks(x_values)
+    plt.title('Truncated (m={}) Smoothing Posterior Variance At Each State'.format(condition_length))
+
+    A = table[dim]['A'].item()
+    Q = table[dim]['Q'].item()
+    C = table[dim]['C'].item()
+    R = table[dim]['R'].item()
+
+    plt.savefig('{}/TruncatedSmoothingPosteriorVariance(m={} traj_length={} A={} Q={} C={} R={}).pdf'.format(TODAY, condition_length, traj_length, A, Q, C, R))
+    wandb.save('{}/TruncatedSmoothingPosteriorVariance(m={} traj_length={} A={} Q={} C={} R={}).pdf'.format(TODAY, condition_length, traj_length, A, Q, C, R))
+    plt.close()
+
+    return variances
 
 
 if __name__ == "__main__":
@@ -2074,6 +2138,10 @@ if __name__ == "__main__":
         print('executing: {}'.format('posterior_filtering_conditional_convergence'))
         table = create_dimension_table(torch.tensor([dim]), random=False)
         execute_filtering_posterior_conditional_convergence(table, ess_traj_lengths, dim, condition_length)
+    elif subroutine == 'plot_variance':
+        print('executing: {}'.format('plot_variance'))
+        true_variances = plot_posterior_variance(traj_length, dim, condition_length=0)
+        plot_posterior_variance(traj_length, dim, condition_length=condition_length, true_variances=true_variances)
     else:
         print('executing: {}'.format('custom'))
         table = create_dimension_table(torch.tensor([dim]), random=False)

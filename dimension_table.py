@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import torch
+from generative_model import gen_covariance_matrix
 
 def create_dimension_table(dimensions, random=False):
     table = {}
@@ -23,4 +24,10 @@ def create_dimension_table(dimensions, random=False):
             table[dimension]['R'] = torch.eye(1, 1)
             table[dimension]['mu_0'] = torch.zeros(dimension)
             table[dimension]['Q_0'] = table[dimension]['Q']
+            # table[dimension]['A'] = torch.tensor([[1.5]])
+            # table[dimension]['Q'] = torch.tensor([[1.0]])
+            # table[dimension]['C'] = torch.tensor([[0.5]])
+            # table[dimension]['R'] = torch.tensor([[0.1]])
+            # table[dimension]['mu_0'] = torch.zeros(dimension)
+            # table[dimension]['Q_0'] = table[dimension]['Q']
     return table
