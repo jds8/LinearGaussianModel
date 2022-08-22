@@ -185,7 +185,7 @@ class AllObservationsLinearGaussianEnv(AbstractConditionalLinearGaussianEnv):
         return self.ys
 
     def get_done(self):
-        done = self.index >= self.traj_length
+        return self.index >= self.traj_length
 
 
 class ConditionalObservationsLinearGaussianEnv(AbstractConditionalLinearGaussianEnv):
