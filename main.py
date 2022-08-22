@@ -2018,6 +2018,49 @@ def plot_posterior_variance(traj_length, dim, condition_length, true_variances=N
 
     return variances
 
+def plot_posterior_mean(ys, traj_length, dim, condition_length, xs=None):
+    # torch.manual_seed(10)
+    tds = compute_conditional_filtering_posteriors(table=table, num_obs=len(posterior_evidence.ys),
+                                                   dim=dim, m=condition_length, condition_on_x=True,
+                                                   ys=ys)
+
+    m = condition_length if condition_length > 0 else traj_length
+
+    td = tds[0].condition(y_values=ys[0:m])
+    means = [td.mean()]
+    empty_xs = xs is None
+    if empty_xs:
+        xs = [td.sample()]
+    for j in range(1, len(tds)):
+        td_fps = tds[j]
+        y = ys[j:j+m]
+        dst = td_fps.condition(y_values=y, x_value=xs[j-1])
+        if empty_xs:
+            xs.append(dst.sample())
+        means.append(dst.mean())
+
+    print(means)
+
+    x_values = torch.arange(1, traj_length+1)
+    plt.plot(x_values, means)
+    plt.xlabel('States')
+    plt.ylabel('Mean')
+    plt.legend()
+    ax = plt.gca()
+    ax.set_xticks(x_values)
+    plt.title('Truncated (m={}) Smoothing Posterior Mean At Each State'.format(condition_length))
+
+    A = table[dim]['A'].item()
+    Q = table[dim]['Q'].item()
+    C = table[dim]['C'].item()
+    R = table[dim]['R'].item()
+
+    plt.savefig('{}/TruncatedSmoothingPosteriorMean(m={} traj_length={} A={} Q={} C={} R={}).pdf'.format(TODAY, condition_length, traj_length, A, Q, C, R))
+    wandb.save('{}/TruncatedSmoothingPosteriorMean(m={} traj_length={} A={} Q={} C={} R={}).pdf'.format(TODAY, condition_length, traj_length, A, Q, C, R))
+    plt.close()
+
+    return means, xs
+
 
 if __name__ == "__main__":
     args, _ = get_args()
@@ -2156,6 +2199,14 @@ if __name__ == "__main__":
         print('executing: {}'.format('plot_variance'))
         true_variances = plot_posterior_variance(traj_length, dim, condition_length=0)
         plot_posterior_variance(traj_length, dim, condition_length=condition_length, true_variances=true_variances)
+    elif subroutine == 'plot_mean':
+        print('executing: {}'.format('plot_mean'))
+        table = create_dimension_table(torch.tensor([dim]), random=False)
+        posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim, condition_length=condition_length)
+        ys = posterior_evidence.ys
+        means, xs = plot_posterior_mean(ys, traj_length, dim, condition_length=0, xs=None)
+        plot_posterior_mean(ys, traj_length, dim, condition_length=condition_length, xs=xs)
+        plot_posterior_mean(ys, traj_length, dim, condition_length=2, xs=xs)
     else:
         print('executing: {}'.format('custom'))
         table = create_dimension_table(torch.tensor([dim]), random=False)
