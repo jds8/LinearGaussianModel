@@ -103,8 +103,7 @@ class AllObservationsAbstractLinearGaussianEnv(gym.Env):
         self.rewards.append(reward)
 
         # check done
-        # done = self.index+self.condition_length > self.traj_length
-        done = self.index >= self.traj_length
+        done = self.get_done()
 
         # add p(y_i|x_i), p(x_i|x_{i-1}), x_i, x_{i-1} to info for future estimates
         info = {'prior_reward': prior_reward,
@@ -185,6 +184,9 @@ class AllObservationsLinearGaussianEnv(AbstractConditionalLinearGaussianEnv):
     def get_condition_ys(self):
         return self.ys
 
+    def get_done(self):
+        done = self.index >= self.traj_length
+
 
 class ConditionalObservationsLinearGaussianEnv(AbstractConditionalLinearGaussianEnv):
     def __init__(self, A, Q, C, R, mu_0, Q_0, using_entropy_loss, condition_length, traj_length=1, ys=None, sample=False):
@@ -193,3 +195,6 @@ class ConditionalObservationsLinearGaussianEnv(AbstractConditionalLinearGaussian
 
     def get_condition_ys(self):
         return self.ys[self.index:self.index+self.condition_length]
+
+    def get_done(self):
+        return self.index+self.condition_length > self.traj_length

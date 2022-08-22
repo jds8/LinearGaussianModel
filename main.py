@@ -19,7 +19,7 @@ from generative_model import y_dist, sample_y, generate_trajectory, \
     # A, Q, C, R, mu_0, Q_0, \
 import wandb
 from linear_gaussian_env import LinearGaussianEnv, LinearGaussianSingleYEnv
-from all_obs_linear_gaussian_env import AllObservationsLinearGaussianEnv
+from all_obs_linear_gaussian_env import AllObservationsLinearGaussianEnv, ConditionalObservationsLinearGaussianEnv
 from math_utils import logvarexp, importance_sampled_confidence_interval, log_effective_sample_size, log_max_weight_proportion, log_mean
 from plot_utils import legend_without_duplicate_labels
 from linear_gaussian_prob_prog import MultiGaussianRandomVariable, GaussianRandomVariable, MultiLinearGaussian, LinearGaussian, VecLinearGaussian, JointVariables, get_linear_gaussian_variables
@@ -1862,6 +1862,8 @@ def get_env_type_from_arg(env_type_arg, condition_length=0):
         return lambda **kwargs: AllObservationsLinearGaussianEnv(**kwargs, condition_length=condition_length)
     elif env_type_arg == 'LinearGaussianEnv':
         return LinearGaussianEnv
+    elif env_type_arg == 'ConditionalObservationsLinearGaussianEnv':
+        return lambda **kwargs: ConditionalObservationsLinearGaussianEnv(**kwargs, condition_length=condition_length)
 
 def compute_conditional_kl(td_fps, policy, prev_xt, ys, condition_length):
     # filtering dist
