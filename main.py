@@ -213,7 +213,9 @@ def get_loss_type(model_name):
     model = model_name.split('/')[1]
     return model.split('_')[0]
 
-def train(traj_length, env, dim, condition_length, ent_coef=1.0, loss_type='forward_kl', learning_rate=3e-4, clip_range=0.2):
+def train(traj_length, env, dim, condition_length, ent_coef=1.0,
+          loss_type='forward_kl', learning_rate=3e-4, clip_range=0.2,
+          continue_training=False):
     params = {}
     run = wandb.init(project='linear_gaussian_model training', save_code=True, config=params, entity='iai')
 
@@ -226,17 +228,20 @@ def train(traj_length, env, dim, condition_length, ent_coef=1.0, loss_type='forw
     prior = lambda batch_obs: get_stacked_state_transition_dist(batch_obs[:, 0:dim, :], A=env.A, Q=env.Q)
     # prior = lambda batch_obs: get_stacked_state_transition_dist(batch_obs[:, 0:-1, :], A=env.A, Q=env.Q)
 
-    model = PPO(LinearActorCriticPolicy, env, ent_coef=ent_coef, device='cpu',
-                verbose=1, loss_type=loss_type, prior=prior,
-                learning_rate=learning_rate, clip_range=clip_range)
+    model_name = get_model_name(traj_length=traj_length, dim=dim,
+                                ent_coef=ent_coef, loss_type=loss_type,
+                                condition_length=condition_length)
+    if continue_training:
+        model, _ = load_rl_model(model_name=model_name, device='cpu', env=env)
+    else:
+        model = PPO(LinearActorCriticPolicy, env, ent_coef=ent_coef, device='cpu',
+                    verbose=1, loss_type=loss_type, prior=prior,
+                    learning_rate=learning_rate, clip_range=clip_range)
 
     # train policy
     model.learn(total_timesteps=RL_TIMESTEPS, callback=CustomCallback(env, verbose=1))
 
     # save model
-    model_name = get_model_name(traj_length=traj_length, dim=dim,
-                                ent_coef=ent_coef, loss_type=loss_type,
-                                condition_length=condition_length)
     model.save(model_name)
 
 
@@ -1444,7 +1449,9 @@ def verify_filtering_posterior():
         score += td.condition(y_values=ys[i:], x_value=actions[i]).log_prob(action)
     print('filtering posterior score: ', score)
 
-def test_train(traj_length, dim, condition_length, ent_coef, loss_type, learning_rate, clip_range, linear_gaussian_env_type):
+def test_train(traj_length, dim, condition_length, ent_coef, loss_type,
+               learning_rate, clip_range, linear_gaussian_env_type,
+               continue_training):
     table = create_dimension_table(torch.tensor([dim]), random=False)
     posterior_evidence = compute_evidence(table, traj_length, dim, condition_length=condition_length)
 
@@ -1460,7 +1467,8 @@ def test_train(traj_length, dim, condition_length, ent_coef, loss_type, learning
                                    ys=posterior_evidence.ys, sample=True)
     train(traj_length=traj_length, env=env, dim=dim, condition_length=condition_length,
           ent_coef=ent_coef, loss_type=loss_type,
-          learning_rate=learning_rate, clip_range=clip_range)
+          learning_rate=learning_rate, clip_range=clip_range,
+          continue_training=continue_training)
 
 def sample_variance_ratios(traj_length, model_name, condition_length):
     """
@@ -2015,6 +2023,8 @@ if __name__ == "__main__":
     args, _ = get_args()
     subroutine = args.subroutine
     save_dir = args.save_dir
+    continue_training = args.continue_training
+
     # MODEL = 'agents/'+save_dir+'/{}_{}_linear_gaussian_model_(traj_{}_dim_{})'
     if subroutine != 'train_agent':
         run = wandb.init(project='linear_gaussian_model', save_code=True, entity='iai')
@@ -2051,7 +2061,8 @@ if __name__ == "__main__":
         print('executing: {}'.format('train_agent'))
         test_train(traj_length=traj_length, dim=dim, condition_length=condition_length,
                    ent_coef=ent_coef, loss_type=loss_type, learning_rate=learning_rate,
-                   clip_range=clip_range, linear_gaussian_env_type=linear_gaussian_env_type)
+                   clip_range=clip_range, linear_gaussian_env_type=linear_gaussian_env_type,
+                   continue_training=continue_training)
     elif subroutine == 'evaluate_agent':
         print('executing: {}'.format('evaluate_agent'))
         evaluate_agent(linear_gaussian_env_type, traj_length, dim, model_name, condition_length=condition_length)
@@ -2059,7 +2070,8 @@ if __name__ == "__main__":
         print('executing: {}'.format('train_and_eval'))
         test_train(traj_length=traj_length, dim=dim, condition_length=condition_length,
                    ent_coef=ent_coef, loss_type=loss_type, learning_rate=learning_rate,
-                   clip_range=clip_range, linear_gaussian_env_type=linear_gaussian_env_type)
+                   clip_range=clip_range, linear_gaussian_env_type=linear_gaussian_env_type,
+                   continue_training=continue_training)
         evaluate_agent(linear_gaussian_env_type, traj_length, dim, model_name, condition_length=condition_length)
     elif subroutine == 'evaluate_until':
         print('executing: {}'.format('evaluate_until'))

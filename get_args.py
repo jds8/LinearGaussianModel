@@ -23,6 +23,7 @@ def get_args():
     parser.add_argument('--ess_condition_lengths', type=int, default=1, help='condition_lengths for ess', nargs='*')
     parser.add_argument('--epsilon', type=float, default=0.1, help='the largest deviation between the evidence estimate ratio and 1')
     parser.add_argument('--condition_length', type=int, default=0, help='the number of observations on which to condition')
+    parser.add_argument('--continue_training', type=bool, default=False, help='whether to continue training the rl model')
 
     # hyperparameters
     parser.add_argument('--learning_rate', type=float, default=1e-4, help='what file to load')
