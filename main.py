@@ -44,7 +44,7 @@ MODEL_W_CONDITION = 'agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{}_conditio
 
 TODAY = date.today().strftime("%b-%d-%Y")
 
-RL_TIMESTEPS = 100000
+RL_TIMESTEPS = 200000
 NUM_SAMPLES = 1000
 NUM_VARIANCE_SAMPLES = 10
 NUM_REPEATS = 20
