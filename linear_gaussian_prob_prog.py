@@ -1048,6 +1048,38 @@ def test_joint_vars():
     ys = generate_trajectory(num_obs, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0]
     env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, ys=ys, sample=False)
 
+def test_graphical_model():
+    dim = 1
+    num_obs = 3
+
+    lgv = get_linear_gaussian_variables(dim=dim, num_obs=num_obs)
+    xs = lgv.xs
+    ys = lgv.ys
+
+    table = create_dimension_table(torch.tensor([dim]), random=False)
+    A = table[dim]['A']
+    Q = table[dim]['Q']
+    C = table[dim]['C']
+    R = table[dim]['R']
+    mu_0 = table[dim]['mu_0']
+    Q_0 = table[dim]['Q_0']
+
+    jvs = JointVariables([xs[0], xs[1], ys[0]], A, C)
+    print(jvs.dist.covariance())
+    rhs_rvs = [xs[0], ys[0]]
+    conditional_1 = jvs.condition(rhs_rvs)
+    print(conditional_1.covariance())
+
+    jvs3 = JointVariables([xs[0], xs[1], ys[1]], A, C)
+    rhs_rvs3 = [xs[0], ys[1]]
+    conditional_3 = jvs3.condition(rhs_rvs3)
+    print(conditional_3.covariance())
+
+    jvs2 = JointVariables([xs[0], xs[1]], A, C)
+    rhs_rvs2 = [xs[0]]
+    conditional_2 = jvs2.condition(rhs_rvs2)
+    print(conditional_2.covariance())
+
 
 if __name__ == "__main__":
-    test_joint_vars()
+    test_graphical_model()

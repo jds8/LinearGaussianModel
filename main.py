@@ -1683,13 +1683,9 @@ def basic_plot(datas, quantiles, traj_length, labels, xlabel, ylabel, title, sav
 
 def execute_variance_ratio_runs(t_len, ent_coef, condition_length):
     labels = [FORWARD_KL, REVERSE_KL]
-    # forward_model_name = get_model_name(traj_length=traj_length, dim=dim, ent_coef=ent_coef,
-    #                                     loss_type=FORWARD_KL, condition_length=condition_length)
     forward_model_name = get_model_name(traj_length=traj_length, dim=dim, ent_coef=ent_coef,
                                         loss_type=FORWARD_KL, condition_length=traj_length)
     print('WARNING using wrong model_name in variance ratio')
-    # reverse_model_name = get_model_name(traj_length=traj_length, dim=dim, ent_coef=ent_coef,
-    #                                     loss_type=REVERSE_KL, condition_length=condition_length)
     reverse_model_name = get_model_name(traj_length=traj_length, dim=dim, ent_coef=ent_coef,
                                         loss_type=REVERSE_KL, condition_length=traj_length)
     print('WARNING using wrong model_name in variance ratio')
@@ -1880,12 +1876,7 @@ def compute_conditional_kl(td_fps, policy, prev_xt, ys, condition_length):
 
     # policy dist
     obs = torch.cat([prev_xt, ys[0:condition_length]]).reshape(1, -1)
-    try:
-        pd = policy.get_distribution(obs).distribution
-    except:
-        import pdb; pdb.set_trace()
-        pd = policy.get_distribution(obs).distribution
-
+    pd = policy.get_distribution(obs).distribution
 
     covs = []
     for i in range(pd.scale.shape[0]):
@@ -1929,7 +1920,78 @@ def execute_evaluate_agent_until(linear_gaussian_env_type, traj_lengths, dim, lo
     wandb.save(save_path)
     plt.close()
 
-def compare_reward(linear_gaussian_env_type, traj_length, dim, loss_type, condition_length, model_name):
+def generate_rewards(traj_length, dim, loss_type):
+    table = create_dimension_table(torch.tensor([dim]), random=False)
+    posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim, condition_length=0)
+    ys = posterior_evidence.ys
+
+    A = table[dim]['A']
+    Q = table[dim]['Q']
+    C = table[dim]['C']
+    R = table[dim]['R']
+    mu_0 = table[dim]['mu_0']
+    Q_0 = table[dim]['Q_0']
+
+    # condition_length for this env doesn't matter; I'm just using this AllObsEnv so that I get rewards
+    # only due to the *likelihood*
+    env = AllObservationsLinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, condition_length=0,
+                                           using_entropy_loss=True, ys=ys, sample=True)
+    env.reset()
+    all_tds = []
+    for m in range(traj_length):
+        all_tds.append(compute_conditional_filtering_posteriors(table=table, num_obs=len(posterior_evidence.ys),
+                                                                dim=dim, m=m, condition_on_x=True, ys=ys))
+    all_rewards = []
+    labels = []
+    for m in range(traj_length):
+        td_fps = all_tds[m]
+        condition_length = m if m > 0 else traj_length
+        labels.append('m={}'.format(condition_length))
+        td = all_tds[m][0].condition(y_values=ys[0:condition_length])
+        xt = td.mean()
+        _, reward, done, _ = env.step(xt)
+        all_rewards.append([reward])
+        for j in range(1, traj_length):
+            y = ys[j:j+condition_length]
+            td = td_fps[j]
+            dst = td.condition(y_values=y, x_value=xt)
+            xt = dst.mean()
+            _, reward, done, _ = env.step(xt)
+            all_rewards[m].append(reward)
+        all_rewards[m] = torch.tensor(all_rewards[m])
+        env.reset()
+
+    return all_rewards, labels, ys
+
+def smoothing_reward(traj_length, dim, loss_type):
+    torch.manual_seed(10)
+    avg_rewards = []
+    for _ in range(NUM_SAMPLES):
+        all_rewards, labels, _ = generate_rewards(traj_length, dim, loss_type)
+        if not avg_rewards:
+            for m in range(len(all_rewards)):
+                avg_rewards.append(all_rewards[m] / NUM_SAMPLES)
+        else:
+            for m in range(len(avg_rewards)):
+                avg_rewards[m] += all_rewards[m] / NUM_SAMPLES
+    linestyles = ['solid'] * len(labels)
+    plot_smoothing_reward(torch.arange(1, traj_length+1), avg_rewards, labels, linestyles)
+
+def plot_smoothing_reward(xlabels, all_rewards, labels, linestyles):
+    for all_reward, label, linestyle in zip(all_rewards, labels, linestyles):
+        plt.plot(xlabels, all_reward, label=label, linestyle=linestyle)
+        plt.xlabel('State')
+        plt.ylabel('Reward')
+        plt.title('Deterministic Reward at Each State')
+        ax = plt.gca()
+        box = ax.get_position()
+        ax.set_position([box.x0, box.y0 + box.height * 0.1,
+                         box.width, box.height * 0.9])
+        ax.legend(loc='lower center', bbox_to_anchor=(0.5, -1.3), ncol=int(len(labels)/2))
+        plt.savefig('{}/(traj_length_{})DeterministicRewardPlot.pdf'.format(TODAY, traj_length))
+        wandb.save('{}/(traj_length_{})DeterministicRewardPlot.pdf'.format(TODAY, traj_length))
+
+def policy_reward(traj_length, dim, linear_gaussian_env_type, model_name, ys, condition_length):
     # evaluate rl policy
     _, policy = load_rl_model(model_name=model_name, device='cpu')
 
@@ -1941,21 +2003,45 @@ def compare_reward(linear_gaussian_env_type, traj_length, dim, loss_type, condit
     mu_0 = table[dim]['mu_0']
     Q_0 = table[dim]['Q_0']
 
-    ys, _ = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0:2]
     env = linear_gaussian_env_type(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0,
                                    using_entropy_loss=(loss_type==ENTROPY_LOSS),
                                    ys=ys, sample=True)
     eval_obj_rl = evaluate(d=policy, N=1, env=env, deterministic=True)
+    label = 'rl m={}'.format(condition_length)
+    return torch.tensor(eval_obj_rl.liks), label
 
-    # evaluate posterior
-    end_len = traj_length-condition_length+1
-    end_ys = ys[0:end_len]
+def compare_single_trajectory_rewards(traj_length, dim, loss_type, linear_gaussian_env_type, model_name, rl_condition_length):
+    all_rewards, labels, ys = generate_rewards(traj_length, dim, loss_type)
+    linestyles = ['solid'] * len(labels)
 
-    posterior = compute_posterior(A=A, Q=Q, C=C, R=R, num_observations=len(end_ys), dim=dim)
-    td = condition_posterior(posterior, end_ys)
+    liks, label = policy_reward(traj_length, dim, linear_gaussian_env_type, model_name, ys, rl_condition_length)
 
-    eval_obj_posterior = evaluate_posterior(ys=end_ys, N=1, td=td, env=env)
-    true = eval_obj_posterior.running_log_estimates[0]
+    all_rewards.append(liks)
+    labels.append(label)
+    linestyles.append('dashed')
+
+    plot_smoothing_reward(torch.arange(1, traj_length+1), all_rewards, labels, linestyles)
+    plt.close()
+
+def compare_rewards(traj_length, dim, loss_type, linear_gaussian_env_type, model_name, rl_condition_length):
+    torch.manual_seed(10)
+    avg_rewards = []
+    for _ in range(NUM_SAMPLES):
+        all_rewards, labels, ys = generate_rewards(traj_length, dim, loss_type)
+        liks, rl_label = policy_reward(traj_length, dim, linear_gaussian_env_type, model_name, ys, rl_condition_length)
+
+        if not avg_rewards:
+            for m in range(len(all_rewards)):
+                avg_rewards.append(all_rewards[m] / NUM_SAMPLES)
+            avg_rewards.append(liks / NUM_SAMPLES)
+        else:
+            for m in range(len(all_rewards)):
+                avg_rewards[m] += all_rewards[m] / NUM_SAMPLES
+            avg_rewards[-1] += liks / NUM_SAMPLES
+
+    linestyles = ['solid'] * len(labels) + ['dashed']
+    labels.append(rl_label)
+    plot_smoothing_reward(torch.arange(1, traj_length+1), avg_rewards, labels, linestyles)
 
 def plot_posterior_variance(traj_length, dim, condition_length, true_variances=None):
     # torch.manual_seed(10)
@@ -2136,7 +2222,11 @@ if __name__ == "__main__":
     elif subroutine == 'posterior_filtering_conditional_ess_traj':
         print('executing: {}'.format('posterior_filtering_conditional_ess_traj'))
         table = create_dimension_table(torch.tensor([dim]), random=False)
-        posterior_filtering_conditional_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, condition_length=condition_length)
+        # posterior_filtering_conditional_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, condition_length=condition_length)
+        posterior_filtering_conditional_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, condition_length=1)
+        posterior_filtering_conditional_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, condition_length=2)
+        posterior_filtering_conditional_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, condition_length=3)
+        posterior_filtering_conditional_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, condition_length=4)
     elif subroutine == 'posterior_filtering_conditional_ess_condition_length':
         print('executing: {}'.format('posterior_filtering_conditional_ess_condition_length'))
         table = create_dimension_table(torch.tensor([dim]), random=False)
@@ -2188,9 +2278,10 @@ if __name__ == "__main__":
         print('executing: {}'.format('variance_ratio'))
         # execute_variance_ratio_runs(t_len=traj_length, ent_coef=ent_coef, loss_type=loss_type, model_name=model_name)
         execute_variance_ratio_runs(t_len=traj_length, ent_coef=ent_coef, condition_length=condition_length)
-    elif subroutine == 'compare_reward':
-        print('executing: {}'.format('compare_reward'))
-        compare_reward(linear_gaussian_env_type, traj_length, dim, loss_type, condition_length, model_name)
+    elif subroutine == 'compare_rewards':
+        print('executing: {}'.format('compare_rewards'))
+        # compare_single_trajectory_rewards(traj_length, dim, loss_type, linear_gaussian_env_type, model_name, condition_length)
+        compare_rewards(traj_length, dim, loss_type, linear_gaussian_env_type, model_name, condition_length)
     elif subroutine == 'posterior_filtering_conditional_convergence':
         print('executing: {}'.format('posterior_filtering_conditional_convergence'))
         table = create_dimension_table(torch.tensor([dim]), random=False)
@@ -2207,6 +2298,9 @@ if __name__ == "__main__":
         means, xs = plot_posterior_mean(ys, traj_length, dim, condition_length=0, xs=None)
         plot_posterior_mean(ys, traj_length, dim, condition_length=condition_length, xs=xs)
         plot_posterior_mean(ys, traj_length, dim, condition_length=2, xs=xs)
+    elif subroutine == 'smoothing_reward':
+        print('executing: {}'.format('smoothing_reward'))
+        smoothing_reward(traj_length, dim, loss_type)
     else:
         print('executing: {}'.format('custom'))
         table = create_dimension_table(torch.tensor([dim]), random=False)
