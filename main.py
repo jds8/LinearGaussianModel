@@ -913,7 +913,7 @@ def get_prior_output(table, ys, dim, sample, traj_length=0):
                                                      idstr=name)
     return OutputWithName(prior_output, name)
 
-def get_rl_output(linear_gaussian_env_type, table, ys, dim, sample, model_name, traj_length=0):
+def get_rl_output(linear_gaussian_env_type, table, ys, dim, model_name, traj_length=0):
     if ys is not None:
         traj_length = len(ys)
     rl_output = ImportanceOutput(traj_length=traj_length, ys=ys, dim=dim)
@@ -927,10 +927,19 @@ def get_rl_output(linear_gaussian_env_type, table, ys, dim, sample, model_name, 
 
     loss_type = get_loss_type(model_name)
 
+    env = linear_gaussian_env_type(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q,
+                                    using_entropy_loss=(loss_type==ENTROPY_LOSS),
+                                    ys=ys, traj_length=traj_length, sample=False)
+
+    sample_ys = ys is None
     for _ in range(NUM_REPEATS):
-        env = linear_gaussian_env_type(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q,
-                                       using_entropy_loss=(loss_type==ENTROPY_LOSS),
-                                       ys=ys, traj_length=traj_length, sample=sample)
+        if sample_ys:
+            # create a new environment
+            ys = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0]
+            env = linear_gaussian_env_type(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q,
+                                           using_entropy_loss=(loss_type==ENTROPY_LOSS),
+                                           ys=ys, traj_length=traj_length, sample=False)
+            env.reset()
 
         eval_obj = rl_estimate(ys, dim=dim, N=NUM_SAMPLES*traj_length**0, model_name=model_name,
                                env=env, traj_length=traj_length)
@@ -943,16 +952,17 @@ def get_rl_output(linear_gaussian_env_type, table, ys, dim, sample, model_name, 
     rl_estimator.save_data()
     return OutputWithName(rl_output, model_name)
 
-def get_perturbed_posterior_output(posterior_evidence, dim, epsilon, name):
-    ys = posterior_evidence.ys
-    true_posterior = posterior_evidence.td
-    env = posterior_evidence.env
-
-    posterior_output = ImportanceOutput(traj_length=len(ys), ys=ys, dim=dim)
-    # get importance weighted score for comparison
-    td = dist.MultivariateNormal(true_posterior.mean, true_posterior.covariance_matrix + epsilon * torch.eye(true_posterior.mean.shape[0]))
-
+def get_perturbed_posterior_output(traj_length, dim, epsilon, name):
     for _ in range(NUM_REPEATS):
+        posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim, condition_length=condition_length)
+        ys = posterior_evidence.ys
+        true_posterior = posterior_evidence.td
+        env = posterior_evidence.env
+
+        posterior_output = ImportanceOutput(traj_length=len(ys), ys=ys, dim=dim)
+        # get importance weighted score for comparison
+        td = dist.MultivariateNormal(true_posterior.mean, true_posterior.covariance_matrix + epsilon * torch.eye(true_posterior.mean.shape[0]))
+
         eval_obj = evaluate_posterior(ys=ys, N=NUM_SAMPLES, td=td, env=env)
         posterior_estimator = posterior_output.add_rl_estimator(running_log_estimates=eval_obj.running_log_estimates,
                                                                 ci=eval_obj.ci, weight_mean=eval_obj.log_weight_mean.exp(),
@@ -980,19 +990,42 @@ def get_evidence_two_ways(traj_length, dim, env, ys, condition_length):
     print('True evidence: {}'.format(true))
 
 
-def get_perturbed_posterior_filtering_output(table, posterior_evidence, dim, epsilon, name, condition_length):
+def get_perturbed_posterior_filtering_output(table, traj_length, dim, epsilon, name, condition_length):
+    for _ in range(NUM_REPEATS):
+        posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim, condition_length=condition_length)
+
+        ys = posterior_evidence.ys
+        env = posterior_evidence.env
+
+        fps = compute_conditional_filtering_posteriors(table=table, num_obs=len(posterior_evidence.ys),
+                                                       dim=dim, m=condition_length, condition_on_x=True,
+                                                       ys=posterior_evidence.ys)
+
+        posterior_output = ImportanceOutput(traj_length=len(ys), ys=ys, dim=dim)
+        # get importance weighted score for comparison
+
+        eval_obj = evaluate_filtering_posterior(ys=ys, N=NUM_SAMPLES, tds=fps, epsilon=epsilon, env=env, m=condition_length)
+        posterior_estimator = posterior_output.add_rl_estimator(running_log_estimates=eval_obj.running_log_estimates,
+                                                                ci=eval_obj.ci, weight_mean=eval_obj.log_weight_mean.exp(),
+                                                                max_weight_prop=eval_obj.log_max_weight_prop.exp(),
+                                                                ess=eval_obj.log_effective_sample_size.exp(),
+                                                                ess_ci=eval_obj.ess_ci, idstr=name)
+
+    posterior_estimator.save_data()
+    return OutputWithName(posterior_output, name)
+
+def get_perturbed_posterior_filtering_convergence_output(table, posterior_evidence, dim, epsilon, name, condition_length):
     ys = posterior_evidence.ys
-    true_posterior = posterior_evidence.td
     env = posterior_evidence.env
 
     fps = compute_conditional_filtering_posteriors(table=table, num_obs=len(posterior_evidence.ys),
-                                                   dim=dim, m=condition_length, condition_on_x=True,
-                                                   ys=posterior_evidence.ys)
+                                                    dim=dim, m=condition_length, condition_on_x=True,
+                                                    ys=posterior_evidence.ys)
 
     posterior_output = ImportanceOutput(traj_length=len(ys), ys=ys, dim=dim)
-    # get importance weighted score for comparison
-
     for _ in range(NUM_REPEATS):
+        # get importance weighted score for comparison
+
         eval_obj = evaluate_filtering_posterior(ys=ys, N=NUM_SAMPLES, tds=fps, epsilon=epsilon, env=env, m=condition_length)
         posterior_estimator = posterior_output.add_rl_estimator(running_log_estimates=eval_obj.running_log_estimates,
                                                                 ci=eval_obj.ci, weight_mean=eval_obj.log_weight_mean.exp(),
@@ -1027,18 +1060,18 @@ def save_outputs_with_names(outputs, distribution_type, label, columns, output_t
     df = pd.DataFrame(ess_output.numpy(), columns=columns)
     df.to_csv('{}/{}/{}_ESS_{}.csv'.format(TODAY, distribution_type, label, output_type))
 
-def get_perturbed_posterior_outputs(posterior_evidence, dim, epsilons):
+def get_perturbed_posterior_outputs(traj_length, dim, epsilons):
     outputs = []
     for epsilon in epsilons:
         name = '{}(epsilon: {} dim: {} traj_len: {})'.format(POSTERIOR_DISTRIBUTION, epsilon, dim, len(posterior_evidence.ys))
-        outputs += [get_perturbed_posterior_output(posterior_evidence, dim, epsilon, name)]
+        outputs += [get_perturbed_posterior_output(traj_length, dim, epsilon, name)]
     return outputs
 
-def get_perturbed_posterior_filtering_outputs(table, posterior_evidence, dim, epsilons, condition_length):
+def get_perturbed_posterior_filtering_outputs(table, traj_length, dim, epsilons, condition_length):
     outputs = []
     for epsilon in epsilons:
-        name = '{}(epsilon: {} dim: {} traj_len: {})'.format(FILTERING_POSTERIOR_DISTRIBUTION, epsilon, dim, len(posterior_evidence.ys))
-        outputs += [get_perturbed_posterior_filtering_output(table, posterior_evidence, dim, epsilon, name, condition_length)]
+        name = '{}(epsilon: {} dim: {} traj_len: {})'.format(FILTERING_POSTERIOR_DISTRIBUTION, epsilon, dim, traj_length)
+        outputs += [get_perturbed_posterior_filtering_output(table, traj_length, dim, epsilon, name, condition_length)]
     return outputs
 
 def plot_ess_estimators(outputs_with_names, fixed_feature):
@@ -1105,14 +1138,12 @@ def plot_convergence(outputs_with_names, traj_length, dim, true, name):
     wandb.save(TODAY+'/'+model_name+'Convergence.pdf')
     plt.close()
 
-def posterior_convergence(posterior_evidence, dim, epsilons):
-    posterior_outputs_with_names = get_perturbed_posterior_outputs(posterior_evidence, dim, epsilons)
-    traj_length = len(posterior_evidence.ys)
+def posterior_convergence(traj_length, dim, epsilons):
+    posterior_outputs_with_names = get_perturbed_posterior_outputs(traj_length, dim, epsilons)
     plot_convergence(posterior_outputs_with_names, traj_length, dim, posterior_evidence.evidence, 'posterior')
 
 def posterior_filtering_convergence(table, posterior_evidence, dim, epsilons):
-    posterior_outputs_with_names = get_perturbed_posterior_filtering_outputs(table, posterior_evidence, dim, epsilons, condition_length=0)
-    traj_length = len(posterior_evidence.ys)
+    posterior_outputs_with_names = get_perturbed_posterior_filtering_outputs(table, traj_length, dim, epsilons, condition_length=0)
     plot_convergence(posterior_outputs_with_names, traj_length, dim, posterior_evidence.evidence, 'posterior_filtering')
 
 def posterior_filtering_conditional_convergence(table, posterior_evidence, dim, condition_length):
@@ -1129,7 +1160,7 @@ def prior_convergence(table, ys, truth, dim):
     plot_convergence([prior_outputs_with_name], traj_length, dim, truth, 'prior')
 
 def rl_convergence(linear_gaussian_env_type, table, ys, truth, dim, model_name):
-    rl_outputs_with_name = get_rl_output(linear_gaussian_env_type, table=table, ys=ys, dim=dim, sample=False, model_name=model_name)
+    rl_outputs_with_name = get_rl_output(linear_gaussian_env_type, table=table, ys=ys, dim=dim, model_name=model_name)
     traj_length = len(ys)
     plot_convergence([rl_outputs_with_name], traj_length, dim, truth, model_name)
 
@@ -1205,30 +1236,27 @@ class RLConvergence(EvidenceConvergence):
         return get_rl_output(self.linear_gaussian_env_type, table=table, ys=self.posterior_evidence.ys, dim=self.dim, sample=False)
 
 
-def compare_convergence(linear_gaussian_env_type, table, traj_length, dim, epsilons, model_name, condition_length):
-    posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim, condition_length=condition_length)
-    posterior_convergence(posterior_evidence=posterior_evidence, dim=dim, epsilons=epsilons)
-    prior_convergence(table=table, ys=posterior_evidence.ys, truth=posterior_evidence.evidence, dim=dim)
-    try:
-        rl_convergence(linear_gaussian_env_type, table=table, ys=posterior_evidence.ys,
-                       truth=posterior_evidence.evidence, dim=dim,
-                       model_name=model_name)
-    except:
-        pass
+# def compare_convergence(linear_gaussian_env_type, table, traj_length, dim, epsilons, model_name, condition_length):
+#     posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim, condition_length=condition_length)
+#     posterior_convergence(posterior_evidence=posterior_evidence, dim=dim, epsilons=epsilons)
+#     prior_convergence(table=table, ys=posterior_evidence.ys, truth=posterior_evidence.evidence, dim=dim)
+#     try:
+#         rl_convergence(linear_gaussian_env_type, table=table, ys=posterior_evidence.ys,
+#                        truth=posterior_evidence.evidence, dim=dim,
+#                        model_name=model_name)
+#     except:
+#         pass
 
 def get_posterior_ess_outputs(table, traj_length, dim, epsilon, condition_length):
-    posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim, condition_length=condition_length)
-    return get_perturbed_posterior_outputs(posterior_evidence, dim, [epsilon])
+    return get_perturbed_posterior_outputs(traj_length, dim, [epsilon])
 
 def get_posterior_filtering_ess_outputs(table, traj_length, dim, epsilon):
-    posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim, condition_length=0)
-    return get_perturbed_posterior_filtering_outputs(table=table, posterior_evidence=posterior_evidence, dim=dim, epsilons=[epsilon], condition_length=0)
+    return get_perturbed_posterior_filtering_outputs(table=table, traj_length=traj_length, dim=dim, epsilons=[epsilon], condition_length=0)
 
 def get_posterior_filtering_conditional_ess_outputs(table, traj_length, dim, condition_length):
-    posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim, condition_length=condition_length)
     name = '{}(dim: {} traj_len: {} condition_length: {})'.format(FILTERING_POSTERIOR_CONDITIONAL_DISTRIBUTION, dim,
-                                                                  len(posterior_evidence.ys), condition_length)
-    return [get_perturbed_posterior_filtering_output(table=table, posterior_evidence=posterior_evidence, dim=dim,
+                                                                  traj_length, condition_length)
+    return [get_perturbed_posterior_filtering_output(table=table, traj_length=traj_length, dim=dim,
                                                      epsilon=0., name=name, condition_length=condition_length)]
 
 def posterior_ess_traj(table, traj_lengths, dim, epsilon):
@@ -1320,7 +1348,7 @@ def rl_ess_traj(linear_gaussian_env_type, table, traj_lengths,
         model_name = get_model_name(traj_length=traj_length, dim=dim,
                                     ent_coef=ent_coef, loss_type=loss_type,
                                     condition_length=condition_length)
-        outputs += [get_rl_output(linear_gaussian_env_type, table=table, ys=None, dim=dim, sample=True, model_name=model_name, traj_length=traj_length)]
+        outputs += [get_rl_output(linear_gaussian_env_type, table=table, ys=None, dim=dim, model_name=model_name, traj_length=traj_length)]
     save_outputs_with_names_traj(outputs, distribution_type,
                                  '{}_{}(traj_lengths_{}_dim_{})'.format(distribution_type, loss_type, traj_lengths, dim))
     make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=dim,
@@ -1334,7 +1362,7 @@ def rl_ess_dim(linear_gaussian_env_type, table, traj_length, dims, ent_coef, los
     for dim in dims:
         # ys = generate_trajectory(traj_length, A=single_gen_A, Q=single_gen_Q, C=single_gen_C, R=single_gen_R, mu_0=single_gen_mu_0, Q_0=single_gen_Q_0)[0]
         model_name = get_model_name(traj_length=traj_length, dim=dim, ent_coef=ent_coef, loss_type=loss_type)
-        outputs += [get_rl_output(linear_gaussian_env_type, table=table, ys=None, dim=dim, sample=True, model_name=model_name, traj_length=traj_length)]
+        outputs += [get_rl_output(linear_gaussian_env_type, table=table, ys=None, dim=dim, model_name=model_name, traj_length=traj_length)]
     save_outputs_with_names_dim(outputs, distribution_type,
                                 '{}_{}(traj_length_{}_dims_{})'.format(distribution_type, loss_type, traj_length, dims))
     make_ess_plot_nice_dim(outputs, fixed_feature_string='traj_length', fixed_feature=traj_length,
@@ -1351,19 +1379,19 @@ def execute_posterior_ess_dim(table, traj_length, epsilons, dims):
     for epsilon in epsilons:
         posterior_ess_dim(table=table, traj_length=traj_length, dims=dims, epsilon=epsilon)
 
-def execute_compare_convergence_traj(table, traj_lengths, epsilons, dim, model_name):
-    os.makedirs(TODAY, exist_ok=True)
-    for traj_length in traj_lengths:
-        compare_convergence(table=table, traj_length=traj_length,
-                            dim=dim, epsilons=epsilons,
-                            model_name=model_name)
+# def execute_compare_convergence_traj(table, traj_lengths, epsilons, dim, model_name):
+#     os.makedirs(TODAY, exist_ok=True)
+#     for traj_length in traj_lengths:
+#         compare_convergence(table=table, traj_length=traj_length,
+#                             dim=dim, epsilons=epsilons,
+#                             model_name=model_name)
 
-def execute_compare_convergence_dim(table, traj_length, epsilons, dims, model_name):
-    os.makedirs(TODAY, exist_ok=True)
-    for dim in dims:
-        compare_convergence(table=table, traj_length=traj_length,
-                            dim=dim, epsilons=epsilons,
-                            model_name=model_name)
+# def execute_compare_convergence_dim(table, traj_length, epsilons, dims, model_name):
+#     os.makedirs(TODAY, exist_ok=True)
+#     for dim in dims:
+#         compare_convergence(table=table, traj_length=traj_length,
+#                             dim=dim, epsilons=epsilons,
+#                             model_name=model_name)
 
 def posterior_filtering_conditional_ess_condition_length(table, traj_length, dim, condition_lengths):
     distribution_type = FILTERING_POSTERIOR_CONDITIONAL_DISTRIBUTION
@@ -2304,10 +2332,9 @@ if __name__ == "__main__":
     else:
         print('executing: {}'.format('custom'))
         table = create_dimension_table(torch.tensor([dim]), random=False)
-        posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim, condition_length=condition_length)
         # epsilons = [-5e-3, 5e-3]
         epsilons = [0.]
-        posterior_filtering_convergence(table, posterior_evidence, dim, epsilons)
+        posterior_filtering_convergence(table, traj_length, dim, epsilons)
 
     # epsilons = [-5e-3, 0.0, 5e-3]
     # epsilons = [-5e-2, 0.0]
