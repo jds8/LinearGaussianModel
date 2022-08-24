@@ -953,13 +953,32 @@ def get_rl_output(linear_gaussian_env_type, table, ys, dim, model_name, traj_len
     return OutputWithName(rl_output, model_name)
 
 def get_perturbed_posterior_output(traj_length, dim, epsilon, name):
+    posterior_output = ImportanceOutput(traj_length=traj_length, ys=None, dim=dim)
     for _ in range(NUM_REPEATS):
         posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim, condition_length=condition_length)
         ys = posterior_evidence.ys
         true_posterior = posterior_evidence.td
         env = posterior_evidence.env
 
-        posterior_output = ImportanceOutput(traj_length=len(ys), ys=ys, dim=dim)
+        # get importance weighted score for comparison
+        td = dist.MultivariateNormal(true_posterior.mean, true_posterior.covariance_matrix + epsilon * torch.eye(true_posterior.mean.shape[0]))
+
+        eval_obj = evaluate_posterior(ys=ys, N=NUM_SAMPLES, td=td, env=env)
+        posterior_estimator = posterior_output.add_rl_estimator(running_log_estimates=eval_obj.running_log_estimates,
+                                                                ci=eval_obj.ci, weight_mean=eval_obj.log_weight_mean.exp(),
+                                                                max_weight_prop=eval_obj.log_max_weight_prop.exp(),
+                                                                ess=eval_obj.log_effective_sample_size.exp(),
+                                                                ess_ci=eval_obj.ess_ci, idstr=name)
+    posterior_estimator.save_data()
+    return OutputWithName(posterior_output, name)
+
+def get_perturbed_posterior_fixed_obs_output(posterior_evidence, dim, epsilon, name):
+    ys = posterior_evidence.ys
+    true_posterior = posterior_evidence.td
+    env = posterior_evidence.env
+    posterior_output = ImportanceOutput(traj_length=len(ys), ys=None, dim=dim)
+
+    for _ in range(NUM_REPEATS):
         # get importance weighted score for comparison
         td = dist.MultivariateNormal(true_posterior.mean, true_posterior.covariance_matrix + epsilon * torch.eye(true_posterior.mean.shape[0]))
 
@@ -991,6 +1010,9 @@ def get_evidence_two_ways(traj_length, dim, env, ys, condition_length):
 
 
 def get_perturbed_posterior_filtering_output(table, traj_length, dim, epsilon, name, condition_length):
+    posterior_output = ImportanceOutput(traj_length=traj_length, ys=None, dim=dim)
+    # get importance weighted score for comparison
+
     for _ in range(NUM_REPEATS):
         posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim, condition_length=condition_length)
 
@@ -1000,9 +1022,6 @@ def get_perturbed_posterior_filtering_output(table, traj_length, dim, epsilon, n
         fps = compute_conditional_filtering_posteriors(table=table, num_obs=len(posterior_evidence.ys),
                                                        dim=dim, m=condition_length, condition_on_x=True,
                                                        ys=posterior_evidence.ys)
-
-        posterior_output = ImportanceOutput(traj_length=len(ys), ys=ys, dim=dim)
-        # get importance weighted score for comparison
 
         eval_obj = evaluate_filtering_posterior(ys=ys, N=NUM_SAMPLES, tds=fps, epsilon=epsilon, env=env, m=condition_length)
         posterior_estimator = posterior_output.add_rl_estimator(running_log_estimates=eval_obj.running_log_estimates,
@@ -1014,7 +1033,7 @@ def get_perturbed_posterior_filtering_output(table, traj_length, dim, epsilon, n
     posterior_estimator.save_data()
     return OutputWithName(posterior_output, name)
 
-def get_perturbed_posterior_filtering_convergence_output(table, posterior_evidence, dim, epsilon, name, condition_length):
+def get_perturbed_posterior_filtering_fixed_obs_output(table, posterior_evidence, dim, epsilon, name, condition_length):
     ys = posterior_evidence.ys
     env = posterior_evidence.env
 
@@ -1063,8 +1082,15 @@ def save_outputs_with_names(outputs, distribution_type, label, columns, output_t
 def get_perturbed_posterior_outputs(traj_length, dim, epsilons):
     outputs = []
     for epsilon in epsilons:
-        name = '{}(epsilon: {} dim: {} traj_len: {})'.format(POSTERIOR_DISTRIBUTION, epsilon, dim, len(posterior_evidence.ys))
+        name = '{}(epsilon: {} dim: {} traj_len: {})'.format(POSTERIOR_DISTRIBUTION, epsilon, dim, traj_length)
         outputs += [get_perturbed_posterior_output(traj_length, dim, epsilon, name)]
+    return outputs
+
+def get_perturbed_posterior_fixed_obs_outputs(posterior_evidence, dim, epsilons):
+    outputs = []
+    for epsilon in epsilons:
+        name = '{}(epsilon: {} dim: {} traj_len: {})'.format(POSTERIOR_DISTRIBUTION, epsilon, dim, len(posterior_evidence.ys))
+        outputs += [get_perturbed_posterior_fixed_obs_output(posterior_evidence, dim, epsilon, name)]
     return outputs
 
 def get_perturbed_posterior_filtering_outputs(table, traj_length, dim, epsilons, condition_length):
@@ -1138,19 +1164,19 @@ def plot_convergence(outputs_with_names, traj_length, dim, true, name):
     wandb.save(TODAY+'/'+model_name+'Convergence.pdf')
     plt.close()
 
-def posterior_convergence(traj_length, dim, epsilons):
-    posterior_outputs_with_names = get_perturbed_posterior_outputs(traj_length, dim, epsilons)
+def posterior_convergence(posterior_evidence, dim, epsilons):
+    posterior_outputs_with_names = get_perturbed_posterior_fixed_obs_outputs(posterior_evidence, dim, epsilons)
     plot_convergence(posterior_outputs_with_names, traj_length, dim, posterior_evidence.evidence, 'posterior')
 
 def posterior_filtering_convergence(table, posterior_evidence, dim, epsilons):
-    posterior_outputs_with_names = get_perturbed_posterior_filtering_outputs(table, traj_length, dim, epsilons, condition_length=0)
+    posterior_outputs_with_names = get_perturbed_posterior_filtering_fixed_obs_outputs(table, traj_length, dim, epsilons, condition_length=0)
     plot_convergence(posterior_outputs_with_names, traj_length, dim, posterior_evidence.evidence, 'posterior_filtering')
 
 def posterior_filtering_conditional_convergence(table, posterior_evidence, dim, condition_length):
     name = '{}(dim: {} traj_len: {} condition_length: {})'.format(FILTERING_POSTERIOR_CONDITIONAL_DISTRIBUTION, dim,
                                                                   len(posterior_evidence.ys), condition_length)
-    posterior_outputs_with_names = [get_perturbed_posterior_filtering_output(table, posterior_evidence, dim, epsilon=0.,
-                                                                             name=name, condition_length=condition_length)]
+    posterior_outputs_with_names = [get_perturbed_posterior_filtering_fixed_obs_output(table, posterior_evidence, dim, epsilon=0.,
+                                                                                       name=name, condition_length=condition_length)]
     traj_length = len(posterior_evidence.ys)
     plot_convergence(posterior_outputs_with_names, traj_length, dim, posterior_evidence.evidence, 'posterior_filtering_conditional')
 
@@ -1236,16 +1262,16 @@ class RLConvergence(EvidenceConvergence):
         return get_rl_output(self.linear_gaussian_env_type, table=table, ys=self.posterior_evidence.ys, dim=self.dim, sample=False)
 
 
-# def compare_convergence(linear_gaussian_env_type, table, traj_length, dim, epsilons, model_name, condition_length):
-#     posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim, condition_length=condition_length)
-#     posterior_convergence(posterior_evidence=posterior_evidence, dim=dim, epsilons=epsilons)
-#     prior_convergence(table=table, ys=posterior_evidence.ys, truth=posterior_evidence.evidence, dim=dim)
-#     try:
-#         rl_convergence(linear_gaussian_env_type, table=table, ys=posterior_evidence.ys,
-#                        truth=posterior_evidence.evidence, dim=dim,
-#                        model_name=model_name)
-#     except:
-#         pass
+def compare_convergence(linear_gaussian_env_type, table, traj_length, dim, epsilons, model_name, condition_length):
+    posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim, condition_length=condition_length)
+    posterior_convergence(posterior_evidence=posterior_evidence, dim=dim, epsilons=epsilons)
+    prior_convergence(table=table, ys=posterior_evidence.ys, truth=posterior_evidence.evidence, dim=dim)
+    try:
+        rl_convergence(linear_gaussian_env_type, table=table, ys=posterior_evidence.ys,
+                       truth=posterior_evidence.evidence, dim=dim,
+                       model_name=model_name)
+    except:
+        pass
 
 def get_posterior_ess_outputs(table, traj_length, dim, epsilon, condition_length):
     return get_perturbed_posterior_outputs(traj_length, dim, [epsilon])
@@ -1313,6 +1339,8 @@ def posterior_filtering_conditional_ess_traj(table, traj_lengths, dim, condition
         outputs += get_posterior_filtering_conditional_ess_outputs(table, traj_length, dim, condition_length)
     save_outputs_with_names_traj(outputs, distribution_type,
                                  '{}(traj_lengths_{}_dim_{}_condition_length_{})'.format(distribution_type, traj_lengths, dim, condition_length))
+    import pdb; pdb.set_trace()
+
     make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=dim,
                        num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, traj_lengths=traj_lengths,
                        xlabel='Trajectory Length', distribution_type=distribution_type, name='posterior_filtering (conditioned on {} obs)'.format(condition_length))
