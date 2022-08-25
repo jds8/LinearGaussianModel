@@ -81,6 +81,9 @@ class AllObservationsAbstractLinearGaussianEnv(gym.Env):
         raise NotImplementedError
         return None
 
+    def states_left(self):
+        raise NotImplementedError
+
     def step(self, action):
         # cast action to the appropriate torch.tensor and dtype
         if isinstance(action, torch.Tensor):
@@ -162,7 +165,7 @@ class AllObservationsAbstractLinearGaussianEnv(gym.Env):
 
 
 class AbstractConditionalLinearGaussianEnv(AllObservationsAbstractLinearGaussianEnv):
-    def __init__(self, A, Q, C, R, mu_0, Q_0, using_entropy_loss, condition_length, traj_length=1, ys=None, sample=False):
+    def __init__(self, A, Q, C, R, mu_0, Q_0, condition_length, using_entropy_loss, traj_length=1, ys=None, sample=False):
         super().__init__(A, Q, C, R, mu_0, Q_0, condition_length, using_entropy_loss,
                          traj_length=traj_length, ys=ys, sample=sample)
 
@@ -177,7 +180,7 @@ class AbstractConditionalLinearGaussianEnv(AllObservationsAbstractLinearGaussian
 
 
 class AllObservationsLinearGaussianEnv(AbstractConditionalLinearGaussianEnv):
-    def __init__(self, A, Q, C, R, mu_0, Q_0, using_entropy_loss, condition_length, traj_length=1, ys=None, sample=False):
+    def __init__(self, A, Q, C, R, mu_0, Q_0, condition_length, using_entropy_loss, traj_length=1, ys=None, sample=False):
         super().__init__(A, Q, C, R, mu_0, Q_0, condition_length, using_entropy_loss,
                          traj_length=traj_length, ys=ys, sample=sample)
 
@@ -187,9 +190,27 @@ class AllObservationsLinearGaussianEnv(AbstractConditionalLinearGaussianEnv):
     def get_done(self):
         return self.index >= self.traj_length
 
+    def states_left(self):
+        return self.traj_length - self.index
+
+
+class EnsembleLinearGaussianEnv(AbstractConditionalLinearGaussianEnv):
+    def __init__(self, A, Q, C, R, mu_0, Q_0, condition_length, using_entropy_loss, traj_length=1, ys=None, sample=False):
+        super().__init__(A, Q, C, R, mu_0, Q_0, condition_length, using_entropy_loss,
+                         traj_length=traj_length, ys=ys, sample=sample)
+
+    def get_condition_ys(self):
+        return self.ys[self.index:self.index+self.condition_length]
+
+    def get_done(self):
+        return self.index >= self.traj_length
+
+    def states_left(self):
+        return self.traj_length - self.index
+
 
 class ConditionalObservationsLinearGaussianEnv(AbstractConditionalLinearGaussianEnv):
-    def __init__(self, A, Q, C, R, mu_0, Q_0, using_entropy_loss, condition_length, traj_length=1, ys=None, sample=False):
+    def __init__(self, A, Q, C, R, mu_0, Q_0, condition_length, using_entropy_loss, traj_length=1, ys=None, sample=False):
         super().__init__(A, Q, C, R, mu_0, Q_0, condition_length, using_entropy_loss,
                          traj_length=traj_length, ys=ys, sample=sample)
 
@@ -198,3 +219,6 @@ class ConditionalObservationsLinearGaussianEnv(AbstractConditionalLinearGaussian
 
     def get_done(self):
         return self.index+self.condition_length > self.traj_length
+
+    def states_left(self):
+        return self.traj_length - self.index - self.condition_length + 1

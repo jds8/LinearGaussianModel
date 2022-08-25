@@ -32,6 +32,7 @@ class FilteringPosterior:
 
         if x_value is not None:
             values = torch.cat([y_values, x_value])
+
             # values = torch.cat([y_values.reshape(x_value.shape[0], -1), x_value.reshape(-1, 1)], dim=1)
         else:
             values = y_values
@@ -67,7 +68,8 @@ class FilteringPosterior:
         return joint.condition(rvs)
 
 def compute_filtering_data_structures(dim, num_obs):
-    lgv = get_linear_gaussian_variables(dim=dim, num_obs=num_obs)
+    table = create_dimension_table(dimensions=[dim], random=False)
+    lgv = get_linear_gaussian_variables(dim=dim, num_obs=num_obs, table=table)
     xs = lgv.xs
     ys = lgv.ys
 
@@ -163,7 +165,14 @@ def compute_conditional_filtering_posteriors(table, num_obs, dim, m=0, condition
                                                      num_obs=num_obs, dim=dim, m=m, condition_on_x=condition_on_x, ys=ys)
 
 def _compute_conditional_filtering_posteriors(A, Q, C, R, mu_0, Q_0, num_obs, dim, m=0, condition_on_x=True, ys=None):
-    lgv = get_linear_gaussian_variables(dim=dim, num_obs=num_obs)
+    table = {dim: {}}
+    table[dim]['A'] = A
+    table[dim]['Q'] = Q
+    table[dim]['C'] = C
+    table[dim]['R'] = R
+    table[dim]['mu_0'] = mu_0
+    table[dim]['Q_0'] = Q_0
+    lgv = get_linear_gaussian_variables(dim=dim, num_obs=num_obs, table=table)
 
     # true evidence
     jvs = JointVariables(lgv.ys, A=A, C=C)

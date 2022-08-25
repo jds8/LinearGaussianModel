@@ -331,7 +331,7 @@ class GaussianDistribution:
         sigma_zz = torch.index_select(torch.index_select(dd.covariance_matrix, 0, z_dim_inds), 1, z_dim_inds)
         product = torch.mm(sigma_xz, torch.inverse(sigma_zz))
 
-        mu_x_given_z = mu_x + torch.mm(product, (z_values - mu_z).reshape(product.shape[1], -1)).reshape(mu_x.shape)
+        mu_x_given_z = mu_x + torch.mm(product, (z_values - mu_z).reshape(product.shape[1], -1).to(product.dtype)).reshape(mu_x.shape)
         sigma_x_given_z = sigma_xx - torch.mm(sigma_xz, torch.mm(torch.inverse(sigma_zz), sigma_zx))
 
         # print('sigma_xx {}'.format(sigma_xx))
@@ -979,10 +979,8 @@ class LinearGaussianVariables:
             self.joints.append(conditional * self.joints[i])
 
 
-def get_linear_gaussian_variables(dim, num_obs, table=None):
+def get_linear_gaussian_variables(dim, num_obs, table):
     MultiGaussianRandomVariable.reset_ids()
-    if table is None:
-        table = create_dimension_table(dimensions=[dim], random=False)
     A = table[dim]['A']
     Q = table[dim]['Q']
     C = table[dim]['C']
@@ -1006,7 +1004,7 @@ def get_linear_gaussian_variables(dim, num_obs, table=None):
     return LinearGaussianVariables(xs=xs, ys=ys, w=w, v=v, table=table)
 
 def compute_block_posterior(dim, num_observations, table):
-    lgv = get_linear_gaussian_variables(dim=dim, num_obs=num_observations)
+    lgv = get_linear_gaussian_variables(dim=dim, num_obs=num_observations, table=table)
     C = lgv.table[dim]['C']
 
     prior = lgv.xs[0].prior()
@@ -1026,11 +1024,11 @@ def test_joint_vars():
     dim = 2
     num_obs = 2
 
-    lgv = get_linear_gaussian_variables(dim=dim, num_obs=num_obs)
+    table = create_dimension_table(torch.tensor([dim]), random=False)
+    lgv = get_linear_gaussian_variables(dim=dim, num_obs=num_obs, table=table)
     xs = lgv.xs
     ys = lgv.ys
 
-    table = create_dimension_table(torch.tensor([dim]), random=False)
     A = table[dim]['A']
     Q = table[dim]['Q']
     C = table[dim]['C']
@@ -1052,11 +1050,11 @@ def test_graphical_model():
     dim = 1
     num_obs = 3
 
-    lgv = get_linear_gaussian_variables(dim=dim, num_obs=num_obs)
+    table = create_dimension_table(torch.tensor([dim]), random=False)
+    lgv = get_linear_gaussian_variables(dim=dim, num_obs=num_obs, table=table)
     xs = lgv.xs
     ys = lgv.ys
 
-    table = create_dimension_table(torch.tensor([dim]), random=False)
     A = table[dim]['A']
     Q = table[dim]['Q']
     C = table[dim]['C']

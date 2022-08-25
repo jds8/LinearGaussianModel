@@ -12,6 +12,7 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 from copy import deepcopy
 from generative_model import y_dist, sample_y, generate_trajectory, \
+    get_state_transition_dist, \
     gen_A, gen_Q, gen_C, gen_R, gen_mu_0, gen_Q_0, \
     test_A, test_Q, test_C, test_R, test_mu_0, test_Q_0, \
     state_transition, score_state_transition, gen_covariance_matrix, \
@@ -19,11 +20,11 @@ from generative_model import y_dist, sample_y, generate_trajectory, \
     # A, Q, C, R, mu_0, Q_0, \
 import wandb
 from linear_gaussian_env import LinearGaussianEnv, LinearGaussianSingleYEnv
-from all_obs_linear_gaussian_env import AllObservationsLinearGaussianEnv, ConditionalObservationsLinearGaussianEnv
+from all_obs_linear_gaussian_env import AllObservationsLinearGaussianEnv, ConditionalObservationsLinearGaussianEnv, EnsembleLinearGaussianEnv
 from math_utils import logvarexp, importance_sampled_confidence_interval, log_effective_sample_size, log_max_weight_proportion, log_mean
 from plot_utils import legend_without_duplicate_labels
 from linear_gaussian_prob_prog import MultiGaussianRandomVariable, GaussianRandomVariable, MultiLinearGaussian, LinearGaussian, VecLinearGaussian, JointVariables, get_linear_gaussian_variables
-from evaluation import EvaluationObject, evaluate, evaluate_filtering_posterior, evaluate_agent_until
+from evaluation import EvaluationObject, evaluate, evaluate_filtering_posterior, evaluate_agent_until, evaluate_rl_posterior_ensemble
 from dimension_table import create_dimension_table
 from filtering_posterior import compute_conditional_filtering_posteriors
 import pandas as pd
@@ -65,7 +66,7 @@ class CustomCallback(BaseCallback):
 
     :param verbose: (int) Verbosity level 0: not output 1: info 2: debug
     """
-    def __init__(self, env, verbose=1, eval_freq=10000, log_freq=100,
+    def __init__(self, env, verbose=1, eval_freq=500, log_freq=100,
                     gradient_save_freq = 0, run_id=''):
         super(CustomCallback, self).__init__(verbose)
         self.env = env
@@ -101,21 +102,29 @@ class CustomCallback(BaseCallback):
             obs = env.reset()
             done = False
             total_reward, horizon = 0, 0
+            kls = []
             while not done:
+                obs_env = env.envs[0].env
+                prev_xt = torch.tensor(obs.squeeze()[0:env.action_space.shape[0]]).to(dtype=obs_env.A.dtype)
+                kls.append(compute_kl_w_prior(policy=self.model.policy,
+                                              prev_xt=prev_xt, ys=obs_env.get_condition_ys(),
+                                              condition_length=obs_env.condition_length,
+                                              A=obs_env.A, Q=obs_env.Q))
                 action = policy(obs)
                 obs, reward, done, info = env.step(action)
                 total_reward += reward
                 horizon += 1
             if isinstance(info, list):
                 info = info[0]
-            return total_reward, horizon, info
+            return total_reward, horizon, info, torch.tensor(kls)
 
-        next_total_reward, next_horizon, wp = eval_policy_helper(policy,env)
+        next_total_reward, next_horizon, wp, kls = eval_policy_helper(policy,env)
         total_reward += next_total_reward
         horizon += next_horizon
         # avg_wp += wp
 
-        return total_reward, horizon#, avg_wp
+        avg_kl = kls.mean()
+        return total_reward, horizon, avg_kl#, avg_wp
 
     def _on_training_start(self) -> None:
         """
@@ -123,13 +132,14 @@ class CustomCallback(BaseCallback):
         """
         # Evaluate the model
         policy = lambda obs_: self.model.predict(obs_, deterministic=True)[0]
-        avg_return, avg_horizon = self.eval_policy(policy, self.training_env)
+        avg_return, avg_horizon, avg_kl = self.eval_policy(policy, self.training_env)
         self.training_env.reset()
         # log to wandb
         wandb.log({'det_avg_return':avg_return,
                    'det_avg_horizon':avg_horizon,
                    'time_steps': self.num_timesteps,
-                   'updates': self.model._n_updates})
+                   'updates': self.model._n_updates,
+                   'kl divergence with prior': avg_kl})
         return None
 
     def _on_rollout_start(self) -> None:
@@ -144,12 +154,12 @@ class CustomCallback(BaseCallback):
             self.current_mod += 1
             # Evaluate the model
             policy = lambda obs_: self.model.predict(obs_, deterministic=True)[0]
-            avg_return, avg_horizon, avg_wp = self.eval_policy(policy, self.training_env)
+            avg_return, avg_horizon, avg_kl = self.eval_policy(policy, self.training_env)
             self.training_env.reset()
             #
             wandb.log({'det_avg_return':avg_return,
                        'det_avg_horizon':avg_horizon,
-                       'det_avg_wp':avg_wp,
+                       'avg_kl_w_prior':avg_kl,
                        'stoch_avg_return': np.mean([val['l'] for val in self.model.ep_info_buffer]),
                        'stoch_avg_horizon': np.mean([val['r'] for val in self.model.ep_info_buffer]),
                        'time_steps': self.num_timesteps,
@@ -161,7 +171,6 @@ class CustomCallback(BaseCallback):
 
         # otherwise just log stochastic info
         else:
-            pass
             wandb.log({'stoch_avg_return': np.mean([val['l'] for val in self.model.ep_info_buffer]),
                        'stoch_avg_horizon': np.mean([val['r'] for val in self.model.ep_info_buffer]),
                        'time_steps': self.num_timesteps,
@@ -172,7 +181,6 @@ class CustomCallback(BaseCallback):
         This event is triggered before updating the policy.
         """
         # it looks like this is only invoked if there are more than 1000 timesteps in training
-        pass
 
     def _on_step(self) -> bool:
         """
@@ -198,6 +206,7 @@ class CustomCallback(BaseCallback):
                                         prev_xt=self.env.prev_xts[-2], ys=self.env.previous_condition_ys,
                                         condition_length=self.env.condition_length)
             wandb.log({'kl divergence with filtering posterior': kl})
+            wandb.log({'reward at state {}'.format(self.env.index-1): self.env.rewards[-1]})
 
         return True
 
@@ -215,7 +224,7 @@ def get_loss_type(model_name):
 
 def train(traj_length, env, dim, condition_length, ent_coef=1.0,
           loss_type='forward_kl', learning_rate=3e-4, clip_range=0.2,
-          continue_training=False):
+          continue_training=False, ignore_reward=False, use_mlp_policy=False):
     params = {}
     run = wandb.init(project='linear_gaussian_model training', save_code=True, config=params, entity='iai')
 
@@ -233,9 +242,15 @@ def train(traj_length, env, dim, condition_length, ent_coef=1.0,
                                 condition_length=condition_length)
     if continue_training:
         model, _ = load_rl_model(model_name=model_name, device='cpu', env=env)
+    elif use_mlp_policy:
+        arch = [1024 for _ in range(3)]
+        model = PPO('MlpPolicy', env, ent_coef=ent_coef, device='cpu',
+                    policy_kwargs=dict(net_arch=[dict(pi=arch, vf=arch)]),
+                    verbose=1, loss_type=loss_type, prior=prior, ignore_reward=ignore_reward,
+                    learning_rate=learning_rate, clip_range=clip_range)
     else:
         model = PPO(LinearActorCriticPolicy, env, ent_coef=ent_coef, device='cpu',
-                    verbose=1, loss_type=loss_type, prior=prior,
+                    verbose=1, loss_type=loss_type, prior=prior, ignore_reward=ignore_reward,
                     learning_rate=learning_rate, clip_range=clip_range)
 
     # train policy
@@ -727,7 +742,7 @@ class EventPlotter(Plotter):
         return super().plot_IS(traj_lengths, As, Qs, num_samples=num_samples, num_repeats=num_repeats)
 
 
-def train_dimensions(traj_length, dimensions, table, condition_length):
+def train_dimensions(traj_length, dimensions, table, condition_length, ignore_reward):
     os.makedirs(TODAY, exist_ok=True)
     for dim in dimensions:
         dimension = dim.item()
@@ -739,7 +754,7 @@ def train_dimensions(traj_length, dimensions, table, condition_length):
         Q_0 = table[dimension]['Q_0']
         env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0,
                                 ys=None, traj_length=traj_length, sample=True)
-        train(traj_length, env, dim=dimension, condition_length=condition_length)
+        train(traj_length, env, dim=dimension, condition_length=condition_length, ignore_reward=ignore_reward)
 
 def compute_posterior(A, Q, R, C, num_observations, dim):
     w = MultiGaussianRandomVariable(mu=0., sigma=torch.sqrt(Q), name="w")
@@ -1075,6 +1090,7 @@ def save_outputs_with_names_general(outputs, distribution_type, label, output_ty
     save_outputs_with_names(outputs, distribution_type, label, columns, output_type)
 
 def save_outputs_with_names(outputs, distribution_type, label, columns, output_type):
+    os.makedirs('{}/{}'.format(TODAY, distribution_type), exist_ok=True)
     ess_output = torch.stack([torch.tensor(output.output[output.name].ess) for output in outputs], dim=1)
     df = pd.DataFrame(ess_output.numpy(), columns=columns)
     df.to_csv('{}/{}/{}_ESS_{}.csv'.format(TODAY, distribution_type, label, output_type))
@@ -1339,8 +1355,6 @@ def posterior_filtering_conditional_ess_traj(table, traj_lengths, dim, condition
         outputs += get_posterior_filtering_conditional_ess_outputs(table, traj_length, dim, condition_length)
     save_outputs_with_names_traj(outputs, distribution_type,
                                  '{}(traj_lengths_{}_dim_{}_condition_length_{})'.format(distribution_type, traj_lengths, dim, condition_length))
-    import pdb; pdb.set_trace()
-
     make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=dim,
                        num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, traj_lengths=traj_lengths,
                        xlabel='Trajectory Length', distribution_type=distribution_type, name='posterior_filtering (conditioned on {} obs)'.format(condition_length))
@@ -1507,7 +1521,7 @@ def verify_filtering_posterior():
 
 def test_train(traj_length, dim, condition_length, ent_coef, loss_type,
                learning_rate, clip_range, linear_gaussian_env_type,
-               continue_training):
+               continue_training, ignore_reward, use_mlp_policy):
     table = create_dimension_table(torch.tensor([dim]), random=False)
     posterior_evidence = compute_evidence(table, traj_length, dim, condition_length=condition_length)
 
@@ -1521,10 +1535,12 @@ def test_train(traj_length, dim, condition_length, ent_coef, loss_type,
     env = linear_gaussian_env_type(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0,
                                    using_entropy_loss=(loss_type==ENTROPY_LOSS),
                                    ys=posterior_evidence.ys, sample=True)
+
     train(traj_length=traj_length, env=env, dim=dim, condition_length=condition_length,
           ent_coef=ent_coef, loss_type=loss_type,
           learning_rate=learning_rate, clip_range=clip_range,
-          continue_training=continue_training)
+          continue_training=continue_training,
+          ignore_reward=ignore_reward, use_mlp_policy=use_mlp_policy)
 
 def sample_variance_ratios(traj_length, model_name, condition_length):
     """
@@ -1924,6 +1940,8 @@ def get_env_type_from_arg(env_type_arg, condition_length=0):
         return LinearGaussianEnv
     elif env_type_arg == 'ConditionalObservationsLinearGaussianEnv':
         return lambda **kwargs: ConditionalObservationsLinearGaussianEnv(**kwargs, condition_length=condition_length)
+    elif env_type_arg == 'EnsembleLinearGaussianEnv':
+        return lambda **kwargs: EnsembleLinearGaussianEnv(**kwargs, condition_length=condition_length)
 
 def compute_conditional_kl(td_fps, policy, prev_xt, ys, condition_length):
     # filtering dist
@@ -1941,13 +1959,69 @@ def compute_conditional_kl(td_fps, policy, prev_xt, ys, condition_length):
 
     return dist.kl_divergence(filtering_dist, policy_dist)
 
+def compute_kl_w_prior(policy, prev_xt, ys, condition_length, A, Q):
+    # create prior
+    prior = get_state_transition_dist(prev_xt, A, Q)
+
+    # policy dist
+    obs = torch.cat([prev_xt, ys[0:condition_length]]).reshape(1, -1)
+    pd = policy.get_distribution(obs).distribution
+
+    covs = []
+    for i in range(pd.scale.shape[0]):
+        covs.append(torch.diag(pd.scale[i, :]))
+    policy_dist = dist.MultivariateNormal(pd.mean, torch.stack(covs))
+
+    return dist.kl_divergence(prior, policy_dist)
+
+def compute_policy_kl_at_each_state(td_fps, policy, conditional_fps, prev_xts, ys, condition_length, dim):
+    kls = []
+    for i in range(len(ys)):
+        prev_xt = prev_xts[i]
+
+        td = td_fps[i].condition(y_values=ys[i:], x_value=prev_xt).get_dist()
+
+        if len(ys[i:i+condition_length]) == condition_length:
+            # construct observation
+            if prev_xt is None:
+                assert i==0
+                obs = torch.cat([torch.zeros(dim), ys[i:i+condition_length]]).reshape(1, -1)
+            else:
+                obs = torch.cat([prev_xt, ys[i:i+condition_length]]).reshape(1, -1)
+
+            # policy dist
+            pd = policy.get_distribution(obs).distribution
+            covs = []
+            for i in range(pd.scale.shape[0]):
+                covs.append(torch.diag(pd.scale[i, :]))
+            conditional_dist = dist.MultivariateNormal(pd.mean, torch.stack(covs))
+        else:
+            # conditional smoothing dist
+            # Note that this branch is taken only when there are fewer
+            # than condition_length ys after index i
+            conditional_dist = conditional_fps[i].condition(y_values=ys[i:i+condition_length], x_value=prev_xt).get_dist()
+
+        kls.append(dist.kl_divergence(td, conditional_dist).detach())
+    return kls
+
+def compute_analytical_kl_at_each_state(td_fps, conditional_fps, prev_xts, ys, condition_length):
+    kls = []
+
+    for i in range(len(ys)):
+        td = td_fps[i].condition(y_values=ys[i:], x_value=prev_xts[i]).get_dist()
+
+        conditional_td = conditional_fps[i].condition(y_values=ys[i:i+condition_length], x_value=prev_xts[i]).get_dist()
+
+        kls.append(dist.kl_divergence(td, conditional_td))
+    return kls
+
 def execute_evaluate_agent_until(linear_gaussian_env_type, traj_lengths, dim, loss_type, ent_coef, epsilon, condition_length):
     table = create_dimension_table(torch.tensor([dim]), random=False)
     num_samples_data = []
     for traj_length in traj_lengths:
         posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim, condition_length=condition_length)
         rl_output = ImportanceOutput(traj_length=traj_length, ys=posterior_evidence.ys, dim=dim)
-        name = '{}(traj_len {} dim {})'.format(RL_DISTRIBUTION, traj_length, dim)
+        name = '{}(m={})'.format(RL_DISTRIBUTION, condition_length)
         for _ in range(NUM_REPEATS):
             model_name = get_model_name(traj_length=traj_length, dim=dim,
                                         ent_coef=ent_coef, loss_type=loss_type,
@@ -2099,9 +2173,7 @@ def compare_rewards(traj_length, dim, loss_type, linear_gaussian_env_type, model
     labels.append(rl_label)
     plot_smoothing_reward(torch.arange(1, traj_length+1), avg_rewards, labels, linestyles)
 
-def plot_posterior_variance(traj_length, dim, condition_length, true_variances=None):
-    # torch.manual_seed(10)
-    table = create_dimension_table(torch.tensor([dim]), random=False)
+def plot_posterior_variance(table, traj_length, dim, condition_length, true_variances=None):
     posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim, condition_length=condition_length)
     ys = posterior_evidence.ys
 
@@ -2149,10 +2221,10 @@ def plot_posterior_variance(traj_length, dim, condition_length, true_variances=N
     ax.set_xticks(x_values)
     plt.title('Truncated (m={}) Smoothing Posterior Variance At Each State'.format(condition_length))
 
-    A = table[dim]['A'].item()
-    Q = table[dim]['Q'].item()
-    C = table[dim]['C'].item()
-    R = table[dim]['R'].item()
+    A = table[dim]['A']
+    Q = table[dim]['Q']
+    C = table[dim]['C']
+    R = table[dim]['R']
 
     plt.savefig('{}/TruncatedSmoothingPosteriorVariance(m={} traj_length={} A={} Q={} C={} R={}).pdf'.format(TODAY, condition_length, traj_length, A, Q, C, R))
     wandb.save('{}/TruncatedSmoothingPosteriorVariance(m={} traj_length={} A={} Q={} C={} R={}).pdf'.format(TODAY, condition_length, traj_length, A, Q, C, R))
@@ -2203,6 +2275,90 @@ def plot_posterior_mean(ys, traj_length, dim, condition_length, xs=None):
 
     return means, xs
 
+def execute_rl_posterior_ensemble(traj_lengths, dim, condition_length, model_name):
+    table = create_dimension_table(torch.tensor([dim]), random=False)
+    A = table[dim]['A']
+    Q = table[dim]['Q']
+    C = table[dim]['C']
+    R = table[dim]['R']
+    Q_0 = table[dim]['Q_0']
+    mu_0 = table[dim]['mu_0']
+
+    _, policy = load_rl_model(model_name=model_name, device='cpu')
+
+    outputs = []
+    for traj_length in traj_lengths:
+        name = '{}(traj_len {} dim {})'.format(RL_DISTRIBUTION, traj_length, dim)
+        rl_output = ImportanceOutput(traj_length=traj_length, ys=None, dim=dim)
+        for _ in range(NUM_REPEATS):
+            ys = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0]
+            env = linear_gaussian_env_type(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0,
+                                           using_entropy_loss=(loss_type==ENTROPY_LOSS),
+                                           ys=ys, sample=False)
+
+            # create filtering distribution given the ys
+            _tds = compute_conditional_filtering_posteriors(table=table, num_obs=traj_length, dim=dim, ys=env.ys)
+            tds = _tds[traj_length-condition_length+1:]
+
+            eval_obj = evaluate_rl_posterior_ensemble(rl_d=policy, tds=tds, N=NUM_SAMPLES, env=env,
+                                                    condition_length=condition_length, deterministic=False)
+
+            # add rl estimator
+            rl_estimator = rl_output.add_rl_estimator(running_log_estimates=eval_obj.running_log_estimates,
+                                                    ci=eval_obj.ci, weight_mean=eval_obj.log_weight_mean.exp(),
+                                                    max_weight_prop=eval_obj.log_max_weight_prop.exp(),
+                                                    ess=eval_obj.log_effective_sample_size.exp(),
+                                                    ess_ci=eval_obj.ess_ci, idstr=name)
+        rl_estimator.save_data()
+
+        outputs += [OutputWithName(rl_output, name)]
+
+    save_outputs_with_names_traj(outputs, RL_DISTRIBUTION, 'rl_posterior_ensemble')
+    make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=dim,
+                       num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, traj_lengths=traj_lengths,
+                       xlabel='Trajectory Length', distribution_type=RL_DISTRIBUTION, name='RL+posterior ensemble')
+
+def get_smoothing_and_conditional_posteriors(traj_length, dim, condition_length):
+    table = create_dimension_table(torch.tensor([dim]), random=False)
+
+    A = table[dim]['A']
+    Q = table[dim]['Q']
+    C = table[dim]['C']
+    R = table[dim]['R']
+    Q_0 = table[dim]['Q_0']
+    mu_0 = table[dim]['mu_0']
+
+    ys, xs = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0:2]
+
+    tds = compute_conditional_filtering_posteriors(table=table, num_obs=traj_length, dim=dim, ys=ys)
+
+    conditional_tds = compute_conditional_filtering_posteriors(table=table, num_obs=traj_length, dim=dim, m=condition_length, ys=ys)
+
+    return tds, conditional_tds, ys, xs, table
+
+def execute_compute_analytical_kl_at_each_state(traj_length, dim, condition_length):
+    tds, conditional_tds, ys, xs, table = get_smoothing_and_conditional_posteriors(traj_length, dim, condition_length)
+
+    # get all of the "previous xs" for the conditional distribution
+    # Note that the first xt is None since we want p(x_0|y_{0:T}) without condition on an x
+    # Also note that len(xs) = traj_length + 1 because an extra xt is generated at the end which should be ignored
+    # Therefore the previous xts that we want are None, as well as all of the xts used to generate a subsequent xt for scoring
+    prev_xts = [None] + [x.reshape(1) for x in xs[0:-2]]
+    kls = compute_analytical_kl_at_each_state(tds, conditional_tds, prev_xts, ys, condition_length)
+
+def execute_compute_policy_kl_at_each_state(traj_length, dim, condition_length, model_name):
+    tds, conditional_tds, ys, xs, _ = get_smoothing_and_conditional_posteriors(traj_length, dim, condition_length)
+
+    _, policy = load_rl_model(model_name=model_name, device='cpu')
+
+    # get all of the "previous xs" for the conditional distribution
+    # Note that the first xt is None since we want p(x_0|y_{0:T}) without condition on an x
+    # Also note that len(xs) = traj_length + 1 because an extra xt is generated at the end which should be ignored
+    # Therefore the previous xts that we want are None, as well as all of the xts used to generate a subsequent xt for scoring
+    prev_xts = [None] + [x.reshape(1) for x in xs[0:-2]]
+    kls = compute_policy_kl_at_each_state(tds, policy, conditional_tds, prev_xts, ys, condition_length, dim)
+    import pdb; pdb.set_trace()
+
 
 if __name__ == "__main__":
     args, _ = get_args()
@@ -2212,7 +2368,7 @@ if __name__ == "__main__":
 
     # MODEL = 'agents/'+save_dir+'/{}_{}_linear_gaussian_model_(traj_{}_dim_{})'
     if subroutine != 'train_agent':
-        run = wandb.init(project='linear_gaussian_model', save_code=True, entity='iai')
+        # run = wandb.init(project='linear_gaussian_model', save_code=True, entity='iai')
         os.makedirs(save_dir, exist_ok=True)
 
     os.makedirs('agents/'+save_dir, exist_ok=True)
@@ -2232,6 +2388,7 @@ if __name__ == "__main__":
     condition_length = args.condition_length if args.condition_length > 0 else 0
     linear_gaussian_env_type = get_env_type_from_arg(args.env_type, condition_length=condition_length)
 
+    use_mlp_policy = args.use_mlp_policy
     model_name = get_model_name(traj_length=traj_length, dim=dim,
                                 ent_coef=ent_coef, loss_type=loss_type,
                                 condition_length=condition_length)
@@ -2240,14 +2397,16 @@ if __name__ == "__main__":
     clip_range = args.clip_range
 
     NUM_SAMPLES = args.num_samples
+    RL_TIMESTEPS = args.rl_timesteps
     epsilon = args.epsilon
+    ignore_reward = args.ignore_reward
 
     if subroutine == 'train_agent':
         print('executing: {}'.format('train_agent'))
         test_train(traj_length=traj_length, dim=dim, condition_length=condition_length,
                    ent_coef=ent_coef, loss_type=loss_type, learning_rate=learning_rate,
                    clip_range=clip_range, linear_gaussian_env_type=linear_gaussian_env_type,
-                   continue_training=continue_training)
+                   continue_training=continue_training, ignore_reward=ignore_reward, use_mlp_policy=use_mlp_policy)
     elif subroutine == 'evaluate_agent':
         print('executing: {}'.format('evaluate_agent'))
         evaluate_agent(linear_gaussian_env_type, traj_length, dim, model_name, condition_length=condition_length)
@@ -2256,7 +2415,7 @@ if __name__ == "__main__":
         test_train(traj_length=traj_length, dim=dim, condition_length=condition_length,
                    ent_coef=ent_coef, loss_type=loss_type, learning_rate=learning_rate,
                    clip_range=clip_range, linear_gaussian_env_type=linear_gaussian_env_type,
-                   continue_training=continue_training)
+                   continue_training=continue_training, ignore_reward=ignore_reward, use_mlp_policy=use_mlp_policy)
         evaluate_agent(linear_gaussian_env_type, traj_length, dim, model_name, condition_length=condition_length)
     elif subroutine == 'evaluate_until':
         print('executing: {}'.format('evaluate_until'))
@@ -2278,11 +2437,11 @@ if __name__ == "__main__":
     elif subroutine == 'posterior_filtering_conditional_ess_traj':
         print('executing: {}'.format('posterior_filtering_conditional_ess_traj'))
         table = create_dimension_table(torch.tensor([dim]), random=False)
-        # posterior_filtering_conditional_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, condition_length=condition_length)
-        posterior_filtering_conditional_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, condition_length=1)
-        posterior_filtering_conditional_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, condition_length=2)
-        posterior_filtering_conditional_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, condition_length=3)
-        posterior_filtering_conditional_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, condition_length=4)
+        posterior_filtering_conditional_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, condition_length=condition_length)
+        # posterior_filtering_conditional_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, condition_length=1)
+        # posterior_filtering_conditional_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, condition_length=2)
+        # posterior_filtering_conditional_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, condition_length=3)
+        # posterior_filtering_conditional_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, condition_length=4)
     elif subroutine == 'posterior_filtering_conditional_ess_condition_length':
         print('executing: {}'.format('posterior_filtering_conditional_ess_condition_length'))
         table = create_dimension_table(torch.tensor([dim]), random=False)
@@ -2344,8 +2503,15 @@ if __name__ == "__main__":
         execute_filtering_posterior_conditional_convergence(table, ess_traj_lengths, dim, condition_length)
     elif subroutine == 'plot_variance':
         print('executing: {}'.format('plot_variance'))
-        true_variances = plot_posterior_variance(traj_length, dim, condition_length=0)
-        plot_posterior_variance(traj_length, dim, condition_length=condition_length, true_variances=true_variances)
+        table = create_dimension_table(torch.tensor([dim]), random=False)
+        # table[dim]['A'] = torch.tensor(0.2).reshape(1,1)
+        table[dim]['Q'] = torch.tensor(2.2).reshape(1,1)
+        table[dim]['C'] = torch.tensor(1.2).reshape(1,1)
+        table[dim]['R'] = torch.tensor(2.2).reshape(1,1)
+        for A in torch.arange(0.2, 1.4, 0.1):
+            table[dim]['A'] = A.reshape(1,1)
+            true_variances = plot_posterior_variance(table, traj_length, dim, condition_length=0)
+            plot_posterior_variance(table, traj_length, dim, condition_length=condition_length, true_variances=true_variances)
     elif subroutine == 'plot_mean':
         print('executing: {}'.format('plot_mean'))
         table = create_dimension_table(torch.tensor([dim]), random=False)
@@ -2357,12 +2523,20 @@ if __name__ == "__main__":
     elif subroutine == 'smoothing_reward':
         print('executing: {}'.format('smoothing_reward'))
         smoothing_reward(traj_length, dim, loss_type)
+    elif subroutine == 'evaluate_rl_ensemble':
+        print('executing: {}'.format('evaluate_rl_ensemble'))
+        execute_rl_posterior_ensemble(ess_traj_lengths, dim, condition_length, model_name)
+    elif subroutine == 'compute_analytical_kl_at_each_state':
+        kls = execute_compute_analytical_kl_at_each_state(traj_length, dim, condition_length)
+    elif subroutine == 'compute_policy_kl_at_each_state':
+        kls = execute_compute_policy_kl_at_each_state(traj_length, dim, condition_length, model_name)
     else:
         print('executing: {}'.format('custom'))
         table = create_dimension_table(torch.tensor([dim]), random=False)
         # epsilons = [-5e-3, 5e-3]
         epsilons = [0.]
-        posterior_filtering_convergence(table, traj_length, dim, epsilons)
+        posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim, condition_length=condition_length)
+        posterior_filtering_convergence(table, posterior_evidence, dim, epsilons)
 
     # epsilons = [-5e-3, 0.0, 5e-3]
     # epsilons = [-5e-2, 0.0]
