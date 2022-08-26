@@ -181,6 +181,7 @@ class CustomCallback(BaseCallback):
         This event is triggered before updating the policy.
         """
         # it looks like this is only invoked if there are more than 1000 timesteps in training
+        self.eval_incr += 1
 
     def _on_step(self) -> bool:
         """
@@ -240,6 +241,9 @@ def train(traj_length, env, dim, condition_length, ent_coef=1.0,
     model_name = get_model_name(traj_length=traj_length, dim=dim,
                                 ent_coef=ent_coef, loss_type=loss_type,
                                 condition_length=condition_length)
+
+    print('training agent: {}'.format(model_name))
+
     if continue_training:
         model, _ = load_rl_model(model_name=model_name, device='cpu', env=env)
     elif use_mlp_policy:
@@ -258,6 +262,7 @@ def train(traj_length, env, dim, condition_length, ent_coef=1.0,
 
     # save model
     model.save(model_name)
+    wandb.save(model_name)
 
 
 class ProposalDist:
@@ -2357,7 +2362,6 @@ def execute_compute_policy_kl_at_each_state(traj_length, dim, condition_length, 
     # Therefore the previous xts that we want are None, as well as all of the xts used to generate a subsequent xt for scoring
     prev_xts = [None] + [x.reshape(1) for x in xs[0:-2]]
     kls = compute_policy_kl_at_each_state(tds, policy, conditional_tds, prev_xts, ys, condition_length, dim)
-    import pdb; pdb.set_trace()
 
 
 if __name__ == "__main__":
