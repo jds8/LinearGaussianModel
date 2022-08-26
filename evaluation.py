@@ -203,6 +203,75 @@ def evaluate_rl_posterior_ensemble(rl_d, tds, N, env, condition_length, determin
                             xts=xts, states=states, actions=actions, priors=priors, liks=liks,
                             log_weights=log_p_y_over_qs)
 
+def evaluate_smoothing_posterior_until(ys, tds, truth, delta, env, m, max_samples=100000):
+    if m == 0:
+        m = len(ys)
+    # evidence estimate
+    evidence_est = torch.tensor(0.).reshape(1, -1)
+    log_evidence_est = torch.tensor(0.).reshape(1, -1)
+    total_rewards = []
+    log_p_y_over_qs = torch.tensor([])
+    # keep track of log evidence estimates up to N sample trajectories
+    running_log_evidence_estimates = []
+    # get trajectory length
+    n = len(ys)
+    # get dimensionality
+    td = tds[0].condition(y_values=ys[0:m])
+    # flag when to finish
+    outside_delta = True
+    # evaluate at most max_samples times
+    i = 0
+    while outside_delta or i > max_samples:
+        i += 1
+        # keep track of xs
+        xs = []
+        # keep track of prior over actions p(x)
+        log_p_x = torch.tensor(0.).reshape(1, -1)
+        log_p_y_given_x = torch.tensor(0.).reshape(1, -1)
+        # collect actions, likelihoods
+        states = []
+        xts = [env.prev_xt]
+        xt = td.sample()
+        actions = [xt]
+        prior_reward = score_initial_state(x0=xt.reshape(-1), mu_0=env.mu_0, Q_0=env.Q_0)  # the reward for the initial state
+        lik_reward = score_y(y_test=ys[0], x_t=xt, C=env.C, R=env.R)  # the first likelihood reward
+        priors = [prior_reward]
+        log_p_x += prior_reward
+        liks = [lik_reward]
+        log_p_y_given_x += lik_reward
+        total_reward = prior_reward + lik_reward
+        log_q = td.log_prob(xt)
+        for j in range(1, len(tds)):
+            td_fps = tds[j]
+            y = ys[j:j+m]
+            dst = td_fps.condition(y_values=y, x_value=xt).get_dist()
+            prev_xt = xt
+            xt = dst.sample()
+            log_q += dst.log_prob(xt)
+            xts.append(xt)
+            prior_reward = score_state_transition(xt=xt.reshape(-1), prev_xt=prev_xt, A=env.A, Q=env.Q)
+            lik_reward = score_y(y_test=y[0], x_t=xt, C=env.C, R=env.R)  # the first likelihood reward
+            total_reward += prior_reward + lik_reward
+            states.append(xt)
+            priors.append(prior_reward)
+            liks.append(lik_reward)
+            log_p_x += prior_reward
+            log_p_y_given_x += lik_reward
+            xs.append(xt)
+            actions.append(xt)
+
+        log_p_y_x = log_p_y_given_x + log_p_x
+        log_p_y_over_qs = torch.cat([log_p_y_over_qs, (log_p_y_x - log_q).reshape(1)])
+        running_log_evidence_estimates.append(torch.logsumexp(log_p_y_over_qs[0:i+1], -1) - torch.log(torch.tensor(i, dtype=torch.float)))
+
+        log_ratio = running_log_evidence_estimates[-1] - truth
+        ratio = min(log_ratio, -log_ratio).exp()
+        outside_delta = torch.abs(ratio - 1) > delta
+
+        # print('estimate: {} truth: {} ratio: {}'.format(running_log_evidence_estimates[-1], truth, ratio))
+
+    return i
+
 def evaluate_until(d, truth, env, epsilon, max_samples=100000):
     run = wandb.init(project='linear_gaussian_model evaluation', save_code=True, entity='iai')
     print('\nevaluating...')
