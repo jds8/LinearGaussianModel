@@ -22,7 +22,7 @@ import wandb
 from linear_gaussian_env import LinearGaussianEnv, LinearGaussianSingleYEnv
 from all_obs_linear_gaussian_env import AllObservationsLinearGaussianEnv, ConditionalObservationsLinearGaussianEnv, EnsembleLinearGaussianEnv
 from math_utils import logvarexp, importance_sampled_confidence_interval, log_effective_sample_size, log_max_weight_proportion, log_mean
-from plot_utils import legend_without_duplicate_labels
+from plot_utils import legend_without_duplicate_labels, compare_normals, generate_gif
 from linear_gaussian_prob_prog import MultiGaussianRandomVariable, GaussianRandomVariable, MultiLinearGaussian, LinearGaussian, VecLinearGaussian, JointVariables, get_linear_gaussian_variables
 from evaluation import EvaluationObject, evaluate, evaluate_filtering_posterior, evaluate_agent_until, evaluate_rl_posterior_ensemble
 from dimension_table import create_dimension_table
@@ -39,7 +39,7 @@ from rl_models import load_rl_model
 # MODEL = 'trial_linear_gaussian_model_(traj_{}_dim_{})'
 # MODEL = 'linear_gaussian_model_(traj_{}_dim_{})'
 MODEL = 'agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{})'
-MODEL_W_CONDITION = 'agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{}_condition_length_{})'
+MODEL_W_CONDITION = 'agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{}_condition_length_{}_use_mlp_policy_{})'
 # MODEL = 'from_borg/rl_agents/linear_gaussian_model_(traj_{}_dim_{})'
 # MODEL = 'new_linear_gaussian_model_(traj_{}_dim_{})'
 
@@ -148,8 +148,11 @@ class CustomCallback(BaseCallback):
         using the current policy.
         This event is triggered before collecting new samples.
         """
+        if self.eval_incr % (self.eval_freq / 10) == 0:
+            print('starting rollout: {}'.format(self.eval_incr))
         # if we have hit conditions for full eval
         if int(np.floor(self.eval_incr / self.eval_freq)) >= self.current_mod:
+            print('evaluating policy...')
             # if we passed increment threshold then we eval
             self.current_mod += 1
             # Evaluate the model
@@ -175,6 +178,7 @@ class CustomCallback(BaseCallback):
                        'stoch_avg_horizon': np.mean([val['r'] for val in self.model.ep_info_buffer]),
                        'time_steps': self.num_timesteps,
                        'updates': self.model._n_updates})
+
 
     def _on_rollout_end(self) -> None:
         """
@@ -211,10 +215,22 @@ class CustomCallback(BaseCallback):
 
         return True
 
-def get_model_name(traj_length, dim, ent_coef, loss_type, condition_length):
+def create_distribution_alignment_of_state_0_png(policy, traj_length, dim, ys, save_dir):
+    table = create_dimension_table(torch.tensor([dim]), random=False)
+
+    tds = compute_conditional_filtering_posteriors(table=table, num_obs=traj_length, dim=dim, ys=ys)
+    td = tds[0].condition(y_values=ys).get_dist()
+
+    obs = torch.cat([torch.zeros(dim), ys[i:i+condition_length]]).reshape(1, -1)
+    pd = policy.get_distribution(obs).distribution
+
+    compare_normals(td.mean(), td.covariance(), 'filtering posterior', pd.mean, pd.covariance_matrix, 'rl policy', save_dir, 'ComparePolicyToPosterior.png')
+
+def get_model_name(traj_length, dim, ent_coef, loss_type, condition_length, use_mlp_policy=False):
     if condition_length == 1:
         return MODEL.format(ent_coef, loss_type, traj_length, dim)+'.zip'
-    return MODEL_W_CONDITION.format(ent_coef, loss_type, traj_length, dim, condition_length)+'.zip'
+    else:
+        return MODEL_W_CONDITION.format(ent_coef, loss_type, traj_length, dim, condition_length, use_mlp_policy)+'.zip'
 
 def model_without_directory(model):
     return Path(model).parts[-1]
@@ -240,7 +256,8 @@ def train(traj_length, env, dim, condition_length, ent_coef=1.0,
 
     model_name = get_model_name(traj_length=traj_length, dim=dim,
                                 ent_coef=ent_coef, loss_type=loss_type,
-                                condition_length=condition_length)
+                                condition_length=condition_length,
+                                use_mlp_policy=use_mlp_policy)
 
     print('training agent: {}'.format(model_name))
 

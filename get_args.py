@@ -38,7 +38,7 @@ def get_args():
 
     # Number of samples to take
     parser.add_argument('--num_samples', type=int, default=100, help='the number of samples to take for ESS, state occupancy, etc.')
-    parser.add_argument('--rl_timesteps', type=int, default=5000000, help='the number of RL interactions with the environment')
+    parser.add_argument('--rl_timesteps', type=int, default=500000, help='the number of RL interactions with the environment')
 
     # Args that you should only use for validation
     parser.add_argument('--ignore_reward', type=bool, default=False, help='whether or not to ignore the reward in the loss')
