@@ -40,13 +40,14 @@ from rl_models import load_rl_model
 # model name
 # MODEL = 'trial_linear_gaussian_model_(traj_{}_dim_{})'
 # MODEL = 'linear_gaussian_model_(traj_{}_dim_{})'
-MODEL = '/ubc/cs/research/plai-scratch/jsefas/agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{})'
-MODEL_W_CONDITION = '/ubc/cs/research/plai-scratch/jsefas/agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{}_condition_length_{}_use_mlp_policy_{})'
+MODEL = '/opt/agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{})'
+MODEL_W_CONDITION = '/opt/agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{}_condition_length_{}_use_mlp_policy_{})'
 # MODEL = 'from_borg/rl_agents/linear_gaussian_model_(traj_{}_dim_{})'
 # MODEL = 'new_linear_gaussian_model_(traj_{}_dim_{})'
 
 TODAY = date.today().strftime("%b-%d-%Y")
 
+SAVE_DIR = '/opt/data'
 RL_TIMESTEPS = 1000000
 NUM_SAMPLES = 1000
 NUM_VARIANCE_SAMPLES = 10
@@ -364,9 +365,12 @@ class Estimator:
         self.max_weight_prop = max_weight_prop
         self.ess = [ess]
         self.ess_ci = ess_ci
-        self.label = label
+        self.label = _correct_label(label)
         # self.distribution_type = self._get_distribution_type()
         self.save_dir = self.create_save_dir()
+
+    def _correct_label(label):
+        return Path(label).stem
 
     def create_save_dir(self):
         # save_dir = '{}/{}'.format(TODAY, self.distribution_type)
@@ -431,10 +435,10 @@ class Estimator:
         number of rows
         """
         estimates_df = pd.DataFrame(torch.stack(self.running_log_estimate_repeats).numpy())
-        estimates_df.to_csv('{}/{}_LogEstimates.csv'.format(save_dir, self.label))
+        estimates_df.to_csv('{}/{}_LogEstimates.csv'.format(SAVE_DIR, self.label))
 
         ess_df = pd.DataFrame(torch.stack(self.ess).numpy())
-        ess_df.to_csv('{}/{}_ESS.csv'.format(save_dir, self.label))
+        ess_df.to_csv('{}/{}_ESS.csv'.format(SAVE_DIR, self.label))
 
 
 class ISEstimator(Estimator):
@@ -2465,7 +2469,7 @@ def find_num_samples_for_traj_lengths(traj_lengths, dim, condition_length):
 if __name__ == "__main__":
     args, _ = get_args()
     subroutine = args.subroutine
-    save_dir = args.save_dir
+    SAVE_DIR = args.save_dir
     continue_training = args.continue_training
 
     # MODEL = 'agents/'+save_dir+'/{}_{}_linear_gaussian_model_(traj_{}_dim_{})'
