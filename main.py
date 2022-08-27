@@ -40,8 +40,8 @@ from rl_models import load_rl_model
 # model name
 # MODEL = 'trial_linear_gaussian_model_(traj_{}_dim_{})'
 # MODEL = 'linear_gaussian_model_(traj_{}_dim_{})'
-MODEL = 'agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{})'
-MODEL_W_CONDITION = 'agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{}_condition_length_{}_use_mlp_policy_{})'
+MODEL = '/ubc/cs/research/plai-scratch/jsefas/agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{})'
+MODEL_W_CONDITION = '/ubc/cs/research/plai-scratch/jsefas/agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{}_condition_length_{}_use_mlp_policy_{})'
 # MODEL = 'from_borg/rl_agents/linear_gaussian_model_(traj_{}_dim_{})'
 # MODEL = 'new_linear_gaussian_model_(traj_{}_dim_{})'
 
@@ -2488,9 +2488,10 @@ if __name__ == "__main__":
     linear_gaussian_env_type = get_env_type_from_arg(args.env_type, condition_length=condition_length)
 
     use_mlp_policy = args.use_mlp_policy
+    print(use_mlp_policy)
     model_name = get_model_name(traj_length=traj_length, dim=dim,
                                 ent_coef=ent_coef, loss_type=loss_type,
-                                condition_length=condition_length)
+                                condition_length=condition_length, use_mlp_policy)
 
     learning_rate = args.learning_rate
     clip_range = args.clip_range
