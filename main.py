@@ -47,7 +47,7 @@ MODEL_W_CONDITION = '/opt/agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{}_con
 
 TODAY = date.today().strftime("%b-%d-%Y")
 
-SAVE_DIR = '/opt/data'
+SAVE_DIR = '/opt/linear_gaussian_data'
 RL_TIMESTEPS = 1000000
 NUM_SAMPLES = 1000
 NUM_VARIANCE_SAMPLES = 10
