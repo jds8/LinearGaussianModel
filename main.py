@@ -1406,14 +1406,16 @@ def prior_ess_dim(table, traj_length, dims):
                            xlabel='Latent Dimension', distribution_type=distribution_type, name='prior')
 
 def rl_ess_traj(linear_gaussian_env_type, table, traj_lengths,
-                dim, ent_coef, loss_type, condition_length):
+                dim, ent_coef, loss_type, condition_length,
+                use_mlp_policy):
     distribution_type = RL_DISTRIBUTION
     os.makedirs('{}/{}'.format(TODAY, distribution_type), exist_ok=True)
     outputs = []
     for traj_length in traj_lengths:
         model_name = get_model_name(traj_length=traj_length, dim=dim,
                                     ent_coef=ent_coef, loss_type=loss_type,
-                                    condition_length=condition_length)
+                                    condition_length=condition_length,
+                                    use_mlp_policy=use_mlp_policy)
         outputs += [get_rl_output(linear_gaussian_env_type, table=table, ys=None, dim=dim, model_name=model_name, traj_length=traj_length)]
     save_outputs_with_names_traj(outputs, distribution_type,
                                  '{}_{}(traj_lengths_{}_dim_{})'.format(distribution_type, loss_type, traj_lengths, dim))
@@ -1474,12 +1476,13 @@ def posterior_filtering_conditional_ess_condition_length(table, traj_length, dim
                                         distribution_type=distribution_type, name='posterior_filtering')
 
 def execute_ess_traj(linear_gaussian_env_type, traj_lengths, dim,
-                     epsilons, ent_coef, loss_type, condition_length):
+                     epsilons, ent_coef, loss_type, condition_length,
+                     use_mlp_policy):
     table = create_dimension_table(torch.tensor([dim]), random=False)
     os.makedirs(TODAY, exist_ok=True)
     rl_ess_traj(linear_gaussian_env_type, table=table, traj_lengths=traj_lengths,
                 dim=dim, ent_coef=ent_coef, loss_type=loss_type,
-                condition_length=condition_length)
+                condition_length=condition_length, use_mlp_policy=use_mlp_policy)
     for epsilon in epsilons:
         # posterior_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, epsilon=epsilon)
         posterior_filtering_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, epsilon=epsilon)
@@ -2529,7 +2532,7 @@ if __name__ == "__main__":
         epsilons = [-5e-3]
         execute_ess_traj(linear_gaussian_env_type, traj_lengths=traj_lengths,
                          dim=dim, epsilons=epsilons, ent_coef=ent_coef, loss_type=loss_type,
-                         condition_length=condition_length)
+                         condition_length=condition_length, use_mlp_policy=use_mlp_policy)
     elif subroutine == 'posterior_filtering_ess_traj':
         print('executing: {}'.format('posterior_filtering_ess_traj'))
         epsilons = [-5e-3]
@@ -2555,7 +2558,7 @@ if __name__ == "__main__":
         print('executing: {}'.format('rl_ess_traj'))
         table = create_dimension_table(torch.tensor([dim]), random=False)
         rl_ess_traj(linear_gaussian_env_type, table=table, traj_lengths=ess_traj_lengths, dim=dim,
-                    ent_coef=ent_coef, loss_type=loss_type, condition_length=condition_length)
+                    ent_coef=ent_coef, loss_type=loss_type, condition_length=condition_length, use_mlp_policy=use_mlp_policy)
     elif subroutine == 'ess_dim':
         print('executing: {}'.format('ess_dim'))
         dims = [x for x in range(1, 50)]
