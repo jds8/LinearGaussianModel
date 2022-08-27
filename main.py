@@ -2491,7 +2491,8 @@ if __name__ == "__main__":
     print(use_mlp_policy)
     model_name = get_model_name(traj_length=traj_length, dim=dim,
                                 ent_coef=ent_coef, loss_type=loss_type,
-                                condition_length=condition_length, use_mlp_policy)
+                                condition_length=condition_length, 
+                                use_mlp_policy=use_mlp_policy)
 
     learning_rate = args.learning_rate
     clip_range = args.clip_range
