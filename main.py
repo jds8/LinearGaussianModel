@@ -2107,10 +2107,25 @@ def execute_evaluate_agent_until(linear_gaussian_env_type, traj_lengths, dim, lo
                                                       ess=eval_obj.log_effective_sample_size.exp(),
                                                       ess_ci=eval_obj.ess_ci, idstr=name)
         rl_estimator.save_data()
-        avg_num_samples = np.mean([len(repeat) for repeat in rl_estimator.running_log_estimate_repeats])
-        num_samples_data.append(avg_num_samples)
+        num_samples_data.append([len(repeat) for repeat in rl_estimator.running_log_estimate_repeats])
 
-    plt.plot(traj_lengths, num_samples_data)
+    # save data
+    try:
+        estimates_df = pd.DataFrame(torch.stack(num_samples_data).numpy())
+        estimates_df.to_csv('{}/{}_EvaluateUntilData.csv'.format(SAVE_DIR, loss_type))
+    except:
+        pass
+
+    avg_num_samples = [np.mean(traj_data) for traj_data in num_samples_data]
+    # plot data
+    plt.plot(traj_lengths, avg_num_samples)
+
+    # plot confidence intervals
+    quantiles = torch.tensor([0.05, 0.5, 0.95])
+    samples_data = torch.stack([torch.tensor(data, dtype=quantiles.dtype) for data in num_samples_data])
+    lower_ci, med, upper_ci = torch.quantile(samples_data, quantiles, dim=0)
+    plt.fill_between(traj_lengths, y1=lower_ci, y2=upper_ci, alpha=0.3)
+
     plt.xlabel('Trajectory Length')
     plt.ylabel('Num Samples')
     plt.title('Num Samples Required for |truth / estimate| - 1 < {}'.format(delta))
