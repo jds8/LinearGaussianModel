@@ -2580,7 +2580,7 @@ if __name__ == "__main__":
 
     NUM_SAMPLES = args.num_samples
     RL_TIMESTEPS = args.rl_timesteps
-    epsilon = args.epsilon
+    delta = args.delta
     ignore_reward = args.ignore_reward
 
     if subroutine == 'train_agent':

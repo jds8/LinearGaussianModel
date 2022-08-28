@@ -21,7 +21,7 @@ def get_args():
     parser.add_argument('--ess_dims', type=int, default=1, help='dimensions for ess', nargs='*')
     parser.add_argument('--ess_traj_lengths', type=int, default=1, help='traj_lengths for ess', nargs='*')
     parser.add_argument('--ess_condition_lengths', type=int, default=1, help='condition_lengths for ess', nargs='*')
-    parser.add_argument('--epsilon', type=float, default=0.1, help='the largest deviation between the evidence estimate ratio and 1')
+    parser.add_argument('--delta', type=float, default=0.03, help='the largest deviation between the evidence estimate ratio and 1')
     parser.add_argument('--condition_length', type=int, default=0, help='the number of observations on which to condition')
     parser.add_argument('--continue_training', type=bool, default=False, help='whether to continue training the rl model')
     parser.add_argument('--use_mlp_policy', type=bool, default=False, help='whether to use an MLP policy')
