@@ -41,13 +41,14 @@ from rl_models import load_rl_model
 # model name
 # MODEL = 'trial_linear_gaussian_model_(traj_{}_dim_{})'
 # MODEL = 'linear_gaussian_model_(traj_{}_dim_{})'
-MODEL = 'agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{})'
-MODEL_W_CONDITION = 'agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{}_condition_length_{}_use_mlp_policy_{})'
+MODEL = '/opt/agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{})'
+MODEL_W_CONDITION = '/opt/agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{}_condition_length_{}_use_mlp_policy_{})'
 # MODEL = 'from_borg/rl_agents/linear_gaussian_model_(traj_{}_dim_{})'
 # MODEL = 'new_linear_gaussian_model_(traj_{}_dim_{})'
 
 TODAY = date.today().strftime("%b-%d-%Y")
 
+SAVE_DIR = '/opt/linear_gaussian_data'
 RL_TIMESTEPS = 1000000
 NUM_SAMPLES = 1000
 NUM_VARIANCE_SAMPLES = 10
@@ -392,9 +393,12 @@ class Estimator:
         self.max_weight_prop = max_weight_prop
         self.ess = [ess]
         self.ess_ci = ess_ci
-        self.label = label
+        self.label = _correct_label(label)
         # self.distribution_type = self._get_distribution_type()
         self.save_dir = self.create_save_dir()
+
+    def _correct_label(label):
+        return Path(label).stem
 
     def create_save_dir(self):
         # save_dir = '{}/{}'.format(TODAY, self.distribution_type)
@@ -459,10 +463,10 @@ class Estimator:
         number of rows
         """
         estimates_df = pd.DataFrame(torch.stack(self.running_log_estimate_repeats).numpy())
-        estimates_df.to_csv('{}/{}_LogEstimates.csv'.format(save_dir, self.label))
+        estimates_df.to_csv('{}/{}_LogEstimates.csv'.format(SAVE_DIR, self.label))
 
         ess_df = pd.DataFrame(torch.stack(self.ess).numpy())
-        ess_df.to_csv('{}/{}_ESS.csv'.format(save_dir, self.label))
+        ess_df.to_csv('{}/{}_ESS.csv'.format(SAVE_DIR, self.label))
 
 
 class ISEstimator(Estimator):
@@ -1434,14 +1438,16 @@ def prior_ess_dim(table, traj_length, dims):
                            xlabel='Latent Dimension', distribution_type=distribution_type, name='prior')
 
 def rl_ess_traj(linear_gaussian_env_type, table, traj_lengths,
-                dim, ent_coef, loss_type, condition_length):
+                dim, ent_coef, loss_type, condition_length,
+                use_mlp_policy):
     distribution_type = RL_DISTRIBUTION
     os.makedirs('{}/{}'.format(TODAY, distribution_type), exist_ok=True)
     outputs = []
     for traj_length in traj_lengths:
         model_name = get_model_name(traj_length=traj_length, dim=dim,
                                     ent_coef=ent_coef, loss_type=loss_type,
-                                    condition_length=condition_length)
+                                    condition_length=condition_length,
+                                    use_mlp_policy=use_mlp_policy)
         outputs += [get_rl_output(linear_gaussian_env_type, table=table, ys=None, dim=dim, model_name=model_name, traj_length=traj_length)]
     save_outputs_with_names_traj(outputs, distribution_type,
                                  '{}_{}(traj_lengths_{}_dim_{})'.format(distribution_type, loss_type, traj_lengths, dim))
@@ -1502,12 +1508,13 @@ def posterior_filtering_conditional_ess_condition_length(table, traj_length, dim
                                         distribution_type=distribution_type, name='posterior_filtering')
 
 def execute_ess_traj(linear_gaussian_env_type, traj_lengths, dim,
-                     epsilons, ent_coef, loss_type, condition_length):
+                     epsilons, ent_coef, loss_type, condition_length,
+                     use_mlp_policy):
     table = create_dimension_table(torch.tensor([dim]), random=False)
     os.makedirs(TODAY, exist_ok=True)
     rl_ess_traj(linear_gaussian_env_type, table=table, traj_lengths=traj_lengths,
                 dim=dim, ent_coef=ent_coef, loss_type=loss_type,
-                condition_length=condition_length)
+                condition_length=condition_length, use_mlp_policy=use_mlp_policy)
     for epsilon in epsilons:
         # posterior_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, epsilon=epsilon)
         posterior_filtering_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, epsilon=epsilon)
@@ -2537,15 +2544,15 @@ def find_num_samples_for_traj_lengths(traj_lengths, dim, condition_length):
 if __name__ == "__main__":
     args, _ = get_args()
     subroutine = args.subroutine
-    save_dir = args.save_dir
+    SAVE_DIR = args.save_dir
     continue_training = args.continue_training
 
     # MODEL = 'agents/'+save_dir+'/{}_{}_linear_gaussian_model_(traj_{}_dim_{})'
     if subroutine != 'train_agent':
         # run = wandb.init(project='linear_gaussian_model', save_code=True, entity='iai')
-        os.makedirs(save_dir, exist_ok=True)
+        os.makedirs(SAVE_DIR, exist_ok=True)
 
-    os.makedirs('agents/'+save_dir, exist_ok=True)
+    os.makedirs('agents/', exist_ok=True)
     os.makedirs(TODAY, exist_ok=True)
 
     traj_length = args.traj_length
@@ -2565,7 +2572,8 @@ if __name__ == "__main__":
     use_mlp_policy = args.use_mlp_policy
     model_name = get_model_name(traj_length=traj_length, dim=dim,
                                 ent_coef=ent_coef, loss_type=loss_type,
-                                condition_length=condition_length)
+                                condition_length=condition_length, 
+                                use_mlp_policy=use_mlp_policy)
 
     learning_rate = args.learning_rate
     clip_range = args.clip_range
@@ -2602,7 +2610,7 @@ if __name__ == "__main__":
         epsilons = [-5e-3]
         execute_ess_traj(linear_gaussian_env_type, traj_lengths=traj_lengths,
                          dim=dim, epsilons=epsilons, ent_coef=ent_coef, loss_type=loss_type,
-                         condition_length=condition_length)
+                         condition_length=condition_length, use_mlp_policy=use_mlp_policy)
     elif subroutine == 'posterior_filtering_ess_traj':
         print('executing: {}'.format('posterior_filtering_ess_traj'))
         epsilons = [-5e-3]
@@ -2628,7 +2636,7 @@ if __name__ == "__main__":
         print('executing: {}'.format('rl_ess_traj'))
         table = create_dimension_table(torch.tensor([dim]), random=False)
         rl_ess_traj(linear_gaussian_env_type, table=table, traj_lengths=ess_traj_lengths, dim=dim,
-                    ent_coef=ent_coef, loss_type=loss_type, condition_length=condition_length)
+                    ent_coef=ent_coef, loss_type=loss_type, condition_length=condition_length, use_mlp_policy=use_mlp_policy)
     elif subroutine == 'ess_dim':
         print('executing: {}'.format('ess_dim'))
         dims = [x for x in range(1, 50)]

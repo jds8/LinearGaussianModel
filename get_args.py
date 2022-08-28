@@ -31,7 +31,7 @@ def get_args():
     parser.add_argument('--clip_range', type=float, default=0.1, help='what file to load')
 
     # save directory
-    parser.add_argument('--save_dir', type=str, default='.', help='top level directory in which to save files')
+    parser.add_argument('--save_dir', type=str, default='/opt/linear_gaussian_data/', help='top level directory in which to save files')
 
     # environment type
     parser.add_argument('--env_type', type=str, default='LinearGaussianEnv', help='the type of environment')
