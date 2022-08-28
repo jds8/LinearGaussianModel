@@ -27,10 +27,13 @@ def compare_normals(mu1, sigma1, label1, mu2, sigma2, label2, save_dir, plot_nam
     plt.close()
 
 def generate_gif(filenames, save_dir, gif_name):
-    images = []
-    for filename in filenames:
-        images.append(imageio.imread(filename))
-    imageio.mimsave('{}/{}.gif'.format(save_dir, gif_name), images)
+    if not filenames:
+        print('No files from which to make a gif.')
+    else:
+        images = []
+        for filename in filenames:
+            images.append(imageio.imread(filename))
+        imageio.mimsave('{}/{}.gif'.format(save_dir, gif_name), images)
 
 
 if __name__ == "__main__":

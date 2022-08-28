@@ -203,6 +203,79 @@ def evaluate_rl_posterior_ensemble(rl_d, tds, N, env, condition_length, determin
                             xts=xts, states=states, actions=actions, priors=priors, liks=liks,
                             log_weights=log_p_y_over_qs)
 
+def evaluate_pure_rl_ensemble(rl_ds, N, env, condition_length, deterministic=False):
+    run = wandb.init(project='linear_gaussian_model evaluation', save_code=True, entity='iai')
+    print('\nevaluating...')
+    # evidence estimate
+    evidence_est = torch.tensor(0.).reshape(1, -1)
+    log_evidence_est = torch.tensor(0.).reshape(1, -1)
+    total_rewards = []
+    # collect log( p(x,y)/q(x) )
+    log_p_y_over_qs = torch.zeros(N)
+    # keep track of log evidence estimates up to N sample trajectories
+    running_log_evidence_estimates = []
+    # keep track of (log) weights p(x) / q(x)
+    log_weights = []
+    # evaluate N times
+    for i in range(N):
+        done = False
+        # get first obs
+        obs = env.reset()
+        # keep track of xs
+        xs = []
+        # keep track of prior over actions p(x)
+        log_p_x = torch.tensor(0.).reshape(1, -1)
+        log_p_y_given_x = torch.tensor(0.).reshape(1, -1)
+        # collect actions, likelihoods
+        states = [obs]
+        actions = []
+        priors = []
+        liks = []
+        xts = []
+        total_reward = 0.
+        rl_idx = 0
+        log_qrobs = []
+        while not done:
+            if env.states_left() < condition_length:
+                rl_idx += 1
+            rl_d = rl_ds[rl_idx]
+            xt = torch.tensor(rl_d.predict(obs, deterministic=deterministic)[0])
+            log_qrobs.append(rl_d.evaluate_actions(obs=obs.t(), actions=xt)[1].sum().item())
+            xts.append(env.prev_xt)
+            obs, reward, done, info = env.step(xt)
+            total_reward += reward
+            states.append(obs)
+            priors.append(info['prior_reward'])
+            liks.append(info['lik_reward'])
+            log_p_x += info['prior_reward']
+            log_p_y_given_x += info['lik_reward']
+            actions.append(info['action'])
+            xs.append(xt)
+        try:
+            if isinstance(xs[0], torch.Tensor):
+                xs = torch.cat(xs).reshape(-1, env.traj_length)
+            else:
+                xs = torch.tensor(np.array(xs)).reshape(-1, env.traj_length)
+        except:
+            pass
+
+        # log p(x,y)
+        log_p_y_x = log_p_y_given_x + log_p_x
+
+        log_q = torch.sum(torch.tensor(log_qrobs))
+        log_p_y_over_qs[i] = (log_p_y_x - log_q).item()
+        running_log_evidence_estimates.append(torch.logsumexp(log_p_y_over_qs[0:i+1], -1) - torch.log(torch.tensor(i+1.)))
+        log_weights.append(log_p_x - log_q)  # ignore these since we consider the weights to be p(y|x)p(x)/q(x)
+        total_rewards.append(total_reward)
+        wandb.log({'total_reward': total_reward})
+
+    # calculate variance estmate as
+    # $\hat{\sigma}_{int}^2=(n(n-1))^{-1}\sum_{i=1}^n(f_iW_i-\overline{fW})^2$
+    sigma_est = torch.sqrt( (logvarexp(log_p_y_over_qs) - torch.log(torch.tensor(len(log_p_y_over_qs) - 1, dtype=torch.float32))).exp() )
+    return EvaluationObject(running_log_estimates=torch.tensor(running_log_evidence_estimates), sigma_est=sigma_est,
+                            xts=xts, states=states, actions=actions, priors=priors, liks=liks,
+                            log_weights=log_p_y_over_qs)
+
 def evaluate_smoothing_posterior_until(ys, tds, truth, delta, env, m, max_samples=100000):
     if m == 0:
         m = len(ys)
@@ -272,7 +345,7 @@ def evaluate_smoothing_posterior_until(ys, tds, truth, delta, env, m, max_sample
 
     return i
 
-def evaluate_until(d, truth, env, epsilon, max_samples=100000):
+def evaluate_until(d, truth, env, delta, max_samples=100000):
     run = wandb.init(project='linear_gaussian_model evaluation', save_code=True, entity='iai')
     print('\nevaluating...')
 
@@ -344,7 +417,7 @@ def evaluate_until(d, truth, env, epsilon, max_samples=100000):
 
         log_ratio = running_log_evidence_estimates[-1] - truth
         ratio = min(log_ratio, -log_ratio).exp()
-        outside_epsilon = (ratio - 1) > epsilon
+        outside_epsilon = (ratio - 1) > delta
 
     # calculate variance estmate as
     # $\hat{\sigma}_{int}^2=(n(n-1))^{-1}\sum_{i=1}^n(f_iW_i-\overline{fW})^2$
