@@ -2084,9 +2084,10 @@ def execute_evaluate_agent_until(linear_gaussian_env_type, traj_lengths, dim, lo
         rl_output = ImportanceOutput(traj_length=traj_length, ys=posterior_evidence.ys, dim=dim)
         name = '{}(m={})'.format(RL_DISTRIBUTION, condition_length)
         for _ in range(NUM_REPEATS):
-            model_name = get_model_name(traj_length=traj_length, dim=dim,
-                                        ent_coef=ent_coef, loss_type=loss_type,
-                                        condition_length=condition_length)
+            # model_name = get_model_name(traj_length=traj_length, dim=dim,
+            #                             ent_coef=ent_coef, loss_type=loss_type,
+            #                             condition_length=condition_length)
+            model_name = 'agents/0.1_forward_kl_linear_gaussian_model_(traj_10_dim_1_condition_length_0).zip'
             eval_obj = evaluate_agent_until(posterior_evidence, linear_gaussian_env_type, traj_length=traj_length,
                                             dim=dim, model_name=model_name,
                                             using_entropy_loss=(loss_type == ENTROPY_LOSS), delta=delta)
@@ -2389,10 +2390,10 @@ def execute_pure_rl_ensemble(traj_lengths, dim, ent_coef, condition_length, use_
 
         outputs += [OutputWithName(rl_output, name)]
 
-    save_outputs_with_names_traj(outputs, RL_DISTRIBUTION, 'rl_posterior_ensemble')
+    save_outputs_with_names_traj(outputs, RL_DISTRIBUTION, 'pure_rl_ensemble')
     make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=dim,
                        num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, traj_lengths=traj_lengths,
-                       xlabel='Trajectory Length', distribution_type=RL_DISTRIBUTION, name='RL+posterior ensemble')
+                       xlabel='Trajectory Length', distribution_type=RL_DISTRIBUTION, name='RL ensemble')
 
 def execute_rl_posterior_ensemble(traj_lengths, dim, condition_length, model_name):
     table = create_dimension_table(torch.tensor([dim]), random=False)
@@ -2616,7 +2617,7 @@ if __name__ == "__main__":
         print('executing: {}'.format('evaluate_until'))
         execute_evaluate_agent_until(linear_gaussian_env_type=linear_gaussian_env_type,
                                      traj_lengths=ess_traj_lengths, dim=dim, loss_type=loss_type,
-                                     ent_coef=ent_coef, delta=delta)
+                                     ent_coef=ent_coef, delta=delta, condition_length=condition_length)
     elif subroutine == 'ess_traj':
         print('WARNING we probably should NOT be executing: {}\ncheck main.py'.format('ess_traj'))
         traj_lengths = torch.cat([torch.arange(2, 11), torch.arange(12, 17)])
