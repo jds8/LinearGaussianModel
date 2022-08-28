@@ -345,7 +345,7 @@ def evaluate_smoothing_posterior_until(ys, tds, truth, delta, env, m, max_sample
 
     return i
 
-def evaluate_until(d, truth, env, delta, max_samples=100000):
+def evaluate_until(d, truth, env, delta, max_samples=10000):
     run = wandb.init(project='linear_gaussian_model evaluation', save_code=True, entity='iai')
     print('\nevaluating...')
 
@@ -380,6 +380,7 @@ def evaluate_until(d, truth, env, delta, max_samples=100000):
         liks = []
         xts = []
         total_reward = 0.
+
         while not done:
             xt = d.predict(obs, deterministic=False)[0]
             xts.append(env.prev_xt)
@@ -417,7 +418,7 @@ def evaluate_until(d, truth, env, delta, max_samples=100000):
 
         log_ratio = running_log_evidence_estimates[-1] - truth
         ratio = min(log_ratio, -log_ratio).exp()
-        outside_epsilon = (ratio - 1) > delta
+        outside_epsilon = torch.abs(ratio - 1) > delta
 
     # calculate variance estmate as
     # $\hat{\sigma}_{int}^2=(n(n-1))^{-1}\sum_{i=1}^n(f_iW_i-\overline{fW})^2$

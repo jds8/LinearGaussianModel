@@ -2084,10 +2084,10 @@ def execute_evaluate_agent_until(linear_gaussian_env_type, traj_lengths, dim, lo
         rl_output = ImportanceOutput(traj_length=traj_length, ys=posterior_evidence.ys, dim=dim)
         name = '{}(m={})'.format(RL_DISTRIBUTION, condition_length)
         for _ in range(NUM_REPEATS):
-            # model_name = get_model_name(traj_length=traj_length, dim=dim,
-            #                             ent_coef=ent_coef, loss_type=loss_type,
-            #                             condition_length=condition_length)
-            model_name = 'agents/0.1_forward_kl_linear_gaussian_model_(traj_10_dim_1_condition_length_0).zip'
+            model_name = get_model_name(traj_length=traj_length, dim=dim,
+                                        ent_coef=ent_coef, loss_type=loss_type,
+                                        condition_length=condition_length)
+            # model_name = 'agents/0.1_forward_kl_linear_gaussian_model_(traj_10_dim_1_condition_length_0).zip'
             eval_obj = evaluate_agent_until(posterior_evidence, linear_gaussian_env_type, traj_length=traj_length,
                                             dim=dim, model_name=model_name,
                                             using_entropy_loss=(loss_type == ENTROPY_LOSS), delta=delta)
@@ -2348,15 +2348,15 @@ def execute_pure_rl_ensemble(traj_lengths, dim, ent_coef, condition_length, use_
 
     outputs = []
     rl_ds = []
-    _, policy = load_rl_model(model_name='/opt/agents/0.1_forward_kl_linear_gaussian_model_(traj_10_dim_1_condition_length_5_use_mlp_policy_True).zip', device='cpu')
+    _, policy = load_rl_model(model_name='/opt/agents/0.1_reverse_kl_linear_gaussian_model_(traj_10_dim_1_condition_length_5_use_mlp_policy_True).zip', device='cpu')
     rl_ds.append(policy)
-    _, policy = load_rl_model(model_name='/opt/agents/0.1_forward_kl_linear_gaussian_model_(traj_10_dim_1_condition_length_4_use_mlp_policy_True).zip', device='cpu')
+    _, policy = load_rl_model(model_name='/opt/agents/0.1_reverse_kl_linear_gaussian_model_(traj_10_dim_1_condition_length_4_use_mlp_policy_True).zip', device='cpu')
     rl_ds.append(policy)
-    _, policy = load_rl_model(model_name='/opt/agents/0.1_forward_kl_linear_gaussian_model_(traj_10_dim_1_condition_length_3_use_mlp_policy_True).zip', device='cpu')
+    _, policy = load_rl_model(model_name='/opt/agents/0.1_reverse_kl_linear_gaussian_model_(traj_10_dim_1_condition_length_3_use_mlp_policy_True).zip', device='cpu')
     rl_ds.append(policy)
-    _, policy = load_rl_model(model_name='/opt/agents/0.1_forward_kl_linear_gaussian_model_(traj_10_dim_1_condition_length_2_use_mlp_policy_True).zip', device='cpu')
+    _, policy = load_rl_model(model_name='/opt/agents/0.1_reverse_kl_linear_gaussian_model_(traj_10_dim_1_condition_length_2_use_mlp_policy_True).zip', device='cpu')
     rl_ds.append(policy)
-    _, policy = load_rl_model(model_name='/opt/agents/0.1_forward_kl_linear_gaussian_model_(traj_10_dim_1).zip', device='cpu')
+    _, policy = load_rl_model(model_name='/opt/agents/0.1_reverse_kl_linear_gaussian_model_(traj_10_dim_1).zip', device='cpu')
     rl_ds.append(policy)
 
     for traj_length in traj_lengths:
