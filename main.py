@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import glob
 from datetime import date
 from matplotlib.pyplot import cm
 import matplotlib.pyplot as plt
@@ -68,10 +69,11 @@ class CustomCallback(BaseCallback):
 
     :param verbose: (int) Verbosity level 0: not output 1: info 2: debug
     """
-    def __init__(self, env, verbose=1, eval_freq=500, log_freq=100,
+    def __init__(self, env, model_name, verbose=1, eval_freq=1, log_freq=100,
                     gradient_save_freq = 0, run_id=''):
         super(CustomCallback, self).__init__(verbose)
         self.env = env
+        self.model_name_base = self._get_model_name_parts(model_name)
         self.eval_freq = eval_freq
         self.log_freq = log_freq
         self.eval_incr = 1
@@ -79,6 +81,11 @@ class CustomCallback(BaseCallback):
         self.verbose = verbose
         self.gradient_save_freq = gradient_save_freq
         self.current_mod = 1
+
+    @staticmethod
+    def _get_model_name_parts(model_name):
+        parts = model_name.split('.zip')
+        return parts[0]
 
     def _init_callback(self) -> None:
         d = {}
@@ -104,29 +111,36 @@ class CustomCallback(BaseCallback):
             obs = env.reset()
             done = False
             total_reward, horizon = 0, 0
-            kls = []
+            prior_kls = []
+            posterior_kls = []
             while not done:
                 obs_env = env.envs[0].env
                 prev_xt = torch.tensor(obs.squeeze()[0:env.action_space.shape[0]]).to(dtype=obs_env.A.dtype)
-                kls.append(compute_kl_w_prior(policy=self.model.policy,
+                prior_kls.append(compute_kl_w_prior(policy=self.model.policy,
                                               prev_xt=prev_xt, ys=obs_env.get_condition_ys(),
                                               condition_length=obs_env.condition_length,
                                               A=obs_env.A, Q=obs_env.Q))
+                td = obs_env.tds[obs_env.index]
+                posterior_kls.append(compute_conditional_kl(td_fps=td, policy=self.model.policy,
+                                            prev_xt=prev_xt, ys=obs_env.get_condition_ys(),
+                                            condition_length=obs_env.condition_length))
+
                 action = policy(obs)
                 obs, reward, done, info = env.step(action)
                 total_reward += reward
                 horizon += 1
             if isinstance(info, list):
                 info = info[0]
-            return total_reward, horizon, info, torch.tensor(kls)
+            return total_reward, horizon, info, torch.tensor(prior_kls), torch.tensor(posterior_kls)
 
-        next_total_reward, next_horizon, wp, kls = eval_policy_helper(policy,env)
+        next_total_reward, next_horizon, wp, prior_kls, posterior_kls = eval_policy_helper(policy, env)
         total_reward += next_total_reward
         horizon += next_horizon
         # avg_wp += wp
 
-        avg_kl = kls.mean()
-        return total_reward, horizon, avg_kl#, avg_wp
+        avg_prior_kl = prior_kls.mean()
+        avg_posterior_kl = posterior_kls.mean()
+        return total_reward, horizon, avg_prior_kl, avg_posterior_kl#, avg_wp
 
     def _on_training_start(self) -> None:
         """
@@ -134,14 +148,16 @@ class CustomCallback(BaseCallback):
         """
         # Evaluate the model
         policy = lambda obs_: self.model.predict(obs_, deterministic=True)[0]
-        avg_return, avg_horizon, avg_kl = self.eval_policy(policy, self.training_env)
+        avg_return, avg_horizon, avg_prior_kl, avg_posterior_kl = self.eval_policy(policy, self.training_env)
         self.training_env.reset()
         # log to wandb
         wandb.log({'det_avg_return':avg_return,
                    'det_avg_horizon':avg_horizon,
                    'time_steps': self.num_timesteps,
                    'updates': self.model._n_updates,
-                   'kl divergence with prior': avg_kl})
+                   'avg kl divergence with prior': avg_prior_kl,
+                   'avg kl divergence with posterior': avg_posterior_kl,
+                   })
         return None
 
     def _on_rollout_start(self) -> None:
@@ -150,29 +166,28 @@ class CustomCallback(BaseCallback):
         using the current policy.
         This event is triggered before collecting new samples.
         """
-        if self.eval_incr % (self.eval_freq / 10) == 0:
-            print('starting rollout: {}'.format(self.eval_incr))
         # if we have hit conditions for full eval
         if int(np.floor(self.eval_incr / self.eval_freq)) >= self.current_mod:
-            print('evaluating policy...')
             # if we passed increment threshold then we eval
             self.current_mod += 1
             # Evaluate the model
             policy = lambda obs_: self.model.predict(obs_, deterministic=True)[0]
-            avg_return, avg_horizon, avg_kl = self.eval_policy(policy, self.training_env)
+            avg_return, avg_horizon, avg_prior_kl, avg_posterior_kl = self.eval_policy(policy, self.training_env)
             self.training_env.reset()
             #
             wandb.log({'det_avg_return':avg_return,
                        'det_avg_horizon':avg_horizon,
-                       'avg_kl_w_prior':avg_kl,
+                       'avg kl divergence with prior':avg_prior_kl,
+                       'avg kl divergence with posterior':avg_posterior_kl,
                        'stoch_avg_return': np.mean([val['l'] for val in self.model.ep_info_buffer]),
                        'stoch_avg_horizon': np.mean([val['r'] for val in self.model.ep_info_buffer]),
                        'time_steps': self.num_timesteps,
                        'updates': self.model._n_updates})
+
             # New best model, you could save the agent here
             if avg_return > self.best_mean_reward:
                 self.best_mean_reward = avg_return
-                self.save_model()
+                self.model.save('{}_best.zip'+self.model_name_base)
 
         # otherwise just log stochastic info
         else:
@@ -181,6 +196,12 @@ class CustomCallback(BaseCallback):
                        'time_steps': self.num_timesteps,
                        'updates': self.model._n_updates})
 
+        policy_alignment_str = 'PolicyAlignment'
+        create_distribution_alignment_of_state_0_png(policy=self.model.policy, condition_length=self.env.condition_length,
+                                                     dim=self.env.mu_0.nelement(), ys=self.env.ys,
+                                                     save_dir=TODAY, filename=policy_alignment_str+'{}.png'.format(self.eval_incr))
+        create_distribution_alignment_gif(file_regex='{}/{}*.png'.format(TODAY, policy_alignment_str),
+                                          save_dir=TODAY, gif_name=policy_alignment_str)
 
     def _on_rollout_end(self) -> None:
         """
@@ -212,21 +233,28 @@ class CustomCallback(BaseCallback):
             kl = compute_conditional_kl(td_fps=td, policy=self.model.policy,
                                         prev_xt=self.env.prev_xts[-2], ys=self.env.previous_condition_ys,
                                         condition_length=self.env.condition_length)
-            wandb.log({'kl divergence with filtering posterior': kl})
+            wandb.log({'kl divergence with smoothing posterior at state {}'.format(self.env.index-1): kl})
             wandb.log({'reward at state {}'.format(self.env.index-1): self.env.rewards[-1]})
 
         return True
 
-def create_distribution_alignment_of_state_0_png(policy, traj_length, dim, ys, save_dir):
+def create_distribution_alignment_gif(file_regex, save_dir, gif_name):
+    filenames = glob.glob(file_regex)
+    generate_gif(filenames, save_dir, gif_name)
+
+def create_distribution_alignment_of_state_0_png(policy, condition_length, dim, ys, save_dir, filename):
+    traj_length = len(ys)
     table = create_dimension_table(torch.tensor([dim]), random=False)
 
     tds = compute_conditional_filtering_posteriors(table=table, num_obs=traj_length, dim=dim, ys=ys)
     td = tds[0].condition(y_values=ys).get_dist()
 
-    obs = torch.cat([torch.zeros(dim), ys[i:i+condition_length]]).reshape(1, -1)
+    obs = torch.cat([torch.zeros(dim), ys[:condition_length]]).reshape(1, -1)
     pd = policy.get_distribution(obs).distribution
 
-    compare_normals(td.mean(), td.covariance(), 'filtering posterior', pd.mean, pd.covariance_matrix, 'rl policy', save_dir, 'ComparePolicyToPosterior.png')
+    compare_normals(td.mean.item(), td.covariance_matrix.item(), 'filtering posterior',
+                    pd.mean.detach().item(), (pd.scale.detach()**2).item(), 'rl policy',
+                    save_dir, filename)
 
 def get_model_name(traj_length, dim, ent_coef, loss_type, condition_length, use_mlp_policy=False):
     if condition_length == 1:
@@ -277,7 +305,7 @@ def train(traj_length, env, dim, condition_length, ent_coef=1.0,
                     learning_rate=learning_rate, clip_range=clip_range)
 
     # train policy
-    model.learn(total_timesteps=RL_TIMESTEPS, callback=CustomCallback(env, verbose=1))
+    model.learn(total_timesteps=RL_TIMESTEPS, callback=CustomCallback(env, model_name, verbose=1))
 
     # save model
     model.save(model_name)
@@ -1556,9 +1584,10 @@ def test_train(traj_length, dim, condition_length, ent_coef, loss_type,
     mu_0 = table[dim]['mu_0']
     Q_0 = table[dim]['Q_0']
 
+    print("WARNING: not sampling new observations during training!")
     env = linear_gaussian_env_type(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0,
                                    using_entropy_loss=(loss_type==ENTROPY_LOSS),
-                                   ys=posterior_evidence.ys, sample=True)
+                                   ys=posterior_evidence.ys, sample=False)
 
     train(traj_length=traj_length, env=env, dim=dim, condition_length=condition_length,
           ent_coef=ent_coef, loss_type=loss_type,
@@ -2039,7 +2068,7 @@ def compute_analytical_kl_at_each_state(td_fps, conditional_fps, prev_xts, ys, c
         kls.append(dist.kl_divergence(td, conditional_td))
     return kls
 
-def execute_evaluate_agent_until(linear_gaussian_env_type, traj_lengths, dim, loss_type, ent_coef, epsilon, condition_length):
+def execute_evaluate_agent_until(linear_gaussian_env_type, traj_lengths, dim, loss_type, ent_coef, delta, condition_length):
     table = create_dimension_table(torch.tensor([dim]), random=False)
     num_samples_data = []
     for traj_length in traj_lengths:
@@ -2052,7 +2081,7 @@ def execute_evaluate_agent_until(linear_gaussian_env_type, traj_lengths, dim, lo
                                         condition_length=condition_length)
             eval_obj = evaluate_agent_until(posterior_evidence, linear_gaussian_env_type, traj_length=traj_length,
                                             dim=dim, model_name=model_name,
-                                            using_entropy_loss=(loss_type == ENTROPY_LOSS), epsilon=epsilon)
+                                            using_entropy_loss=(loss_type == ENTROPY_LOSS), delta=delta)
 
             # add rl estimator
             rl_estimator = rl_output.add_rl_estimator(running_log_estimates=eval_obj.running_log_estimates,
@@ -2067,7 +2096,7 @@ def execute_evaluate_agent_until(linear_gaussian_env_type, traj_lengths, dim, lo
     plt.plot(traj_lengths, num_samples_data)
     plt.xlabel('Trajectory Length')
     plt.ylabel('Num Samples')
-    plt.title('Num Samples Required for |truth / estimate| - 1 < {}'.format(epsilon))
+    plt.title('Num Samples Required for |truth / estimate| - 1 < {}'.format(delta))
 
     save_path = '{}/ent_coef_{}_loss_type_{}_dim_{}RequiredSampleSize.pdf'.format(rl_estimator.save_dir, ent_coef, loss_type, dim)
     plt.savefig(save_path)
@@ -2299,6 +2328,52 @@ def plot_posterior_mean(ys, traj_length, dim, condition_length, xs=None):
 
     return means, xs
 
+def execute_pure_rl_ensemble(traj_lengths, dim, ent_coef, condition_length):
+    table = create_dimension_table(torch.tensor([dim]), random=False)
+    A = table[dim]['A']
+    Q = table[dim]['Q']
+    C = table[dim]['C']
+    R = table[dim]['R']
+    Q_0 = table[dim]['Q_0']
+    mu_0 = table[dim]['mu_0']
+
+    outputs = []
+    for traj_length in traj_lengths:
+        rl_ds = []
+        for m in torch.arange(condition_length, 0, -1):
+            model_name = get_model_name(traj_length=traj_length, dim=dim,
+                                        ent_coef=ent_coef, loss_type=loss_type,
+                                        condition_length=m)
+
+            _, policy = load_rl_model(model_name=model_name, device='cpu')
+            rl_ds.append(policy)
+
+        name = '{}(traj_len {} dim {})'.format(RL_DISTRIBUTION, traj_length, dim)
+        rl_output = ImportanceOutput(traj_length=traj_length, ys=None, dim=dim)
+        for _ in range(NUM_REPEATS):
+            ys = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0]
+            env = linear_gaussian_env_type(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0,
+                                           using_entropy_loss=(loss_type==ENTROPY_LOSS),
+                                           ys=ys, sample=False)
+
+            eval_obj = evaluate_pure_rl_ensemble(rl_ds=rl_ds, N=NUM_SAMPLES, env=env,
+                                                 condition_length=condition_length, deterministic=False)
+
+            # add rl estimator
+            rl_estimator = rl_output.add_rl_estimator(running_log_estimates=eval_obj.running_log_estimates,
+                                                      ci=eval_obj.ci, weight_mean=eval_obj.log_weight_mean.exp(),
+                                                      max_weight_prop=eval_obj.log_max_weight_prop.exp(),
+                                                      ess=eval_obj.log_effective_sample_size.exp(),
+                                                      ess_ci=eval_obj.ess_ci, idstr=name)
+        rl_estimator.save_data()
+
+        outputs += [OutputWithName(rl_output, name)]
+
+    save_outputs_with_names_traj(outputs, RL_DISTRIBUTION, 'rl_posterior_ensemble')
+    make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=dim,
+                       num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, traj_lengths=traj_lengths,
+                       xlabel='Trajectory Length', distribution_type=RL_DISTRIBUTION, name='RL+posterior ensemble')
+
 def execute_rl_posterior_ensemble(traj_lengths, dim, condition_length, model_name):
     table = create_dimension_table(torch.tensor([dim]), random=False)
     A = table[dim]['A']
@@ -2520,7 +2595,7 @@ if __name__ == "__main__":
         print('executing: {}'.format('evaluate_until'))
         execute_evaluate_agent_until(linear_gaussian_env_type=linear_gaussian_env_type,
                                      traj_lengths=ess_traj_lengths, dim=dim, loss_type=loss_type,
-                                     ent_coef=ent_coef, epsilon=epsilon)
+                                     ent_coef=ent_coef, delta=delta)
     elif subroutine == 'ess_traj':
         print('WARNING we probably should NOT be executing: {}\ncheck main.py'.format('ess_traj'))
         traj_lengths = torch.cat([torch.arange(2, 11), torch.arange(12, 17)])
@@ -2622,9 +2697,12 @@ if __name__ == "__main__":
     elif subroutine == 'smoothing_reward':
         print('executing: {}'.format('smoothing_reward'))
         smoothing_reward(traj_length, dim, loss_type)
-    elif subroutine == 'evaluate_rl_ensemble':
-        print('executing: {}'.format('evaluate_rl_ensemble'))
+    elif subroutine == 'evaluate_rl_posterior_ensemble':
+        print('executing: {}'.format('evaluate_rl_posterior_ensemble'))
         execute_rl_posterior_ensemble(ess_traj_lengths, dim, condition_length, model_name)
+    elif subroutine == 'evaluate_pure_rl_ensemble':
+        print('executing: {}'.format('evaluate_pure_rl_ensemble'))
+        execute_pure_rl_ensemble(ess_traj_lengths, dim, ent_coef, condition_length)
     elif subroutine == 'compute_analytical_kl_at_each_state':
         print('executing: {}'.format('compute_analytical_kl_at_each_state'))
         kls = execute_compute_analytical_kl_at_each_state(traj_length, dim, condition_length)
