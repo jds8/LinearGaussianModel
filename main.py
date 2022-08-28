@@ -365,10 +365,11 @@ class Estimator:
         self.max_weight_prop = max_weight_prop
         self.ess = [ess]
         self.ess_ci = ess_ci
-        self.label = _correct_label(label)
+        self.label = self._correct_label(label)
         # self.distribution_type = self._get_distribution_type()
         self.save_dir = self.create_save_dir()
 
+    @staticmethod
     def _correct_label(label):
         return Path(label).stem
 
