@@ -2076,7 +2076,7 @@ def compute_analytical_kl_at_each_state(td_fps, conditional_fps, prev_xts, ys, c
         kls.append(dist.kl_divergence(td, conditional_td))
     return kls
 
-def execute_evaluate_agent_until(linear_gaussian_env_type, traj_lengths, dim, loss_type, ent_coef, delta, condition_length):
+def execute_evaluate_agent_until(linear_gaussian_env_type, traj_lengths, dim, loss_type, ent_coef, delta, condition_length, use_mlp_policy):
     table = create_dimension_table(torch.tensor([dim]), random=False)
     num_samples_data = []
     for traj_length in traj_lengths:
@@ -2086,7 +2086,8 @@ def execute_evaluate_agent_until(linear_gaussian_env_type, traj_lengths, dim, lo
         for _ in range(NUM_REPEATS):
             model_name = get_model_name(traj_length=traj_length, dim=dim,
                                         ent_coef=ent_coef, loss_type=loss_type,
-                                        condition_length=condition_length)
+                                        condition_length=condition_length, 
+                                        use_mlp_policy=use_mlp_policy)
             # model_name = 'agents/0.1_forward_kl_linear_gaussian_model_(traj_10_dim_1_condition_length_0).zip'
             eval_obj = evaluate_agent_until(posterior_evidence, linear_gaussian_env_type, traj_length=traj_length,
                                             dim=dim, model_name=model_name,
@@ -2617,7 +2618,8 @@ if __name__ == "__main__":
         print('executing: {}'.format('evaluate_until'))
         execute_evaluate_agent_until(linear_gaussian_env_type=linear_gaussian_env_type,
                                      traj_lengths=ess_traj_lengths, dim=dim, loss_type=loss_type,
-                                     ent_coef=ent_coef, delta=delta, condition_length=condition_length)
+                                     ent_coef=ent_coef, delta=delta, condition_length=condition_length,
+                                     use_mlp_policy=use_mlp_policy)
     elif subroutine == 'ess_traj':
         print('WARNING we probably should NOT be executing: {}\ncheck main.py'.format('ess_traj'))
         traj_lengths = torch.cat([torch.arange(2, 11), torch.arange(12, 17)])
