@@ -2130,7 +2130,7 @@ def execute_evaluate_agent_until(linear_gaussian_env_type, traj_lengths, dim, lo
     plt.ylabel('Num Samples')
     plt.title('Num Samples Required for |truth / estimate| - 1 < {}'.format(delta))
 
-    save_path = '{}/ent_coef_{}_loss_type_{}_dim_{}RequiredSampleSize.pdf'.format(rl_estimator.save_dir, ent_coef, loss_type, dim)
+    save_path = '{}/ent_coef_{}_loss_type_{}_dim_{}EvalUntilSampleSize.pdf'.format(rl_estimator.save_dir, ent_coef, loss_type, dim)
     plt.savefig(save_path)
     wandb.save(save_path)
 
