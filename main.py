@@ -457,17 +457,24 @@ class Estimator:
     #     else:
     #         return self.label
 
+    # def stack_with_padding(self, array_of_tensors):
+    #     largest_len = max(len(a) for a in array_of_tensors)
+    #     torch.nn.functional.pad(input=a, pad=(0,1), mode='constant', value=0)
+
     def save_data(self):
         """
         Saves the running log estimate and ess into their own csv files
         where there are NUM_SAMPLES number of columns and NUM_REPEATS
         number of rows
         """
-        estimates_df = pd.DataFrame(torch.stack(self.running_log_estimate_repeats).numpy())
-        estimates_df.to_csv('{}/{}_LogEstimates.csv'.format(SAVE_DIR, self.label))
+        try:
+            estimates_df = pd.DataFrame(torch.stack(self.running_log_estimate_repeats).numpy())
+            estimates_df.to_csv('{}/{}_LogEstimates.csv'.format(SAVE_DIR, self.label))
 
-        ess_df = pd.DataFrame(torch.stack(self.ess).numpy())
-        ess_df.to_csv('{}/{}_ESS.csv'.format(SAVE_DIR, self.label))
+            ess_df = pd.DataFrame(torch.stack(self.ess).numpy())
+            ess_df.to_csv('{}/{}_ESS.csv'.format(SAVE_DIR, self.label))
+        except:
+            pass
 
 
 class ISEstimator(Estimator):
