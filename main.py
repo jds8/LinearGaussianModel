@@ -27,7 +27,7 @@ from plot_utils import legend_without_duplicate_labels, compare_normals, generat
 from linear_gaussian_prob_prog import MultiGaussianRandomVariable, GaussianRandomVariable, MultiLinearGaussian, LinearGaussian, VecLinearGaussian, JointVariables, get_linear_gaussian_variables
 from evaluation import EvaluationObject, evaluate, evaluate_filtering_posterior, \
     evaluate_agent_until, evaluate_rl_posterior_ensemble, \
-    evaluate_smoothing_posterior_until
+    evaluate_smoothing_posterior_until, evaluate_pure_rl_ensemble
 from dimension_table import create_dimension_table
 from filtering_posterior import compute_conditional_filtering_posteriors
 import pandas as pd
@@ -2336,7 +2336,7 @@ def plot_posterior_mean(ys, traj_length, dim, condition_length, xs=None):
 
     return means, xs
 
-def execute_pure_rl_ensemble(traj_lengths, dim, ent_coef, condition_length):
+def execute_pure_rl_ensemble(traj_lengths, dim, ent_coef, condition_length, use_mlp_policy):
     table = create_dimension_table(torch.tensor([dim]), random=False)
     A = table[dim]['A']
     Q = table[dim]['Q']
@@ -2346,15 +2346,27 @@ def execute_pure_rl_ensemble(traj_lengths, dim, ent_coef, condition_length):
     mu_0 = table[dim]['mu_0']
 
     outputs = []
-    for traj_length in traj_lengths:
-        rl_ds = []
-        for m in torch.arange(condition_length, 0, -1):
-            model_name = get_model_name(traj_length=traj_length, dim=dim,
-                                        ent_coef=ent_coef, loss_type=loss_type,
-                                        condition_length=m)
+    rl_ds = []
+    _, policy = load_rl_model(model_name='/opt/agents/0.1_forward_kl_linear_gaussian_model_(traj_10_dim_1_condition_length_5_use_mlp_policy_True).zip', device='cpu')
+    rl_ds.append(policy)
+    _, policy = load_rl_model(model_name='/opt/agents/0.1_forward_kl_linear_gaussian_model_(traj_10_dim_1_condition_length_4_use_mlp_policy_True).zip', device='cpu')
+    rl_ds.append(policy)
+    _, policy = load_rl_model(model_name='/opt/agents/0.1_forward_kl_linear_gaussian_model_(traj_10_dim_1_condition_length_3_use_mlp_policy_True).zip', device='cpu')
+    rl_ds.append(policy)
+    _, policy = load_rl_model(model_name='/opt/agents/0.1_forward_kl_linear_gaussian_model_(traj_10_dim_1_condition_length_5_use_mlp_policy_True).zip', device='cpu')
+    rl_ds.append(policy)
+    _, policy = load_rl_model(model_name='/opt/agents/0.1_forward_kl_linear_gaussian_model_(traj_10_dim_1).zip', device='cpu')
+    rl_ds.append(policy)
 
-            _, policy = load_rl_model(model_name=model_name, device='cpu')
-            rl_ds.append(policy)
+    for traj_length in traj_lengths:
+        # rl_ds = []
+        # for m in torch.arange(condition_length, 0, -1):
+        #     model_name = get_model_name(traj_length=traj_length, dim=dim,
+        #                                 ent_coef=ent_coef, loss_type=loss_type,
+        #                                 condition_length=m, use_mlp_policy=use_mlp_policy)
+
+        #     _, policy = load_rl_model(model_name=model_name, device='cpu')
+        #     rl_ds.append(policy)
 
         name = '{}(traj_len {} dim {})'.format(RL_DISTRIBUTION, traj_length, dim)
         rl_output = ImportanceOutput(traj_length=traj_length, ys=None, dim=dim)
@@ -2711,7 +2723,7 @@ if __name__ == "__main__":
         execute_rl_posterior_ensemble(ess_traj_lengths, dim, condition_length, model_name)
     elif subroutine == 'evaluate_pure_rl_ensemble':
         print('executing: {}'.format('evaluate_pure_rl_ensemble'))
-        execute_pure_rl_ensemble(ess_traj_lengths, dim, ent_coef, condition_length)
+        execute_pure_rl_ensemble(ess_traj_lengths, dim, ent_coef, condition_length, use_mlp_policy)
     elif subroutine == 'compute_analytical_kl_at_each_state':
         print('executing: {}'.format('compute_analytical_kl_at_each_state'))
         kls = execute_compute_analytical_kl_at_each_state(traj_length, dim, condition_length)
