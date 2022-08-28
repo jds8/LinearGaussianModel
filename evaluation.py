@@ -503,7 +503,7 @@ def evaluate_filtering_posterior(ys, N, tds, epsilon, env, m=0):
                             xts=xts, states=states, actions=actions, priors=priors, liks=liks,
                             log_weights=log_p_y_over_qs)
 
-def evaluate_agent_until(posterior_evidence, linear_gaussian_env_type, using_entropy_loss, traj_length, dim, model_name, epsilon=0.5):
+def evaluate_agent_until(posterior_evidence, linear_gaussian_env_type, using_entropy_loss, traj_length, dim, model_name, delta=0.5):
     _, policy = load_rl_model(model_name, device='cpu')
 
     table = create_dimension_table(torch.tensor([dim]), random=False)
@@ -517,4 +517,4 @@ def evaluate_agent_until(posterior_evidence, linear_gaussian_env_type, using_ent
     env = linear_gaussian_env_type(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, ys=posterior_evidence.ys,
                                    using_entropy_loss=using_entropy_loss, sample=False)
 
-    return evaluate_until(d=policy, truth=posterior_evidence.evidence, env=env, epsilon=epsilon)
+    return evaluate_until(d=policy, truth=posterior_evidence.evidence, env=env, delta=delta)
