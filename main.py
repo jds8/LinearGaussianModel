@@ -2118,8 +2118,8 @@ def execute_evaluate_agent_until(linear_gaussian_env_type, traj_lengths, dim, lo
 
     avg_num_samples = [np.mean(traj_data) for traj_data in num_samples_data]
     # plot data
-    plt.plot(traj_lengths, avg_num_samples)
-
+    plt.plot(traj_lengths, avg_num_samples, label=loss_type)
+    legend_without_duplicate_labels(plt.gca())
     # plot confidence intervals
     quantiles = torch.tensor([0.05, 0.5, 0.95])
     samples_data = torch.stack([torch.tensor(data, dtype=quantiles.dtype) for data in num_samples_data])
@@ -2133,7 +2133,6 @@ def execute_evaluate_agent_until(linear_gaussian_env_type, traj_lengths, dim, lo
     save_path = '{}/ent_coef_{}_loss_type_{}_dim_{}RequiredSampleSize.pdf'.format(rl_estimator.save_dir, ent_coef, loss_type, dim)
     plt.savefig(save_path)
     wandb.save(save_path)
-    plt.close()
 
 def generate_rewards(traj_length, dim, loss_type):
     table = create_dimension_table(torch.tensor([dim]), random=False)
@@ -2639,7 +2638,11 @@ if __name__ == "__main__":
     elif subroutine == 'evaluate_until':
         print('executing: {}'.format('evaluate_until'))
         execute_evaluate_agent_until(linear_gaussian_env_type=linear_gaussian_env_type,
-                                     traj_lengths=ess_traj_lengths, dim=dim, loss_type=loss_type,
+                                     traj_lengths=ess_traj_lengths, dim=dim, loss_type='forward_kl',
+                                     ent_coef=ent_coef, delta=delta, condition_length=condition_length,
+                                     use_mlp_policy=use_mlp_policy)
+        execute_evaluate_agent_until(linear_gaussian_env_type=linear_gaussian_env_type,
+                                     traj_lengths=ess_traj_lengths, dim=dim, loss_type='reverse_kl',
                                      ent_coef=ent_coef, delta=delta, condition_length=condition_length,
                                      use_mlp_policy=use_mlp_policy)
     elif subroutine == 'ess_traj':
