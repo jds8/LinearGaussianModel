@@ -1062,22 +1062,75 @@ def test_graphical_model():
     mu_0 = table[dim]['mu_0']
     Q_0 = table[dim]['Q_0']
 
-    jvs = JointVariables([xs[0], xs[1], ys[0]], A, C)
-    print(jvs.dist.covariance())
-    rhs_rvs = [xs[0], ys[0]]
+    # jvs = JointVariables([xs[0], xs[1], ys[0]], A, C)
+    # print(jvs.dist.covariance())
+    # rhs_rvs = [xs[0], ys[0]]
+    # conditional_1 = jvs.condition(rhs_rvs)
+    # print(conditional_1.covariance())
+
+    # jvs3 = JointVariables([xs[0], xs[1], ys[1]], A, C)
+    # rhs_rvs3 = [xs[0], ys[1]]
+    # conditional_3 = jvs3.condition(rhs_rvs3)
+    # print(conditional_3.covariance())
+
+    # jvs2 = JointVariables([xs[0], xs[1]], A, C)
+    # rhs_rvs2 = [xs[0]]
+    # conditional_2 = jvs2.condition(rhs_rvs2)
+    # print(conditional_2.covariance())
+
+    # p(x2|x1)
+    jvs = JointVariables([xs[1], xs[2]], A, C)
+    rhs_rvs = [xs[1]]
     conditional_1 = jvs.condition(rhs_rvs)
     print(conditional_1.covariance())
 
-    jvs3 = JointVariables([xs[0], xs[1], ys[1]], A, C)
-    rhs_rvs3 = [xs[0], ys[1]]
-    conditional_3 = jvs3.condition(rhs_rvs3)
-    print(conditional_3.covariance())
+    # p(x2|y2)
+    jvs = JointVariables([ys[2], xs[2]], A, C)
+    rhs_rvs = [ys[2]]
+    conditional_1 = jvs.condition(rhs_rvs)
+    print(conditional_1.covariance())
 
-    jvs2 = JointVariables([xs[0], xs[1]], A, C)
-    rhs_rvs2 = [xs[0]]
-    conditional_2 = jvs2.condition(rhs_rvs2)
-    print(conditional_2.covariance())
+    # p(x2|x1, y2)
+    jvs = JointVariables([xs[1], ys[2], xs[2]], A, C)
+    rhs_rvs = [ys[2], xs[1]]
+    conditional_1 = jvs.condition(rhs_rvs)
+    print(conditional_1.covariance())
 
+    # p(x2|x1, y0, y1, y2)
+    jvs = JointVariables([xs[1], ys[0], ys[1], ys[2], xs[2]], A, C)
+    rhs_rvs = [ys[0], ys[1], ys[2], xs[1]]
+    conditional_1 = jvs.condition(rhs_rvs)
+    print(conditional_1.covariance())
+
+    # p(x2|y1, y2)
+    jvs = JointVariables([ys[1], ys[2], xs[2]], A, C)
+    rhs_rvs = [ys[1], ys[2]]
+    conditional_1 = jvs.condition(rhs_rvs)
+    print(conditional_1.covariance())
+
+    # p(x2|y0, y2)
+    jvs = JointVariables([ys[0], ys[2], xs[2]], A, C)
+    rhs_rvs = [ys[0], ys[2]]
+    conditional_1 = jvs.condition(rhs_rvs)
+    print(conditional_1.covariance())
+
+    # p(x2|y0, y1, y2)
+    jvs = JointVariables([ys[0], ys[1], ys[2], xs[2]], A, C)
+    rhs_rvs = [ys[0], ys[1], ys[2]]
+    conditional_1 = jvs.condition(rhs_rvs)
+    print(conditional_1.covariance())
+
+    # p(x1|y0, y1, y2)
+    jvs = JointVariables([ys[0], ys[1], ys[2], xs[1]], A, C)
+    rhs_rvs = [ys[0], ys[1], ys[2]]
+    conditional_1 = jvs.condition(rhs_rvs)
+    print(conditional_1.covariance())
+
+    # p(x0|y0, y1, y2)
+    jvs = JointVariables([ys[0], ys[1], ys[2], xs[0]], A, C)
+    rhs_rvs = [ys[0], ys[1], ys[2]]
+    conditional_1 = jvs.condition(rhs_rvs)
+    print(conditional_1.covariance())
 
 if __name__ == "__main__":
     test_graphical_model()

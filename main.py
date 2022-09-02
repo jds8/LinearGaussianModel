@@ -1943,22 +1943,18 @@ def plot_ess_from_dir_partial_data(directory, data_type, initial_idx=0):
     data = None
     for j, fil in enumerate(os.listdir(os.fsencode(directory))):
         filename = os.fsdecode(fil)
-        if filename.endswith('ESS.csv'):
+        if 'ess' in filename.lower() and filename.endswith('.csv'):
             data_with_columns = load_ess_data(directory+filename, data_type)
             data_label = data_with_columns.data_label
-            plot_ess_data(data_with_columns, i=j+1+initial_idx)
             ess_type = data_with_columns.data_type
-            if data is None:
-                data = data_with_columns.data
-            else:
-                data = torch.cat([data, data_with_columns.data], dim=1)
-    quantiles = torch.tensor([0.05, 0.5, 0.95], dtype=data.dtype)
-    lower_ci, med, upper_ci = torch.quantile(data, quantiles, dim=0)
+            data = data_with_columns.data
+            quantiles = torch.tensor([0.05, 0.5, 0.95], dtype=data.dtype)
+            lower_ci, med, upper_ci = torch.quantile(data, quantiles, dim=0)
 
-    x_vals = torch.arange(initial_idx, initial_idx+med.nelement())
+            x_vals = torch.arange(initial_idx, initial_idx+med.nelement())
 
-    plt.plot(x_vals, med.squeeze(), label=data_label)
-    # plt.fill_between(x_vals, y1=lower_ci, y2=upper_ci, alpha=0.3)
+            plt.plot(x_vals, med.squeeze(), label=data_label)
+            plt.fill_between(x_vals, y1=lower_ci, y2=upper_ci, alpha=0.3)
 
     xlabel = get_full_name_of_ess_type(ess_type)
     ax = plt.gca()
@@ -2585,7 +2581,7 @@ if __name__ == "__main__":
 
     # MODEL = 'agents/'+save_dir+'/{}_{}_linear_gaussian_model_(traj_{}_dim_{})'
     if subroutine != 'train_agent':
-        # run = wandb.init(project='linear_gaussian_model', save_code=True, entity='iai')
+        run = wandb.init(project='linear_gaussian_model', save_code=True, entity='iai')
         os.makedirs(SAVE_DIR, exist_ok=True)
 
     os.makedirs('agents/', exist_ok=True)
@@ -2638,11 +2634,7 @@ if __name__ == "__main__":
     elif subroutine == 'evaluate_until':
         print('executing: {}'.format('evaluate_until'))
         execute_evaluate_agent_until(linear_gaussian_env_type=linear_gaussian_env_type,
-                                     traj_lengths=ess_traj_lengths, dim=dim, loss_type='forward_kl',
-                                     ent_coef=ent_coef, delta=delta, condition_length=condition_length,
-                                     use_mlp_policy=use_mlp_policy)
-        execute_evaluate_agent_until(linear_gaussian_env_type=linear_gaussian_env_type,
-                                     traj_lengths=ess_traj_lengths, dim=dim, loss_type='reverse_kl',
+                                     traj_lengths=ess_traj_lengths, dim=dim, loss_type=loss_type,
                                      ent_coef=ent_coef, delta=delta, condition_length=condition_length,
                                      use_mlp_policy=use_mlp_policy)
     elif subroutine == 'ess_traj':
