@@ -405,7 +405,6 @@ class JointVariables:
         left = [rv for rv in self.rvs if rv not in z_rvs]
         def condition_values(z_values):
             return GaussianDistribution._condition_helper(self.dist.get_dist(), x_inds, z_inds, self.rvs, z_values)
-        # return GaussianDistribution(condition_values(torch.cat([rv.mu for rv in z_rvs], dim=0)), left=left, right=None)
         return GaussianDistribution(TorchDistributionInfo(condition_values), left=left, right=left)
 
 
