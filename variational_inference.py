@@ -90,7 +90,6 @@ def rollout_policy(policy, ys):
         xs.append(prev_xt)
         scores.append(score)
         dd = policy.get_distribution(obs).distribution.distribution
-        import pdb; pdb.set_trace()
     return xs, scores
 
 
@@ -151,7 +150,7 @@ class VariationalLGM:
                     f"Loss: {loss.item():.4f}"
                 )
         try:
-            self.save_model()
+            self.save_models()
         except:
             pass
 
@@ -269,9 +268,9 @@ if __name__ == "__main__":
     vlgm.infer()
     # vlgm.load_models()
 
-    policy = vlgm.extract_policy()
-    ys, xs = generate_trajectory(args.traj_length, A=args.A, Q=args.Q, C=args.C, R=args.R, mu_0=args.mu_0, Q_0=args.Q_0)[0:2]
-    obs = torch.cat([torch.zeros(args.dim), ys])
-    policy.get_distribution(obs)
+    # policy = vlgm.extract_policy()
+    # ys, xs = generate_trajectory(args.traj_length, A=args.A, Q=args.Q, C=args.C, R=args.R, mu_0=args.mu_0, Q_0=args.Q_0)[0:2]
+    # obs = torch.cat([torch.zeros(args.dim), ys])
+    # policy.get_distribution(obs)
 
-    rollout_policy(policy, ys)
+    # rollout_policy(policy, ys)
