@@ -9,7 +9,7 @@ import numpy as np
 import torch
 import torch.distributions as dist
 import torch.nn as nn
-from stable_baselines3 import PPO
+from stable_baselines3 import PPO, SAC
 from stable_baselines3.common.callbacks import BaseCallback
 from copy import deepcopy
 from generative_model import y_dist, sample_y, generate_trajectory, \
@@ -37,12 +37,14 @@ from data_loader import load_ess_data
 from plot import plot_ess_data, plot_state_occupancy, plot_3d_state_occupancy
 from linear_policy import LinearActorCriticPolicy
 from rl_models import load_rl_model
+from variational_inference import VariationalLGM
 
 # model name
 # MODEL = 'trial_linear_gaussian_model_(traj_{}_dim_{})'
 # MODEL = 'linear_gaussian_model_(traj_{}_dim_{})'
 MODEL = '/opt/agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{})'
 MODEL_W_CONDITION = '/opt/agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{}_condition_length_{}_use_mlp_policy_{})'
+MODEL_W_CONDITION_AND_RL_TYPE = '/opt/agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{}_condition_length_{}_use_mlp_policy_{}_rl_type_{})'
 # MODEL = 'from_borg/rl_agents/linear_gaussian_model_(traj_{}_dim_{})'
 # MODEL = 'new_linear_gaussian_model_(traj_{}_dim_{})'
 
@@ -59,6 +61,7 @@ FILTERING_POSTERIOR_CONDITIONAL_DISTRIBUTION = 'filtering_posterior_conditional'
 POSTERIOR_DISTRIBUTION = 'posterior'
 PRIOR_DISTRIBUTION = 'prior'
 RL_DISTRIBUTION = 'RL'
+VI_DISTRIBUTION = 'variational_inference'
 
 ENTROPY_LOSS = 'entropy'
 FORWARD_KL = 'forward_kl'
@@ -257,11 +260,13 @@ def create_distribution_alignment_of_state_0_png(policy, condition_length, dim, 
                     pd.mean.detach().item(), (pd.scale.detach()**2).item(), 'rl policy',
                     save_dir, filename)
 
-def get_model_name(traj_length, dim, ent_coef, loss_type, condition_length, use_mlp_policy=False):
+def get_model_name(traj_length, dim, ent_coef, loss_type, condition_length, use_mlp_policy=False, rl_type='PPO'):
     if condition_length == 1:
         return MODEL.format(ent_coef, loss_type, traj_length, dim)+'.zip'
-    else:
+    elif rl_type == 'PPO':
         return MODEL_W_CONDITION.format(ent_coef, loss_type, traj_length, dim, condition_length, use_mlp_policy)+'.zip'
+    else:
+        return MODEL_W_CONDITION_AND_RL_TYPE.format(ent_coef, loss_type, traj_length, dim, condition_length, use_mlp_policy, rl_type)+'.zip'
 
 def model_without_directory(model):
     return Path(model).parts[-1]
@@ -272,7 +277,8 @@ def get_loss_type(model_name):
 
 def train(traj_length, env, dim, condition_length, ent_coef=1.0,
           loss_type='forward_kl', learning_rate=3e-4, clip_range=0.2,
-          continue_training=False, ignore_reward=False, use_mlp_policy=False):
+          continue_training=False, ignore_reward=False, use_mlp_policy=False,
+          rl_type='PPO'):
     params = {}
     run = wandb.init(project='linear_gaussian_model training', save_code=True, config=params, entity='iai')
 
@@ -288,7 +294,8 @@ def train(traj_length, env, dim, condition_length, ent_coef=1.0,
     model_name = get_model_name(traj_length=traj_length, dim=dim,
                                 ent_coef=ent_coef, loss_type=loss_type,
                                 condition_length=condition_length,
-                                use_mlp_policy=use_mlp_policy)
+                                use_mlp_policy=use_mlp_policy,
+                                rl_type=rl_type)
 
     print('training agent: {}'.format(model_name))
 
@@ -296,14 +303,20 @@ def train(traj_length, env, dim, condition_length, ent_coef=1.0,
         model, _ = load_rl_model(model_name=model_name, device='cpu', env=env)
     elif use_mlp_policy:
         arch = [1024 for _ in range(3)]
-        model = PPO('MlpPolicy', env, ent_coef=ent_coef, device='cpu',
-                    policy_kwargs=dict(net_arch=[dict(pi=arch, vf=arch)]),
-                    verbose=1, loss_type=loss_type, prior=prior, ignore_reward=ignore_reward,
-                    learning_rate=learning_rate, clip_range=clip_range)
+        if rl_type == PPO:
+            model = rl_type('MlpPolicy', env, ent_coef=ent_coef, device='cpu',
+                            policy_kwargs=dict(net_arch=[dict(pi=arch, vf=arch)]),
+                            verbose=1, loss_type=loss_type, prior=prior, ignore_reward=ignore_reward,
+                            learning_rate=learning_rate, clip_range=clip_range)
+        else:
+            model = rl_type('MlpPolicy', env, device='cpu',
+                            policy_kwargs=dict(net_arch=dict(pi=arch, qf=arch)),
+                            verbose=1, learning_rate=learning_rate)
+
     else:
-        model = PPO(LinearActorCriticPolicy, env, ent_coef=ent_coef, device='cpu',
-                    verbose=1, loss_type=loss_type, prior=prior, ignore_reward=ignore_reward,
-                    learning_rate=learning_rate, clip_range=clip_range)
+        model = rl_type(LinearActorCriticPolicy, env, ent_coef=ent_coef, device='cpu',
+                        verbose=1, loss_type=loss_type, prior=prior, ignore_reward=ignore_reward,
+                        learning_rate=learning_rate, clip_range=clip_range)
 
     # train policy
     model.learn(total_timesteps=RL_TIMESTEPS, callback=CustomCallback(env, model_name, verbose=1))
@@ -1588,7 +1601,8 @@ def verify_filtering_posterior():
 
 def test_train(traj_length, dim, condition_length, ent_coef, loss_type,
                learning_rate, clip_range, linear_gaussian_env_type,
-               continue_training, ignore_reward, use_mlp_policy):
+               continue_training, ignore_reward, use_mlp_policy,
+               rl_type):
     table = create_dimension_table(torch.tensor([dim]), random=False)
     posterior_evidence = compute_evidence(table, traj_length, dim)
 
@@ -1608,16 +1622,18 @@ def test_train(traj_length, dim, condition_length, ent_coef, loss_type,
           ent_coef=ent_coef, loss_type=loss_type,
           learning_rate=learning_rate, clip_range=clip_range,
           continue_training=continue_training,
-          ignore_reward=ignore_reward, use_mlp_policy=use_mlp_policy)
+          ignore_reward=ignore_reward, use_mlp_policy=use_mlp_policy,
+          rl_type=rl_type)
 
-def sample_variance_ratios(traj_length, model_name, condition_length):
+def sample_variance_ratios(traj_length, model_name, condition_length, policy=None):
     """
     This function generates NUM_SAMPLES trajectories of length traj_length
     and computes the ratios of the filtering posterior variance to that of the rl agent.
     """
 
-    # load rl policy
-    _, policy = load_rl_model(model_name=model_name, device='cpu')  # assume dimensionality equals 1 so the variance is just a scalar
+    if policy is None:
+        # load rl policy
+        _, policy = load_rl_model(model_name=model_name, device='cpu')  # assume dimensionality equals 1 so the variance is just a scalar
 
     # set up to create filtering posterior
     dim = 1  # assume dimension is 1 so that variances are scalars
@@ -1637,12 +1653,17 @@ def sample_variance_ratios(traj_length, model_name, condition_length):
     mean_diffs = []
     variance_ratios = []
 
+    if condition_length == traj_length:
+        m = 0
+    else:
+        m = condition_length-1
+
     for k in range(NUM_SAMPLES):
         # generate a set of ys using the true model parameters
         traj_ys, traj_xs = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0:2]
         # create filtering distribution given the ys
         _tds = compute_conditional_filtering_posteriors(table=table, num_obs=traj_length, dim=dim, ys=traj_ys)
-        tds = _tds[0:traj_length-condition_length+1]
+        tds = _tds[0:traj_length-m]
 
         # get first filtering distribution p(x0 | y0:yT)
         td = tds[0].condition(y_values=traj_ys)
@@ -2572,6 +2593,64 @@ def find_num_samples_for_traj_lengths(traj_lengths, dim, condition_length):
     wandb.save('{}/NumSamples(condition_length={}).pdf'.format(TODAY, condition_length))
     plt.close()
 
+def vi_variance_ratio(args, policy):
+    forward_means, forward_vrs = sample_variance_ratios(traj_length=args.traj_length, model_name='',
+                                                        condition_length=args.traj_length, policy=policy)
+    means = [forward_means]
+    vrs = [forward_vrs]
+    quantiles = torch.tensor([0.05, 0.5, 0.95])
+    labels = [VI_DISTRIBUTION]
+    plot_mean_diffs(means=means, quantiles=quantiles, traj_length=args.traj_length,
+                    ent_coef=args.ent_coef, loss_type=args.loss_type, labels=labels)
+    plt.figure()
+    plot_variance_ratios(vrs=vrs, quantiles=quantiles, traj_length=args.traj_length,
+                         ent_coef=args.ent_coef, loss_type=args.loss_type, labels=labels)
+
+def evaluate_vi_policy(policy, args, model_name):
+    posterior_evidence = compute_evidence(table=args.table, traj_length=args.traj_length, dim=args.dim)
+    ys = posterior_evidence.ys
+
+    traj_length = len(ys)
+
+    rl_output = ImportanceOutput(traj_length=traj_length, ys=ys, dim=dim)
+
+    env = ConditionalObservationsLinearGaussianEnv(A=args.A, Q=args.Q, C=args.C, R=args.R,
+                                                   mu_0=args.mu_0, Q_0=args.Q, using_entropy_loss=False,
+                                                   ys=ys, traj_length=args.traj_length, sample=False)
+
+    for _ in range(args.num_repeats):
+        eval_obj = evaluate(d=policy, N=args.num_samples, env=env)
+
+        # add rl confidence interval
+        rl_estimator = rl_output.add_rl_estimator(running_log_estimates=eval_obj.running_log_estimates,
+                                                  ci=eval_obj.ci, weight_mean=eval_obj.log_weight_mean.exp(),
+                                                  max_weight_prop=eval_obj.log_max_weight_prop.exp(),
+                                                  ess=eval_obj.log_effective_sample_size.exp(),
+                                                  ess_ci=eval_obj.ess_ci, idstr=model_name)
+    rl_estimator.save_data()
+    return posterior_evidence, OutputWithName(rl_output, model_name)
+
+def vi_ess_traj(policy, args):
+    distribution_type = VI_INFERENCE
+    os.makedirs(''.format(TODAY, distribution_type), exist_ok=True)
+    outputs = []
+    for traj_length in args.traj_lengths:
+        model_name = 'VariationalInference'
+        outputs += [evaluate_vi_policy(policy, args, model_name)]
+    save_outputs_with_names_traj(outputs, distribution_type,
+                                 '{}_{}(traj_lengths_{}_dim_{})'.format(distribution_type, loss_type, traj_lengths, dim))
+    make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=dim,
+                       num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, traj_lengths=traj_lengths,
+                       xlabel='Trajectory Length', distribution_type=distribution_type, name='{}_RL'.format(loss_type))
+
+def get_rl_type_from_str(rl_type):
+    if rl_type == 'PPO':
+        return PPO
+    elif rl_type == 'SAC':
+        return SAC
+    else:
+        raise NotImplementedError
+
 
 if __name__ == "__main__":
     args, _ = get_args()
@@ -2602,10 +2681,12 @@ if __name__ == "__main__":
     linear_gaussian_env_type = get_env_type_from_arg(args.env_type, condition_length=condition_length)
 
     use_mlp_policy = args.use_mlp_policy
+    rl_type = get_rl_type_from_str(args.rl_type)
     model_name = get_model_name(traj_length=traj_length, dim=dim,
                                 ent_coef=ent_coef, loss_type=loss_type,
                                 condition_length=condition_length, 
-                                use_mlp_policy=use_mlp_policy)
+                                use_mlp_policy=use_mlp_policy,
+                                rl_type=rl_type)
 
     learning_rate = args.learning_rate
     clip_range = args.clip_range
@@ -2620,7 +2701,8 @@ if __name__ == "__main__":
         test_train(traj_length=traj_length, dim=dim, condition_length=condition_length,
                    ent_coef=ent_coef, loss_type=loss_type, learning_rate=learning_rate,
                    clip_range=clip_range, linear_gaussian_env_type=linear_gaussian_env_type,
-                   continue_training=continue_training, ignore_reward=ignore_reward, use_mlp_policy=use_mlp_policy)
+                   continue_training=continue_training, ignore_reward=ignore_reward, use_mlp_policy=use_mlp_policy,
+                   rl_type=rl_type)
     elif subroutine == 'evaluate_agent':
         print('executing: {}'.format('evaluate_agent'))
         evaluate_agent(linear_gaussian_env_type, traj_length, dim, model_name, condition_length=condition_length)
@@ -2629,7 +2711,8 @@ if __name__ == "__main__":
         test_train(traj_length=traj_length, dim=dim, condition_length=condition_length,
                    ent_coef=ent_coef, loss_type=loss_type, learning_rate=learning_rate,
                    clip_range=clip_range, linear_gaussian_env_type=linear_gaussian_env_type,
-                   continue_training=continue_training, ignore_reward=ignore_reward, use_mlp_policy=use_mlp_policy)
+                   continue_training=continue_training, ignore_reward=ignore_reward, use_mlp_policy=use_mlp_policy,
+                   rl_type=rl_type)
         evaluate_agent(linear_gaussian_env_type, traj_length, dim, model_name, condition_length=condition_length)
     elif subroutine == 'evaluate_until':
         print('executing: {}'.format('evaluate_until'))
@@ -2756,6 +2839,12 @@ if __name__ == "__main__":
     elif subroutine == 'find_num_samples_for_traj_lengths':
         print('executing: {}'.format('find_num_samples_for_traj_lengths'))
         find_num_samples_for_traj_lengths(ess_traj_lengths, dim, condition_length)
+    elif subroutine == 'vi_variance_ratio':
+        print('executing: {}'.format('vi_variance_ratio'))
+        vlgm = VariationalLGM(args)
+        vlgm.load_models()
+        policy = vlgm.extract_policy()
+        vi_variance_ratio(args, policy)
     else:
         print('executing: {}'.format('custom'))
         table = create_dimension_table(torch.tensor([dim]), random=False)

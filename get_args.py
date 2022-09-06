@@ -24,11 +24,11 @@ def get_args():
     parser.add_argument('--delta', type=float, default=0.03, help='the largest deviation between the evidence estimate ratio and 1')
     parser.add_argument('--condition_length', type=int, default=0, help='the number of observations on which to condition')
     parser.add_argument('--continue_training', type=bool, default=False, help='whether to continue training the rl model')
-    parser.add_argument('--use_mlp_policy', type=bool, default=False, help='whether to use an MLP policy')
+    parser.add_argument('--use_mlp_policy', type=bool, default=True, help='whether to use an MLP policy')
+    parser.add_argument('--rl_type', type=str, default='PPO', help='which RL algorithm to use')
 
     # hyperparameters
-    parser.add_argument('--learning_rate', type=float, default=1e-4, help='what file to load')
-    parser.add_argument('--clip_range', type=float, default=0.1, help='what file to load')
+    parser.add_argument('--clip_range', type=float, default=0.1, help='clip range')
 
     # save directory
     parser.add_argument('--save_dir', type=str, default='linear_gaussian_data/', help='top level directory in which to save files')
@@ -38,10 +38,20 @@ def get_args():
 
     # Number of samples to take
     parser.add_argument('--num_samples', type=int, default=100, help='the number of samples to take for ESS, state occupancy, etc.')
+    parser.add_argument('--num_repeats', type=int, default=20, help='the number of repeats for conf. int.')
     parser.add_argument('--rl_timesteps', type=int, default=500000, help='the number of RL interactions with the environment')
 
     # Args that you should only use for validation
     parser.add_argument('--ignore_reward', type=bool, default=False, help='whether or not to ignore the reward in the loss')
+
+    # variational inference args
+    parser.add_argument('--input_size', type=int, default=1, help='input dim to RNN')
+    parser.add_argument('--hidden_size', type=int, default=4, help='hidden dim to RNN')
+    parser.add_argument('--output_size', type=int, default=2, help='output dim to RNN')
+    parser.add_argument('--num_rnn_layers', type=int, default=1, help='number of rnn layers')
+    parser.add_argument('--learning_rate', type=float, default=0.001, help='learning rate for Adam optimizer')
+    parser.add_argument('--num_epochs', type=int, default=1000, help='number optimizer steps')
+    parser.add_argument('--lgm_type', type=str, default='linear', help='what type of model to use')
 
     # parse
     args, _ = parser.parse_known_args()
