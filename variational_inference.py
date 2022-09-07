@@ -54,18 +54,12 @@ class Distribution:
 
 
 class Policy:
-    def __init__(self, get_obs_output, model, x_dim):
-        self.get_obs_output = get_obs_output
+    def __init__(self, model, x_dim):
         self.model = model
         self.x_dim = x_dim
 
     def get_distribution(self, obs):
-        obs = obs.squeeze()
-        prev_xt = obs[:self.x_dim]
-        future_ys = obs[self.x_dim:]
-        obs_output = self.get_obs_output(future_ys)
-        inpt = torch.cat([prev_xt.reshape(1, -1), obs_output.reshape(1, -1)], dim=1)
-        mean_output, log_std_output = self.model(inpt).squeeze()
+        mean_output, log_std_output = self.model(obs).squeeze()
         std_output = log_std_output.exp().reshape(1, 1).clamp(min=1e-10, max=1e10)
         return Distribution(Distribution(dist.Normal(mean_output, std_output)))
 
@@ -95,21 +89,23 @@ def rollout_policy(policy, ys):
 
 class VariationalLGM:
     def __init__(self, args):
+        torch.autograd.set_detect_anomaly(True)
         self.args = args
+        self.name = type(self).__name__
 
         # takes each observation as input
-        self.model = nn.Linear(args.dim + args.obs_size, 2)
-
-        self.var_dir = 'variational_inference'
-        self.model_state_dict_path = '{}/{}/model_state_dict_traj_length_{}'.format(self.var_dir, type(self).__name__, self.args.traj_length)
-        os.makedirs(self.var_dir, exist_ok=True)
-
+        self.model = nn.Linear(args.model_dim, 2)
         self.params = list(self.model.parameters())
+
+        var_dir = 'variational_inference'
+        self.run_dir = '{}/{}/m={}'.format(var_dir, self.name, self.args.condition_length)
+        self.model_state_dict_path = '{}/model_state_dict_traj_length_{}'.format(self.run_dir, self.args.traj_length)
+        os.makedirs(self.run_dir, exist_ok=True)
 
     def initialize_optimizer(self):
         self.optimizer = torch.optim.Adam(self.params, lr=args.learning_rate)
 
-    def get_obs_output(self, ys, state_idx):
+    def get_model_input(self, prev_xt, obs_output, state_idx):
         raise NotImplementedError
 
     def infer(self):
@@ -120,26 +116,35 @@ class VariationalLGM:
         for epoch in range(num_epochs):
             loss = torch.tensor([0.])
             for _ in range(self.args.num_samples):
+                # sample new set of observations
                 ys, _, _, _ = generate_trajectory(traj_length, A=self.args.A, Q=self.args.Q, C=self.args.C,
                                                   R=self.args.R, mu_0=self.args.mu_0, Q_0=self.args.Q_0)
                 prev_xt = torch.zeros(self.args.dim)
+
+                # get current policy
                 policy = self.extract_policy()
+
                 for state_idx in range(traj_length):
-                    obs_output = self.get_obs_output(ys, state_idx)
-                    inpt = torch.cat([prev_xt.reshape(1, -1), obs_output.reshape(1, -1)], dim=1)
+                    inpt = self.get_model_input(prev_xt, ys, state_idx)
+
+                    # compute kl divergence with prior
                     q_dist = policy.get_distribution(inpt).distribution.distribution
-                    mean_output, log_std_output = self.model(inpt).squeeze()
-                    # std_output = self.std_model(torch.tensor([[state_idx/traj_length]], dtype=torch.float))
-                    # hidden_state = model.init_hidden()
-                    # for y in future_ys:
-                    #     output, hidden_state = model(y, hidden_state)
                     mvn_p_dist = get_state_transition_dist(prev_xt, A, Q)
                     p_dist = dist.Normal(mvn_p_dist.mean.squeeze(), torch.sqrt(mvn_p_dist.covariance_matrix).squeeze())
                     loss += dist.kl_divergence(q_dist, p_dist).squeeze()
-                    state_loss, prev_xt = self.compute_elbo(mean_output, log_std_output, prev_xt, ys[state_idx])
+
+                    # get model output
+                    mean_output, log_std_output = self.model(inpt).squeeze()
+
+                    # score likelihood
+                    state_loss, prev_xt = self.score_likelihood(mean_output, log_std_output, prev_xt, ys[state_idx])
+
+                    # compute total loss
                     loss -= state_loss
+
             loss /= self.args.num_samples
             self.optimizer.zero_grad()
+
             loss.backward()
             self.clip_gradients()
             self.optimizer.step()
@@ -154,10 +159,10 @@ class VariationalLGM:
         except:
             pass
 
-    def compute_elbo(self, mean, log_std, prev_xt, y_test):
+    def score_likelihood(self, mean, log_std, prev_xt, y_test):
         mean = mean.reshape(1, 1)
-        std = log_std.exp().reshape(1, 1)
-        xt = dist.Normal(mean, std).rsample().clamp(min=1e-10, max=1e10)
+        std = log_std.exp().reshape(1, 1).clamp(min=1e-8, max=1e8)
+        xt = dist.Normal(mean, std).rsample()
         lik = score_y(y_test, xt, self.args.C, self.args.R)
         return lik, xt
 
@@ -171,22 +176,29 @@ class VariationalLGM:
         self.model.load_state_dict(torch.load(self.model_state_dict_path))
 
     def extract_policy(self):
-        return Policy(lambda output: self.get_obs_output(output, 0), self.model, self.args.dim)
+        return Policy(self.model, self.args.dim)
 
 
 class RecurrentVariationalLGM(VariationalLGM):
     def __init__(self, args):
+        args.model_dim = args.dim + args.obs_size
+
         super().__init__(args)
 
         self.rnn = nn.RNN(1, args.obs_size, args.num_rnn_layers)
         self.params += list(self.rnn.parameters())
         self.initialize_optimizer()
-        self.rnn_state_dict_path = '{}/{}/rnn_state_dict_traj_length_{}'.format(self.var_dir, type(self).__name__, self.args.traj_length)
+        self.rnn_state_dict_path = '{}/rnn_state_dict_traj_length_{}'.format(self.run_dir, self.args.traj_length)
+        os.makedirs(self.run_dir, exist_ok=True)
 
     def get_obs_output(self, ys, state_idx):
-        future_ys = ys[state_idx:].reshape(-1, 1, 1)
+        future_ys = ys[state_idx:state_idx+self.args.condition_length].reshape(-1, 1, 1)
         obs_output, _ = self.rnn(future_ys)
         return obs_output[-1, :, :]
+
+    def get_model_input(self, prev_xt, ys, state_idx):
+        obs_output = self.get_obs_output(ys, state_idx)
+        return torch.cat([prev_xt.reshape(1, -1), obs_output.reshape(1, -1)], dim=1)
 
     def clip_gradients(self):
         super().clip_gradients()
@@ -204,8 +216,10 @@ class RecurrentVariationalLGM(VariationalLGM):
 class LinearVariationalLGM(VariationalLGM):
     """ Passes the observations directly to the model without encoding """
     def __init__(self, args):
-        args.obs_size = args.traj_length
+        args.model_dim = args.traj_length * (args.dim + 1)
+
         super().__init__(args)
+
         self.initialize_optimizer()
 
         # self.softplus = nn.Softplus()
@@ -213,10 +227,19 @@ class LinearVariationalLGM(VariationalLGM):
         # self.softplus_state_dict_path = '{}/{}/soft_plus_state_dict_traj_length_{}'.format(self.var_dir, type(self).__name__, self.args.traj_length)
 
     def get_obs_output(self, ys, state_idx):
-        mask = torch.ones_like(ys)
+        mask = torch.zeros(self.args.traj_length)
         mask[:state_idx] = 0.
         future_ys = mask.mul(ys)
         return future_ys.reshape(-1, 1, 1)
+
+    def get_model_input(self, prev_xt, obs_output, state_idx):
+        latents = torch.zeros(self.args.traj_length * self.args.dim)
+
+        if state_idx > 0:
+            prev_state_idx = state_idx-1
+            latents[prev_state_idx:prev_state_idx + self.args.dim] = prev_xt
+
+        return torch.cat([latents.reshape(1, -1), obs_output.reshape(1, -1)], dim=1)
 
     # def clip_gradients(self):
     #     super().clip_gradients()
@@ -260,6 +283,8 @@ if __name__ == "__main__":
     args.R = R
     args.mu_0 = mu_0
     args.Q_0 = Q_0
+
+    args.condition_length = args.condition_length if args.condition_length > 0 else args.traj_length
 
     lgm_class = get_lgm_class_type(args.lgm_type)
 
