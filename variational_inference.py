@@ -60,7 +60,7 @@ class Policy:
 
     def get_distribution(self, obs):
         mean_output, log_std_output = self.model(obs).squeeze()
-        std_output = log_std_output.exp().reshape(1, 1).clamp(min=1e-10, max=1e10)
+        std_output = log_std_output.exp().reshape(1, 1).clamp(min=1e-8, max=1e8)
         return Distribution(Distribution(dist.Normal(mean_output, std_output)))
 
     def predict(self, obs, deterministic=False):
