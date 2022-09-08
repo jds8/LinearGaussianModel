@@ -18,7 +18,7 @@ from all_obs_linear_gaussian_env import AllObservationsAbstractLinearGaussianEnv
 from math_utils import logvarexp, importance_sampled_confidence_interval, log_effective_sample_size, log_max_weight_proportion, log_mean
 from plot_utils import legend_without_duplicate_labels
 from linear_gaussian_prob_prog import MultiGaussianRandomVariable, GaussianRandomVariable, MultiLinearGaussian, LinearGaussian, VecLinearGaussian
-from rl_models import load_rl_model
+from rl_models import load_rl_model, evaluate_actions
 from dimension_table import create_dimension_table
 
 
@@ -110,7 +110,7 @@ def evaluate(d, N, env, deterministic=False):
         for j in range(len(env.states)):
             state = env.states[j]
             action = actions[j]
-            log_qrobs[j] = d.evaluate_actions(obs=state.t(), actions=action)[1].sum().item()
+            log_qrobs[j] = evaluate_actions(policy=d, obs=state.t(), actions=action).item()
 
         log_q = torch.sum(log_qrobs)
         log_p_y_over_qs[i] = (log_p_y_x - log_q).item()
@@ -161,13 +161,11 @@ def evaluate_rl_posterior_ensemble(rl_d, tds, N, env, condition_length, determin
         while not done:
             if env.states_left() >= condition_length:
                 xt = torch.tensor(rl_d.predict(obs, deterministic=deterministic)[0])
-                log_qrobs.append(rl_d.evaluate_actions(obs=obs.t(), actions=xt)[1].sum().item())
             else:
                 td = tds[filtering_idx]
                 filtering_idx += 1
                 dst = td.condition(y_values=env.get_condition_ys(), x_value=xt)
                 xt = dst.sample()
-                log_qrobs.append(dst.log_prob(xt))
             xts.append(env.prev_xt)
             obs, reward, done, info = env.step(xt)
             total_reward += reward
@@ -177,6 +175,10 @@ def evaluate_rl_posterior_ensemble(rl_d, tds, N, env, condition_length, determin
             log_p_x += info['prior_reward']
             log_p_y_given_x += info['lik_reward']
             actions.append(info['action'])
+            if env.states_left() >= condition_length:
+                log_qrobs.append(evaluate_actions(policy=rl_d, obs=obs.t(), action=xt).item())
+            else:
+                log_qrobs.append(dst.log_prob(xt))
             xs.append(xt)
         try:
             if isinstance(xs[0], torch.Tensor):
@@ -240,7 +242,6 @@ def evaluate_pure_rl_ensemble(rl_ds, N, env, condition_length, deterministic=Fal
                 rl_idx += 1
             rl_d = rl_ds[rl_idx]
             xt = torch.tensor(rl_d.predict(obs, deterministic=deterministic)[0])
-            log_qrobs.append(rl_d.evaluate_actions(obs=obs.t(), actions=xt)[1].sum().item())
             xts.append(env.prev_xt)
             obs, reward, done, info = env.step(xt)
             total_reward += reward
@@ -250,6 +251,7 @@ def evaluate_pure_rl_ensemble(rl_ds, N, env, condition_length, deterministic=Fal
             log_p_x += info['prior_reward']
             log_p_y_given_x += info['lik_reward']
             actions.append(info['action'])
+            log_qrobs.append(evaluate_actions(policy=rl_d, obs=obs.t(), action=info['action']).item())
             xs.append(xt)
         try:
             if isinstance(xs[0], torch.Tensor):
@@ -407,7 +409,7 @@ def evaluate_until(d, truth, env, delta, max_samples=10000):
         for j in range(len(env.states)):
             state = env.states[j]
             action = actions[j]
-            log_qrobs[j] = d.evaluate_actions(obs=state.t(), actions=action)[1].sum().item()
+            log_qrobs[j] = evaluate_actions(policy=d, obs=state.t(), actions=action).item()
 
         log_q = torch.sum(log_qrobs)
         log_p_y_over_qs = torch.cat([log_p_y_over_qs, (log_p_y_x - log_q).reshape(1)])

@@ -36,7 +36,7 @@ from pathlib import Path
 from data_loader import load_ess_data
 from plot import plot_ess_data, plot_state_occupancy, plot_3d_state_occupancy
 from linear_policy import LinearActorCriticPolicy
-from rl_models import load_rl_model
+from rl_models import load_rl_model, get_rl_type_from_str, evaluate_actions
 from variational_inference import VariationalLGM, get_vlgm
 
 # model name
@@ -225,7 +225,8 @@ class CustomCallback(BaseCallback):
         """
 
         if self.env.states:
-            q_log_prob = self.model.policy.to(self.env.states[-1].device).evaluate_actions(obs=self.env.states[-1].t(), actions=self.env.actions[-1])[1]
+            policy = self.model.policy.to(self.env.states[-1].device)
+            q_log_prob = evaluate_actions(policy=policy, obs=self.env.states[-1].t(), action=self.env.actions[-1].reshape(-1, 1))
             # note that in this case the weights are log[ p(y|x)p(x)/q(x|y) ]
             wandb.log({'log weights': self.env.liks[-1] + self.env.p_log_probs[-1] - q_log_prob})
             wandb.log({'likelihood reward': self.env.liks[-1]})
@@ -234,10 +235,10 @@ class CustomCallback(BaseCallback):
 
             # compute KL between filtering posterior and policy at the last state (env.index - 1)
             td = self.env.tds[self.env.index-1]
-            kl = compute_conditional_kl(td_fps=td, policy=self.model.policy,
-                                        prev_xt=self.env.prev_xts[-2], ys=self.env.previous_condition_ys,
-                                        condition_length=self.env.condition_length)
-            wandb.log({'kl divergence with smoothing posterior at state {}'.format(self.env.index-1): kl})
+            # kl = compute_conditional_kl(td_fps=td, policy=self.model.policy,
+            #                             prev_xt=self.env.prev_xts[-2], ys=self.env.previous_condition_ys,
+            #                             condition_length=self.env.condition_length)
+            # wandb.log({'kl divergence with smoothing posterior at state {}'.format(self.env.index-1): kl})
             wandb.log({'reward at state {}'.format(self.env.index-1): self.env.rewards[-1]})
 
         return True
@@ -2650,14 +2651,6 @@ def vi_ess_traj(args):
     make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=args.dim,
                        num_samples=args.num_samples, num_repeats=args.num_repeats, traj_lengths=args.ess_traj_lengths,
                        xlabel='Trajectory Length', distribution_type=distribution_type, name='VariationalInference')
-
-def get_rl_type_from_str(rl_type):
-    if rl_type == 'PPO':
-        return PPO
-    elif rl_type == 'SAC':
-        return SAC
-    else:
-        raise NotImplementedError
 
 
 if __name__ == "__main__":
