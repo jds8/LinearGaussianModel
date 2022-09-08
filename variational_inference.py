@@ -54,12 +54,14 @@ class Distribution:
 
 
 class Policy:
-    def __init__(self, model, x_dim):
+    def __init__(self, get_model_input_from_obs, model, x_dim):
+        self.get_model_input_from_obs = get_model_input_from_obs
         self.model = model
         self.x_dim = x_dim
 
     def get_distribution(self, obs):
-        mean_output, log_std_output = self.model(obs).squeeze()
+        inpt = self.get_model_input_from_obs(obs)
+        mean_output, log_std_output = self.model(inpt).squeeze()
         std_output = log_std_output.exp().reshape(1, 1).clamp(min=1e-8, max=1e8)
         return Distribution(Distribution(dist.Normal(mean_output, std_output)))
 
@@ -98,14 +100,18 @@ class VariationalLGM:
         self.params = list(self.model.parameters())
 
         var_dir = 'variational_inference'
-        self.run_dir = '{}/{}/m={}'.format(var_dir, self.name, self.args.condition_length)
+        # self.run_dir = '{}/{}/m={}'.format(var_dir, self.name, self.args.m)
+        self.run_dir = '{}/m=0'.format(var_dir)
         self.model_state_dict_path = '{}/model_state_dict_traj_length_{}'.format(self.run_dir, self.args.traj_length)
         os.makedirs(self.run_dir, exist_ok=True)
 
     def initialize_optimizer(self):
-        self.optimizer = torch.optim.Adam(self.params, lr=args.learning_rate)
+        self.optimizer = torch.optim.Adam(self.params, lr=self.args.learning_rate)
 
     def get_model_input(self, prev_xt, obs_output, state_idx):
+        raise NotImplementedError
+
+    def get_model_input_from_obs(self, obs):
         raise NotImplementedError
 
     def infer(self):
@@ -129,7 +135,7 @@ class VariationalLGM:
 
                     # compute kl divergence with prior
                     q_dist = policy.get_distribution(inpt).distribution.distribution
-                    mvn_p_dist = get_state_transition_dist(prev_xt, A, Q)
+                    mvn_p_dist = get_state_transition_dist(prev_xt, self.args.A, self.args.Q)
                     p_dist = dist.Normal(mvn_p_dist.mean.squeeze(), torch.sqrt(mvn_p_dist.covariance_matrix).squeeze())
                     loss += dist.kl_divergence(q_dist, p_dist).squeeze()
 
@@ -176,7 +182,7 @@ class VariationalLGM:
         self.model.load_state_dict(torch.load(self.model_state_dict_path))
 
     def extract_policy(self):
-        return Policy(self.model, self.args.dim)
+        return Policy(lambda obs: self.get_model_input_from_obs(obs), self.model, self.args.dim)
 
 
 class RecurrentVariationalLGM(VariationalLGM):
@@ -200,6 +206,19 @@ class RecurrentVariationalLGM(VariationalLGM):
         obs_output = self.get_obs_output(ys, state_idx)
         return torch.cat([prev_xt.reshape(1, -1), obs_output.reshape(1, -1)], dim=1)
 
+    def get_model_input_from_obs(self, obs):
+        """
+        This assumes that obs contains [prev_xt, future_ys], i.e.
+        that *only* future ys are passed in obs, *not all* obs.
+        This is the case for the EnsembleLinearGaussianEnv
+        """
+        _obs = obs.squeeze()
+        prev_xt = _obs[:self.args.dim]
+        future_ys = _obs[self.args.dim:].reshape(-1, 1, 1)
+        obs_output, _ = self.rnn(future_ys)
+        b = obs_output[-1, :, :]
+        return torch.cat([prev_xt.reshape(1, -1), b.reshape(1, -1)], dim=1)
+
     def clip_gradients(self):
         super().clip_gradients()
         nn.utils.clip_grad_norm_(self.rnn.parameters(), 1)
@@ -216,6 +235,7 @@ class RecurrentVariationalLGM(VariationalLGM):
 class LinearVariationalLGM(VariationalLGM):
     """ Passes the observations directly to the model without encoding """
     def __init__(self, args):
+        assert args.condition_length == args.traj_length
         args.model_dim = args.traj_length * (args.dim + 1)
 
         super().__init__(args)
@@ -232,7 +252,8 @@ class LinearVariationalLGM(VariationalLGM):
         future_ys = mask.mul(ys)
         return future_ys.reshape(-1, 1, 1)
 
-    def get_model_input(self, prev_xt, obs_output, state_idx):
+    def get_model_input(self, prev_xt, ys, state_idx):
+        obs_output = self.get_obs_output(ys, state_idx)
         latents = torch.zeros(self.args.traj_length * self.args.dim)
 
         if state_idx > 0:
@@ -240,6 +261,21 @@ class LinearVariationalLGM(VariationalLGM):
             latents[prev_state_idx:prev_state_idx + self.args.dim] = prev_xt
 
         return torch.cat([latents.reshape(1, -1), obs_output.reshape(1, -1)], dim=1)
+
+    def get_model_input_from_obs(self, obs):
+        """
+        This assumes that obs contains [prev_xt, future_ys], i.e.
+        that *only* future ys are passed in obs, *not all* obs.
+        This is the case for the EnsembleLinearGaussianEnv
+        """
+        _obs = obs.squeeze()
+        prev_xt = _obs[:self.args.dim]
+        future_ys = _obs[self.args.dim:].reshape(-1, 1, 1)
+        state_idx = self.args.traj_length - len(future_ys)
+        # we can ignore the ys before state_idx since they will be zeroed out anyway
+        ys = torch.zeros(self.args.traj_length)
+        ys[state_idx:] = future_ys
+        return self.get_model_input(prev_xt, ys, state_idx)
 
     # def clip_gradients(self):
     #     super().clip_gradients()
@@ -262,10 +298,7 @@ def get_lgm_class_type(type_str):
     else:
         raise NotImplementedError
 
-
-if __name__ == "__main__":
-    args, _ = get_args()
-
+def get_vlgm(args):
     dim = args.dim
 
     table = create_dimension_table([dim], random=False)
@@ -284,11 +317,19 @@ if __name__ == "__main__":
     args.mu_0 = mu_0
     args.Q_0 = Q_0
 
+    args.m = args.condition_length
     args.condition_length = args.condition_length if args.condition_length > 0 else args.traj_length
 
     lgm_class = get_lgm_class_type(args.lgm_type)
 
-    vlgm = lgm_class(args)
+    return lgm_class(args)
+
+
+if __name__ == "__main__":
+    args, _ = get_args()
+
+    vlgm = get_vlgm(args)
+
     # vlgm.load_models()
     vlgm.infer()
     # vlgm.load_models()

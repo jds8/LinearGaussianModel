@@ -91,6 +91,10 @@ class AllObservationsAbstractLinearGaussianEnv(gym.Env):
         else:
             xt = torch.tensor(action, dtype=torch.float32)
 
+        # this if-block is for SAC
+        if self.action_space.low[0] == -1. and self.action_space.high[0] == 1.:
+            xt = torch.tan(xt*2/torch.pi)
+
         # get likelihood score
         lik_reward = self.compute_lik_reward(xt)
         self.liks.append(lik_reward)

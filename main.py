@@ -37,7 +37,7 @@ from data_loader import load_ess_data
 from plot import plot_ess_data, plot_state_occupancy, plot_3d_state_occupancy
 from linear_policy import LinearActorCriticPolicy
 from rl_models import load_rl_model
-from variational_inference import VariationalLGM
+from variational_inference import VariationalLGM, get_vlgm
 
 # model name
 # MODEL = 'trial_linear_gaussian_model_(traj_{}_dim_{})'
@@ -120,14 +120,14 @@ class CustomCallback(BaseCallback):
             while not done:
                 obs_env = env.envs[0].env
                 prev_xt = torch.tensor(obs.squeeze()[0:env.action_space.shape[0]]).to(dtype=obs_env.A.dtype)
-                prior_kls.append(compute_kl_w_prior(policy=self.model.policy,
-                                              prev_xt=prev_xt, ys=obs_env.get_condition_ys(),
-                                              condition_length=obs_env.condition_length,
-                                              A=obs_env.A, Q=obs_env.Q))
-                td = obs_env.tds[obs_env.index]
-                posterior_kls.append(compute_conditional_kl(td_fps=td, policy=self.model.policy,
-                                            prev_xt=prev_xt, ys=obs_env.get_condition_ys(),
-                                            condition_length=obs_env.condition_length))
+                # prior_kls.append(compute_kl_w_prior(policy=self.model.policy,
+                #                               prev_xt=prev_xt, ys=obs_env.get_condition_ys(),
+                #                               condition_length=obs_env.condition_length,
+                #                               A=obs_env.A, Q=obs_env.Q))
+                # td = obs_env.tds[obs_env.index]
+                # posterior_kls.append(compute_conditional_kl(td_fps=td, policy=self.model.policy,
+                #                             prev_xt=prev_xt, ys=obs_env.get_condition_ys(),
+                #                             condition_length=obs_env.condition_length))
 
                 action = policy(obs)
                 obs, reward, done, info = env.step(action)
@@ -201,11 +201,11 @@ class CustomCallback(BaseCallback):
                        'updates': self.model._n_updates})
 
         policy_alignment_str = 'PolicyAlignment'
-        create_distribution_alignment_of_state_0_png(policy=self.model.policy, condition_length=self.env.condition_length,
-                                                     dim=self.env.mu_0.nelement(), ys=self.env.ys,
-                                                     save_dir=TODAY, filename=policy_alignment_str+'{}.png'.format(self.eval_incr))
-        create_distribution_alignment_gif(file_regex='{}/{}*.png'.format(TODAY, policy_alignment_str),
-                                          save_dir=TODAY, gif_name=policy_alignment_str)
+        # create_distribution_alignment_of_state_0_png(policy=self.model.policy, condition_length=self.env.condition_length,
+        #                                              dim=self.env.mu_0.nelement(), ys=self.env.ys,
+        #                                              save_dir=TODAY, filename=policy_alignment_str+'{}.png'.format(self.eval_incr))
+        # create_distribution_alignment_gif(file_regex='{}/{}*.png'.format(TODAY, policy_alignment_str),
+        #                                   save_dir=TODAY, gif_name=policy_alignment_str)
 
     def _on_rollout_end(self) -> None:
         """
@@ -308,7 +308,10 @@ def train(traj_length, env, dim, condition_length, ent_coef=1.0,
                             policy_kwargs=dict(net_arch=[dict(pi=arch, vf=arch)]),
                             verbose=1, loss_type=loss_type, prior=prior, ignore_reward=ignore_reward,
                             learning_rate=learning_rate, clip_range=clip_range)
-        else:
+        elif rl_type == SAC:
+            # set the action space to [-1, 1] and rescale later
+            env.action_space.low[0] = -1.
+            env.action_space.high[0] = 1.
             model = rl_type('MlpPolicy', env, device='cpu',
                             policy_kwargs=dict(net_arch=dict(pi=arch, qf=arch)),
                             verbose=1, learning_rate=learning_rate)
@@ -2606,20 +2609,18 @@ def vi_variance_ratio(args, policy):
     plot_variance_ratios(vrs=vrs, quantiles=quantiles, traj_length=args.traj_length,
                          ent_coef=args.ent_coef, loss_type=args.loss_type, labels=labels)
 
-def evaluate_vi_policy(policy, args, model_name):
-    posterior_evidence = compute_evidence(table=args.table, traj_length=args.traj_length, dim=args.dim)
-    ys = posterior_evidence.ys
+def evaluate_vi_policy(vlgm, model_name, traj_length):
+    policy = vlgm.extract_policy()
 
-    traj_length = len(ys)
+    rl_output = ImportanceOutput(traj_length=traj_length, ys=None, dim=dim)
 
-    rl_output = ImportanceOutput(traj_length=traj_length, ys=ys, dim=dim)
+    env = EnsembleLinearGaussianEnv(A=vlgm.args.A, Q=vlgm.args.Q, C=vlgm.args.C, R=vlgm.args.R,
+                                    mu_0=vlgm.args.mu_0, Q_0=vlgm.args.Q, condition_length=vlgm.args.condition_length,
+                                    using_entropy_loss=False,
+                                    ys=None, traj_length=vlgm.args.traj_length, sample=True)
 
-    env = ConditionalObservationsLinearGaussianEnv(A=args.A, Q=args.Q, C=args.C, R=args.R,
-                                                   mu_0=args.mu_0, Q_0=args.Q, using_entropy_loss=False,
-                                                   ys=ys, traj_length=args.traj_length, sample=False)
-
-    for _ in range(args.num_repeats):
-        eval_obj = evaluate(d=policy, N=args.num_samples, env=env)
+    for _ in range(vlgm.args.num_repeats):
+        eval_obj = evaluate(d=policy, N=vlgm.args.num_samples, env=env)
 
         # add rl confidence interval
         rl_estimator = rl_output.add_rl_estimator(running_log_estimates=eval_obj.running_log_estimates,
@@ -2628,20 +2629,27 @@ def evaluate_vi_policy(policy, args, model_name):
                                                   ess=eval_obj.log_effective_sample_size.exp(),
                                                   ess_ci=eval_obj.ess_ci, idstr=model_name)
     rl_estimator.save_data()
-    return posterior_evidence, OutputWithName(rl_output, model_name)
+    return OutputWithName(rl_output, model_name)
 
-def vi_ess_traj(policy, args):
-    distribution_type = VI_INFERENCE
-    os.makedirs(''.format(TODAY, distribution_type), exist_ok=True)
+def vi_ess_traj(args):
+    distribution_type = VI_DISTRIBUTION
+    os.makedirs('{}/{}'.format(TODAY, distribution_type), exist_ok=True)
     outputs = []
-    for traj_length in args.traj_lengths:
+    for traj_length in args.ess_traj_lengths:
+        # create new args object to create a new VLGM
+        new_args = deepcopy(args)
+        new_args.traj_length = traj_length
+
+        # load VLGM for this traj_length
+        vlgm = get_vlgm(new_args)
+        vlgm.load_models()
         model_name = 'VariationalInference'
-        outputs += [evaluate_vi_policy(policy, args, model_name)]
+        outputs += [evaluate_vi_policy(vlgm, model_name, traj_length)]
     save_outputs_with_names_traj(outputs, distribution_type,
-                                 '{}_{}(traj_lengths_{}_dim_{})'.format(distribution_type, loss_type, traj_lengths, dim))
-    make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=dim,
-                       num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, traj_lengths=traj_lengths,
-                       xlabel='Trajectory Length', distribution_type=distribution_type, name='{}_RL'.format(loss_type))
+                                 '{}(traj_lengths_{}_dim_{})'.format(distribution_type, args.ess_traj_lengths, args.dim))
+    make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=args.dim,
+                       num_samples=args.num_samples, num_repeats=args.num_repeats, traj_lengths=args.ess_traj_lengths,
+                       xlabel='Trajectory Length', distribution_type=distribution_type, name='VariationalInference')
 
 def get_rl_type_from_str(rl_type):
     if rl_type == 'PPO':
@@ -2845,6 +2853,9 @@ if __name__ == "__main__":
         vlgm.load_models()
         policy = vlgm.extract_policy()
         vi_variance_ratio(args, policy)
+    elif subroutine == 'vi_ess_traj':
+        print('executing: {}'.format('vi_ess_traj'))
+        vi_ess_traj(args)
     else:
         print('executing: {}'.format('custom'))
         table = create_dimension_table(torch.tensor([dim]), random=False)
