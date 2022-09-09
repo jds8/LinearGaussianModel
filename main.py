@@ -1976,7 +1976,8 @@ def plot_ess_from_dir_partial_data(directory, data_type, initial_idx=0):
             quantiles = torch.tensor([0.05, 0.5, 0.95], dtype=data.dtype)
             lower_ci, med, upper_ci = torch.quantile(data, quantiles, dim=0)
 
-            x_vals = torch.arange(initial_idx, initial_idx+med.nelement())
+            df = pd.read_csv('{}/{}'.format(directory, filename), index_col=0)
+            x_vals = df.columns.astype(np.int)
 
             plt.plot(x_vals, med.squeeze(), label=data_label)
             plt.fill_between(x_vals, y1=lower_ci, y2=upper_ci, alpha=0.3)
