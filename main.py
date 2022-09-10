@@ -10,6 +10,7 @@ import torch
 import torch.distributions as dist
 import torch.nn as nn
 from stable_baselines3 import PPO, SAC
+from stable_baselines3.sac.policies import SACPolicy
 from stable_baselines3.common.callbacks import BaseCallback
 from copy import deepcopy
 from generative_model import y_dist, sample_y, generate_trajectory, \
@@ -120,10 +121,10 @@ class CustomCallback(BaseCallback):
             while not done:
                 obs_env = env.envs[0].env
                 prev_xt = torch.tensor(obs.squeeze()[0:env.action_space.shape[0]]).to(dtype=obs_env.A.dtype)
-                # prior_kls.append(compute_kl_w_prior(policy=self.model.policy,
-                #                               prev_xt=prev_xt, ys=obs_env.get_condition_ys(),
-                #                               condition_length=obs_env.condition_length,
-                #                               A=obs_env.A, Q=obs_env.Q))
+                prior_kls.append(dispatch_kl_with_prior(policy=self.model.policy,
+                                                        prev_xt=prev_xt, ys=obs_env.get_condition_ys(),
+                                                        condition_length=obs_env.condition_length,
+                                                        A=obs_env.A, Q=obs_env.Q, sac_num_samples=1000))
                 # td = obs_env.tds[obs_env.index]
                 # posterior_kls.append(compute_conditional_kl(td_fps=td, policy=self.model.policy,
                 #                             prev_xt=prev_xt, ys=obs_env.get_condition_ys(),
@@ -2063,6 +2064,30 @@ def compute_kl_w_prior(policy, prev_xt, ys, condition_length, A, Q):
     policy_dist = dist.MultivariateNormal(pd.mean, torch.stack(covs))
 
     return dist.kl_divergence(prior, policy_dist)
+
+def compute_SAC_kl_w_prior(sac_policy, prev_xt, ys, condition_length, A, Q, num_samples):
+    # create prior
+    prior = get_state_transition_dist(prev_xt, A, Q)
+
+    # sac_policy dist
+    obs = torch.cat([prev_xt, ys[0:condition_length]]).reshape(1, -1)
+
+    kl = torch.tensor([0.])
+    for _ in range(num_samples):
+        np_sac_action = sac_policy.predict(obs.t(), deterministic=False)[0]
+        sac_action = torch.tensor(np_sac_action).reshape(1, -1)
+        mean_actions, log_std, _ = sac_policy.actor.get_action_dist_params(obs)
+        q_score = sac_policy.actor.action_dist.proba_distribution(mean_actions, log_std).log_prob(sac_action)
+        action = torch.atanh(sac_action)
+        p_score = prior.log_prob(action)
+        kl += (q_score - p_score) / num_samples
+
+    return kl
+
+def dispatch_kl_with_prior(policy, prev_xt, ys, condition_length, A, Q, sac_num_samples):
+    if isinstance(policy, SACPolicy):
+        return compute_SAC_kl_w_prior(policy, prev_xt, ys, condition_length, A, Q, sac_num_samples)
+    return compute_kl_w_prior(policy, prev_xt, ys, condition_length, A, Q)
 
 def compute_policy_kl_at_each_state(td_fps, policy, conditional_fps, prev_xts, ys, condition_length, dim):
     kls = []

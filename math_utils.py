@@ -68,3 +68,7 @@ def band_matrix(band, num_copies):
         c[start_index:start_index+d] = band.squeeze()
         outputs.append(c)
     return torch.stack(outputs)
+
+def empirical_kl(p, q, samples=8):
+    saps = p.rsample([samples, 1])
+    return (p.log_prob(saps) - q.log_prob(saps)).mean()
