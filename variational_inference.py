@@ -150,12 +150,7 @@ class VariationalLGM:
 
             loss /= self.args.num_samples
             self.optimizer.zero_grad()
-            try:
-                loss.backward()
-            except:
-                import pdb; pdb.set_trace()
-                loss.backward()
-
+            loss.backward()
             self.clip_gradients()
             self.optimizer.step()
 
