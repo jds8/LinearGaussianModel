@@ -302,6 +302,12 @@ def get_vlgm(args):
     dim = args.dim
 
     table = create_dimension_table([dim], random=False)
+    if args.Q < 0 or args.C < 0:
+        table[dim]['A'] = args.A
+        table[dim]['Q'] = args.Q
+        table[dim]['C'] = args.C
+        table[dim]['R'] = args.R
+
     A = table[dim]['A']
     Q = table[dim]['Q']
     C = table[dim]['C']

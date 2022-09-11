@@ -52,6 +52,10 @@ def get_args():
     parser.add_argument('--learning_rate', type=float, default=0.001, help='learning rate for Adam optimizer')
     parser.add_argument('--num_epochs', type=int, default=1000, help='number optimizer steps')
     parser.add_argument('--lgm_type', type=str, default='linear', help='what type of model to use')
+    parser.add_argument('--A', type=float, default=-1., help='The generative parameter A')
+    parser.add_argument('--Q', type=float, default=-1., help='The generative parameter Q')
+    parser.add_argument('--C', type=float, default=-1., help='The generative parameter C')
+    parser.add_argument('--R', type=float, default=-1., help='The generative parameter R')
 
     # parse
     args, _ = parser.parse_known_args()
