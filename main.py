@@ -2343,8 +2343,8 @@ def plot_posterior_variance(table, traj_length, dim, condition_length, true_vari
 
     x_values = torch.arange(1, traj_length+1)
     plt.plot(x_values, variances)
-    plt.scatter(x=last_state_of_constant_variance, y=variances[last_state_of_constant_variance-1],
-                label='This state and prior have constant variance', color='r')
+    # plt.scatter(x=last_state_of_constant_variance, y=variances[last_state_of_constant_variance-1],
+    #             label='This state and prior have constant variance', color='r')
     if true_variances:
         plt.scatter(x=first_state_of_correct_variance, y=variances[first_state_of_correct_variance-1],
                     label='This state and after coincide with true smoothing posterior.', color='g')

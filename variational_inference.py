@@ -100,8 +100,8 @@ class VariationalLGM:
         self.params = list(self.model.parameters())
 
         var_dir = 'variational_inference'
-        # self.run_dir = '{}/{}/m={}'.format(var_dir, self.name, self.args.m)
-        self.run_dir = '{}/m=0'.format(var_dir)
+        self.run_dir = '{}/{}/m={}'.format(var_dir, self.name, self.args.m)
+        # self.run_dir = '{}/m=0'.format(var_dir)
         self.model_state_dict_path = '{}/model_state_dict_traj_length_{}'.format(self.run_dir, self.args.traj_length)
         os.makedirs(self.run_dir, exist_ok=True)
 
@@ -139,18 +139,17 @@ class VariationalLGM:
                     p_dist = dist.Normal(mvn_p_dist.mean.squeeze(), torch.sqrt(mvn_p_dist.covariance_matrix).squeeze())
                     loss += dist.kl_divergence(q_dist, p_dist).squeeze()
 
-                    # get model output
-                    mean_output, log_std_output = self.model(inpt).squeeze()
+                    # sample new xt
+                    prev_xt = q_dist.rsample()
 
                     # score likelihood
-                    state_loss, prev_xt = self.score_likelihood(mean_output, log_std_output, prev_xt, ys[state_idx])
+                    lik = score_y(ys[state_idx], prev_xt, self.args.C, self.args.R)
 
                     # compute total loss
-                    loss -= state_loss
+                    loss -= lik
 
             loss /= self.args.num_samples
             self.optimizer.zero_grad()
-
             loss.backward()
             self.clip_gradients()
             self.optimizer.step()
@@ -164,13 +163,6 @@ class VariationalLGM:
             self.save_models()
         except:
             pass
-
-    def score_likelihood(self, mean, log_std, prev_xt, y_test):
-        mean = mean.reshape(1, 1)
-        std = log_std.exp().reshape(1, 1).clamp(min=1e-8, max=1e8)
-        xt = dist.Normal(mean, std).rsample()
-        lik = score_y(y_test, xt, self.args.C, self.args.R)
-        return lik, xt
 
     def clip_gradients(self):
         nn.utils.clip_grad_norm_(self.model.parameters(), 1)
