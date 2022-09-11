@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 import os
+import time
 import glob
 from datetime import date
 from matplotlib.pyplot import cm
 import matplotlib.pyplot as plt
-import time
 import numpy as np
 import torch
 import torch.distributions as dist
 import torch.nn as nn
-from stable_baselines3 import PPO, SAC
+from stable_baselines3 import PPO, SAC, FKL
 from stable_baselines3.sac.policies import SACPolicy
+from stable_baselines3.fkl.policies import SACPolicy as FKLPolicy
 from stable_baselines3.common.callbacks import BaseCallback
 from copy import deepcopy
 from generative_model import y_dist, sample_y, generate_trajectory, \
@@ -310,6 +311,11 @@ def train(traj_length, env, dim, condition_length, ent_coef=1.0,
                             policy_kwargs=dict(net_arch=[dict(pi=arch, vf=arch)]),
                             verbose=1, loss_type=loss_type, prior=prior, ignore_reward=ignore_reward,
                             learning_rate=learning_rate, clip_range=clip_range)
+        elif rl_type == FKL:
+            policy_kwargs = dict(net_arch=dict(pi=arch, qf=arch))
+            model = rl_type('MlpPolicy', env, device='cpu', verbose=1, policy_kwargs=policy_kwargs,
+                            learning_rate=learning_rate, learning_starts=0,
+                            num_particles=20)
         elif rl_type == SAC:
             # set the action space to [-1, 1] and rescale later
             env.action_space.low[0] = -1.
@@ -317,7 +323,6 @@ def train(traj_length, env, dim, condition_length, ent_coef=1.0,
             model = rl_type('MlpPolicy', env, device='cpu',
                             policy_kwargs=dict(net_arch=dict(pi=arch, qf=arch)),
                             verbose=1, learning_rate=learning_rate)
-
     else:
         model = rl_type(LinearActorCriticPolicy, env, ent_coef=ent_coef, device='cpu',
                         verbose=1, loss_type=loss_type, prior=prior, ignore_reward=ignore_reward,
@@ -2085,7 +2090,7 @@ def compute_SAC_kl_w_prior(sac_policy, prev_xt, ys, condition_length, A, Q, num_
     return kl
 
 def dispatch_kl_with_prior(policy, prev_xt, ys, condition_length, A, Q, sac_num_samples):
-    if isinstance(policy, SACPolicy):
+    if isinstance(policy, FKLPolicy) or isinstance(policy, SACPolicy):
         return compute_SAC_kl_w_prior(policy, prev_xt, ys, condition_length, A, Q, sac_num_samples)
     return compute_kl_w_prior(policy, prev_xt, ys, condition_length, A, Q)
 
@@ -2304,7 +2309,7 @@ def compare_rewards(traj_length, dim, loss_type, linear_gaussian_env_type, model
     labels.append(rl_label)
     plot_smoothing_reward(torch.arange(1, traj_length+1), avg_rewards, labels, linestyles)
 
-def plot_posterior_variance(table, traj_length, dim, condition_length, true_variances=None):
+def plot_posterior_variance(table, traj_length, dim, condition_length, true_variances=None, save_dir=None):
     posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
     ys = posterior_evidence.ys
 
@@ -2336,8 +2341,6 @@ def plot_posterior_variance(table, traj_length, dim, condition_length, true_vari
         if true_variances and torch.abs(variance - true_variances[j]) > 0.0001:
             first_state_of_correct_variance = j+2
 
-    print(variances)
-
     x_values = torch.arange(1, traj_length+1)
     plt.plot(x_values, variances)
     plt.scatter(x=last_state_of_constant_variance, y=variances[last_state_of_constant_variance-1],
@@ -2352,13 +2355,18 @@ def plot_posterior_variance(table, traj_length, dim, condition_length, true_vari
     ax.set_xticks(x_values)
     plt.title('Truncated (m={}) Smoothing Posterior Variance At Each State'.format(condition_length))
 
-    A = table[dim]['A']
-    Q = table[dim]['Q']
-    C = table[dim]['C']
-    R = table[dim]['R']
+    A = table[dim]['A'].item()
+    Q = table[dim]['Q'].item()
+    C = table[dim]['C'].item()
+    R = table[dim]['R'].item()
 
-    plt.savefig('{}/TruncatedSmoothingPosteriorVariance(m={} traj_length={} A={} Q={} C={} R={}).pdf'.format(TODAY, condition_length, traj_length, A, Q, C, R))
-    wandb.save('{}/TruncatedSmoothingPosteriorVariance(m={} traj_length={} A={} Q={} C={} R={}).pdf'.format(TODAY, condition_length, traj_length, A, Q, C, R))
+    if save_dir:
+        os.makedirs('{}/{}'.format(TODAY, save_dir), exist_ok=True)
+        plt.savefig('{}/{}/TruncatedSmoothingPosteriorVariance(m={} traj_length={} A={} Q={} C={} R={}).pdf'.format(TODAY, save_dir, condition_length, traj_length, A, Q, C, R))
+        wandb.save('{}/{}/TruncatedSmoothingPosteriorVariance(m={} traj_length={} A={} Q={} C={} R={}).pdf'.format(TODAY, save_dir, condition_length, traj_length, A, Q, C, R))
+    else:
+        plt.savefig('{}/TruncatedSmoothingPosteriorVariance(m={} traj_length={} A={} Q={} C={} R={}).pdf'.format(TODAY, condition_length, traj_length, A, Q, C, R))
+        wandb.save('{}/TruncatedSmoothingPosteriorVariance(m={} traj_length={} A={} Q={} C={} R={}).pdf'.format(TODAY, condition_length, traj_length, A, Q, C, R))
     plt.close()
 
     return variances
@@ -2828,15 +2836,18 @@ if __name__ == "__main__":
         execute_filtering_posterior_conditional_convergence(table, ess_traj_lengths, dim, condition_length)
     elif subroutine == 'plot_variance':
         print('executing: {}'.format('plot_variance'))
+        save_dir = str(time.time())
         table = create_dimension_table(torch.tensor([dim]), random=False)
-        # table[dim]['A'] = torch.tensor(0.2).reshape(1,1)
-        table[dim]['Q'] = torch.tensor(2.2).reshape(1,1)
-        table[dim]['C'] = torch.tensor(1.2).reshape(1,1)
-        table[dim]['R'] = torch.tensor(2.2).reshape(1,1)
-        for A in torch.arange(0.2, 1.4, 0.1):
-            table[dim]['A'] = A.reshape(1,1)
-            true_variances = plot_posterior_variance(table, traj_length, dim, condition_length=0)
-            plot_posterior_variance(table, traj_length, dim, condition_length=condition_length, true_variances=true_variances)
+        table[dim]['Q'] = torch.tensor(10.2).reshape(1,1)
+        table[dim]['C'] = torch.tensor(0.2).reshape(1,1)
+        table[dim]['R'] = torch.tensor(10.2).reshape(1,1)
+        table[dim]['A'] = torch.tensor(1.0).reshape(1,1)
+        # for A in torch.arange(0.2, 1.4, 0.1):
+        #     table[dim]['A'] = A.reshape(1,1)
+        #     true_variances = plot_posterior_variance(table, traj_length, dim, condition_length=0, save_dir=save_dir)
+        #     plot_posterior_variance(table, traj_length, dim, condition_length=condition_length, true_variances=true_variances, save_dir=save_dir)
+        true_variances = plot_posterior_variance(table, traj_length, dim, condition_length=0, save_dir=save_dir)
+        plot_posterior_variance(table, traj_length, dim, condition_length=condition_length, true_variances=true_variances, save_dir=save_dir)
     elif subroutine == 'plot_mean':
         print('executing: {}'.format('plot_mean'))
         table = create_dimension_table(torch.tensor([dim]), random=False)

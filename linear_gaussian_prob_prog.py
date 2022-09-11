@@ -403,9 +403,9 @@ class JointVariables:
         z_inds = torch.tensor(z_inds)
         x_inds = torch.tensor(x_inds)
         left = [rv for rv in self.rvs if rv not in z_rvs]
-        def condition_values(z_values):
-            return GaussianDistribution._condition_helper(self.dist.get_dist(), x_inds, z_inds, self.rvs, z_values)
-        return GaussianDistribution(TorchDistributionInfo(condition_values), left=left, right=left)
+        def condition_values(value):
+            return GaussianDistribution._condition_helper(self.dist.get_dist(), x_inds, z_inds, self.rvs, value)
+        return GaussianDistribution(TorchDistributionInfo(condition_values), left=left, right=left[0])
 
 
 class GaussianRandomVariable:
@@ -1137,9 +1137,8 @@ def test_graphical_model():
     jvs = JointVariables([xs[0], xs[1], xs[2], ys[0], ys[1], ys[2]], A, C)
     rhs_rvs = [ys[0], ys[1], ys[2]]
     conditional_1 = jvs.condition(rhs_rvs)
-    import pdb; pdb.set_trace()
-    print(conditional_1.mean())
-    print(conditional_1.covariance())
+    print(conditional_1.mean(value=torch.ones(len(rhs_rvs))))
+    print(conditional_1.covariance(value=torch.ones(len(rhs_rvs))))
 
 if __name__ == "__main__":
     test_graphical_model()

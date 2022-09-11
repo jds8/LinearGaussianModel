@@ -1,18 +1,22 @@
 # general imports
-from stable_baselines3 import PPO, SAC
+from stable_baselines3 import PPO, FKL, SAC
 from stable_baselines3.sac.policies import SACPolicy
+from stable_baselines3.fkl.policies import SACPolicy as FKLPolicy
 from stable_baselines3.common.callbacks import BaseCallback
 import torch
 
 
 PPO_STR = "PPO"
+FKL_STR = "FKL"
 SAC_STR = "SAC"
 
 
 def get_rl_type_from_str(rl_type):
-    if rl_type == 'PPO':
+    if rl_type == PPO_STR:
         return PPO
-    elif rl_type == 'SAC':
+    elif rl_type == FKL_STR:
+        return FKL
+    elif rl_type == SAC_STR:
         return SAC
     else:
         raise NotImplementedError
@@ -25,6 +29,8 @@ def load_rl_model(model_name, device, env=None):
 
     if PPO_STR in model_name:
         rl_type = PPO
+    elif FKL_STR in model_name:
+        rl_type = FKL
     elif SAC_STR in model_name:
         rl_type = SAC
     else:
@@ -41,7 +47,7 @@ def load_rl_model(model_name, device, env=None):
 
 def evaluate_actions(policy, obs, action):
     """ Evaluate/score action under model given observation """
-    if isinstance(policy, SACPolicy):
+    if isinstance(policy, SACPolicy) or isinstance(policy, FKLPolicy):
         mean_actions, log_std, _ = policy.actor.get_action_dist_params(obs)
         sac_action = torch.tanh(action)
         return policy.actor.action_dist.proba_distribution(mean_actions, log_std).log_prob(sac_action)
