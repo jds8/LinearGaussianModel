@@ -294,7 +294,7 @@ def get_vlgm(args):
     dim = args.dim
 
     table = create_dimension_table([dim], random=False)
-    if args.Q < 0 or args.C < 0:
+    if args.Q > 0 or args.C > 0:
         table[dim]['A'] = torch.tensor(args.A).reshape(dim, dim)
         table[dim]['Q'] = torch.tensor(args.Q).reshape(dim)
         table[dim]['C'] = torch.tensor(args.C).reshape(1, dim)
