@@ -44,7 +44,7 @@ class Distribution:
     def __init__(self, distribution):
         self.distribution = distribution
         self.mean = self.distribution.mean
-        self.scale = torch.abs(self.distribution.scale)**2
+        self.scale = self.distribution.scale
 
     def rsample(self):
         return self.distribution.rsample()
