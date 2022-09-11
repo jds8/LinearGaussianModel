@@ -62,7 +62,7 @@ class Policy:
     def get_distribution(self, obs):
         inpt = self.get_model_input_from_obs(obs)
         mean_output, log_std_output = self.model(inpt).squeeze()
-        std_output = log_std_output.exp().reshape(1, 1).clamp(min=1e-8, max=1e8)
+        std_output = log_std_output.exp().reshape(1, 1) + 1e-8
         return Distribution(Distribution(dist.Normal(mean_output, std_output)))
 
     def predict(self, obs, deterministic=False):
@@ -150,7 +150,12 @@ class VariationalLGM:
 
             loss /= self.args.num_samples
             self.optimizer.zero_grad()
-            loss.backward()
+            try:
+                loss.backward()
+            except:
+                import pdb; pdb.set_trace()
+                loss.backward()
+
             self.clip_gradients()
             self.optimizer.step()
 
