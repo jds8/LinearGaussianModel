@@ -88,6 +88,9 @@ def rollout_policy(policy, ys):
         dd = policy.get_distribution(obs).distribution.distribution
     return xs, scores
 
+def kl_divergence(p, q):
+    return q.scale.log() - p.scale.log() + (p.scale / q.scale).abs().pow(2)/2 + ((p.loc - q.loc) / q.scale).abs().pow(2)/2 - 0.5
+
 
 class VariationalLGM:
     def __init__(self, args):
@@ -131,15 +134,17 @@ class VariationalLGM:
                 policy = self.extract_policy()
 
                 for state_idx in range(traj_length):
-                    inpt = self.get_model_input(prev_xt, ys, state_idx)
+                    obs = torch.cat([prev_xt.reshape(1, -1), ys[state_idx:state_idx+self.args.condition_length].reshape(1, -1)], dim=1)
 
                     # compute kl divergence with prior
-                    q_dist = policy.get_distribution(inpt).distribution.distribution
+                    q_dist = policy.get_distribution(obs).distribution.distribution
                     mvn_p_dist = get_state_transition_dist(prev_xt, self.args.A, self.args.Q)
                     p_dist = dist.Normal(mvn_p_dist.mean.squeeze(), torch.sqrt(mvn_p_dist.covariance_matrix).squeeze())
-                    loss += dist.kl_divergence(q_dist, p_dist).squeeze()
+                    loss += kl_divergence(q_dist, p_dist).squeeze()
+                    # loss += dist.kl_divergence(q_dist, p_dist).squeeze()
 
                     # sample new xt
+                    old_xt = prev_xt
                     prev_xt = q_dist.rsample()
 
                     # score likelihood
@@ -150,7 +155,12 @@ class VariationalLGM:
 
             loss /= self.args.num_samples
             self.optimizer.zero_grad()
-            loss.backward()
+            try:
+                loss.backward()
+            except:
+                import pdb; pdb.set_trace()
+                loss.backward()
+
             self.clip_gradients()
             self.optimizer.step()
 
@@ -192,6 +202,9 @@ class RecurrentVariationalLGM(VariationalLGM):
     def get_obs_output(self, ys, state_idx):
         future_ys = ys[state_idx:state_idx+self.args.condition_length].reshape(-1, 1, 1)
         obs_output, _ = self.rnn(future_ys)
+        if obs_output.isnan().any() or obs_output.isinf().any():
+            import pdb; pdb.set_trace()
+
         return obs_output[-1, :, :]
 
     def get_model_input(self, prev_xt, ys, state_idx):

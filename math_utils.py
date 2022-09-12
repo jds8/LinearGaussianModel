@@ -72,3 +72,7 @@ def band_matrix(band, num_copies):
 def empirical_kl(p, q, samples=8):
     saps = p.rsample([samples, 1])
     return (p.log_prob(saps) - q.log_prob(saps)).mean()
+
+def kl_divergence(p, q):
+    """ The call to abs is to avoid nans during calls to backward() """
+    return q.scale.log() - p.scale.log() + (p.scale / q.scale).abs().pow(2)/2 + ((p.loc - q.loc) / q.scale).abs().pow(2)/2 - 0.5
