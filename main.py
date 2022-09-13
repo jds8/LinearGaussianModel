@@ -2348,9 +2348,9 @@ def plot_posterior_variance(table, traj_length, dim, condition_length, true_vari
     if true_variances:
         plt.scatter(x=first_state_of_correct_variance, y=variances[first_state_of_correct_variance-1],
                     label='This state and after coincide with true smoothing posterior.', color='g')
+        plt.legend()
     plt.xlabel('States')
     plt.ylabel('Variance')
-    plt.legend()
     ax = plt.gca()
     ax.set_xticks(x_values)
     plt.title('Truncated (m={}) Smoothing Posterior Variance At Each State'.format(condition_length))
@@ -2838,9 +2838,9 @@ if __name__ == "__main__":
         print('executing: {}'.format('plot_variance'))
         save_dir = str(time.time())
         table = create_dimension_table(torch.tensor([dim]), random=False)
-        table[dim]['Q'] = torch.tensor(10.2).reshape(1,1)
+        table[dim]['Q'] = torch.tensor(2.2).reshape(1,1)
         table[dim]['C'] = torch.tensor(0.2).reshape(1,1)
-        table[dim]['R'] = torch.tensor(10.2).reshape(1,1)
+        table[dim]['R'] = torch.tensor(2.2).reshape(1,1)
         table[dim]['A'] = torch.tensor(1.0).reshape(1,1)
         # for A in torch.arange(0.2, 1.4, 0.1):
         #     table[dim]['A'] = A.reshape(1,1)

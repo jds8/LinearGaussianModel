@@ -133,34 +133,34 @@ class VariationalLGM:
                 # get current policy
                 policy = self.extract_policy()
 
+                obses = []
+                prev_xts = [prev_xt]
+                kls = []
                 for state_idx in range(traj_length):
                     obs = torch.cat([prev_xt.reshape(1, -1), ys[state_idx:state_idx+self.args.condition_length].reshape(1, -1)], dim=1)
+                    obses.append(obs)
 
                     # compute kl divergence with prior
                     q_dist = policy.get_distribution(obs).distribution.distribution
                     mvn_p_dist = get_state_transition_dist(prev_xt, self.args.A, self.args.Q)
                     p_dist = dist.Normal(mvn_p_dist.mean.squeeze(), torch.sqrt(mvn_p_dist.covariance_matrix).squeeze())
-                    loss += kl_divergence(q_dist, p_dist).squeeze()
+                    kl = kl_divergence(q_dist, p_dist).squeeze()
+                    kls.append(kl)
+                    loss += kl
                     # loss += dist.kl_divergence(q_dist, p_dist).squeeze()
 
                     # sample new xt
-                    old_xt = prev_xt
                     prev_xt = q_dist.rsample()
+                    prev_xts.append(prev_xt)
 
                     # score likelihood
                     lik = score_y(ys[state_idx], prev_xt, self.args.C, self.args.R)
-
                     # compute total loss
                     loss -= lik
 
             loss /= self.args.num_samples
             self.optimizer.zero_grad()
-            try:
-                loss.backward()
-            except:
-                import pdb; pdb.set_trace()
-                loss.backward()
-
+            loss.backward()
             self.clip_gradients()
             self.optimizer.step()
 
@@ -202,9 +202,6 @@ class RecurrentVariationalLGM(VariationalLGM):
     def get_obs_output(self, ys, state_idx):
         future_ys = ys[state_idx:state_idx+self.args.condition_length].reshape(-1, 1, 1)
         obs_output, _ = self.rnn(future_ys)
-        if obs_output.isnan().any() or obs_output.isinf().any():
-            import pdb; pdb.set_trace()
-
         return obs_output[-1, :, :]
 
     def get_model_input(self, prev_xt, ys, state_idx):
@@ -337,6 +334,7 @@ def get_vlgm(args):
 
 
 if __name__ == "__main__":
+    # print(torch.manual_seed(10908954672825061901))
     args, _ = get_args()
 
     vlgm = get_vlgm(args)
