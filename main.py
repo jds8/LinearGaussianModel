@@ -228,7 +228,7 @@ class CustomCallback(BaseCallback):
 
         if self.env.states:
             policy = self.model.policy.to(self.env.states[-1].device)
-            q_log_prob = evaluate_actions(policy=policy, obs=self.env.states[-1].t(), action=self.env.actions[-1].reshape(-1, 1))
+            q_log_prob = evaluate_actions(policy=policy, obs=self.env.states[-1].t(), actions=self.env.actions[-1].reshape(-1, 1))
             # note that in this case the weights are log[ p(y|x)p(x)/q(x|y) ]
             wandb.log({'log weights': self.env.liks[-1] + self.env.p_log_probs[-1] - q_log_prob})
             wandb.log({'likelihood reward': self.env.liks[-1]})
@@ -2885,7 +2885,7 @@ if __name__ == "__main__":
         policy = vlgm.extract_policy()
         vi_variance_ratio(args, policy)
     elif subroutine == 'vi_ess_traj':
-        print('executing: {}'.format('vi_ess_traj'))
+        print('executing: {} condition_length: {}'.format('vi_ess_traj', args.condition_length))
         vi_ess_traj(args)
     else:
         print('executing: {}'.format('custom'))

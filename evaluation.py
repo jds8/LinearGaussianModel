@@ -176,7 +176,7 @@ def evaluate_rl_posterior_ensemble(rl_d, tds, N, env, condition_length, determin
             log_p_y_given_x += info['lik_reward']
             actions.append(info['action'])
             if env.states_left() >= condition_length:
-                log_qrobs.append(evaluate_actions(policy=rl_d, obs=obs.t(), action=xt).item())
+                log_qrobs.append(evaluate_actions(policy=rl_d, obs=obs.t(), actions=xt).item())
             else:
                 log_qrobs.append(dst.log_prob(xt))
             xs.append(xt)
@@ -251,7 +251,7 @@ def evaluate_pure_rl_ensemble(rl_ds, N, env, condition_length, deterministic=Fal
             log_p_x += info['prior_reward']
             log_p_y_given_x += info['lik_reward']
             actions.append(info['action'])
-            log_qrobs.append(evaluate_actions(policy=rl_d, obs=obs.t(), action=info['action']).item())
+            log_qrobs.append(evaluate_actions(policy=rl_d, obs=obs.t(), actions=info['action']).item())
             xs.append(xt)
         try:
             if isinstance(xs[0], torch.Tensor):

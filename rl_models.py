@@ -45,10 +45,10 @@ def load_rl_model(model_name, device, env=None):
     return model, model.policy.to(device)
 
 
-def evaluate_actions(policy, obs, action):
+def evaluate_actions(policy, obs, actions):
     """ Evaluate/score action under model given observation """
     if isinstance(policy, SACPolicy) or isinstance(policy, FKLPolicy):
         mean_actions, log_std, _ = policy.actor.get_action_dist_params(obs)
-        sac_action = torch.tanh(action)
+        sac_action = torch.tanh(actions)
         return policy.actor.action_dist.proba_distribution(mean_actions, log_std).log_prob(sac_action)
-    return policy.evaluate_actions(obs=obs, actions=action)[1].sum()
+    return policy.evaluate_actions(obs=obs, actions=actions)[1].sum()
