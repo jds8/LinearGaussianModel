@@ -2649,6 +2649,7 @@ def evaluate_vi_policy(vlgm, model_name, traj_length):
 
     rl_output = ImportanceOutput(traj_length=traj_length, ys=None, dim=dim)
 
+    print('Q: {}'.format(vlgm.args.Q))
     env = EnsembleLinearGaussianEnv(A=vlgm.args.A, Q=vlgm.args.Q, C=vlgm.args.C, R=vlgm.args.R,
                                     mu_0=vlgm.args.mu_0, Q_0=vlgm.args.Q, condition_length=vlgm.args.condition_length,
                                     using_entropy_loss=False,
