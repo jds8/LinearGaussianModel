@@ -54,16 +54,25 @@ class Distribution:
 
 
 class Policy:
-    def __init__(self, get_model_input_from_obs, model, x_dim):
-        self.get_model_input_from_obs = get_model_input_from_obs
+    def __init__(self, y_embedding, x_embedding, model, args):
+        self.y_embedding = y_embedding
+        self.x_embedding = x_embedding
         self.model = model
-        self.x_dim = x_dim
+        self.args = args
+
+    def get_model_input_from_obs(self, obs):
+        raise NotImplementedError
 
     def get_distribution(self, obs):
         inpt = self.get_model_input_from_obs(obs)
         mean_output, log_std_output = self.model(inpt).squeeze()
         std_output = log_std_output.exp().reshape(1, 1) + 1e-8
-        return Distribution(Distribution(dist.Normal(mean_output, std_output)))
+        try:
+            return Distribution(Distribution(dist.Normal(mean_output, std_output)))
+        except:
+            import pdb; pdb.set_trace()
+            inpt = self.get_model_input_from_obs(obs)
+
 
     def predict(self, obs, deterministic=False):
         d = self.get_distribution(obs).distribution
@@ -73,6 +82,37 @@ class Policy:
     def evaluate_actions(self, obs, actions):
         d = self.get_distribution(obs).distribution
         return actions, d.log_prob(actions)
+
+
+class RNNPolicy(Policy):
+    def __init__(self, rnn, y_embedding, x_embedding, model, args):
+        super().__init__(y_embedding, x_embedding, model, args)
+        self.rnn = rnn
+
+    def get_model_input_from_obs(self, obs):
+        """
+        This assumes that obs contains [prev_xt, future_ys], i.e.
+        that *only* future ys are passed in obs, *not all* obs.
+        This is the case for the EnsembleLinearGaussianEnv
+        """
+        _obs = obs.squeeze()
+        prev_xt = _obs[:self.args.dim]
+        future_ys = _obs[self.args.dim:].reshape(-1, 1)
+
+        # normalize and embed ys
+        normalized_ys = normalize(future_ys, mean=future_ys.mean(), std=self.args.R)
+        embedded_ys = self.y_embedding(normalized_ys).unsqueeze(0)
+
+        # invoke rnn on ys
+        obs_output, _ = self.rnn(embedded_ys)
+        b = obs_output[0, -1, :]
+
+        # normalize and embed prev_xt
+        normalized_xt = normalize(prev_xt, mean=torch.zeros_like(prev_xt), std=self.args.Q)
+        embedded_prev_xt = self.x_embedding(normalized_xt).squeeze()
+
+        # return concatenation of embedded_x and rnn output
+        return torch.cat([embedded_prev_xt, b], dim=0)
 
 
 def rollout_policy(policy, ys):
@@ -113,11 +153,11 @@ class VariationalLGM:
             nn.LeakyReLU(),
             nn.Linear(args.hidden_dim, 2),
         )
-        self.params = list(self.model.parameters())
+        self.params = list(self.model.parameters()) + list(self.y_embedding.parameters()) + list(self.x_embedding.parameters())
 
         var_dir = 'variational_inference'
-        self.run_dir = '{}/{}/m={}'.format(var_dir, self.name, self.args.m)
-        # self.run_dir = '/home/jsefas/linear-gaussian-model/from_borg/Sep-13-2022/m=5'
+        # self.run_dir = '{}/{}/m={}'.format(var_dir, self.name, self.args.m)
+        self.run_dir = '/home/jsefas/linear-gaussian-model/from_borg/Sep-17-2022/m=5'
         # self.run_dir = '{}/m=0'.format(var_dir)
         self.model_state_dict_path = '{}/model_state_dict_traj_length_{}'.format(self.run_dir, self.args.traj_length)
         os.makedirs(self.run_dir, exist_ok=True)
@@ -143,8 +183,8 @@ class VariationalLGM:
                 ys, xs, _, _ = generate_trajectory(traj_length, A=self.args.A, Q=self.args.Q, C=self.args.C,
                                                    R=self.args.R, mu_0=self.args.mu_0, Q_0=self.args.Q_0)
 
-                normalized_ys = torch.stack([normalize(y, mean=self.args.C*x, std=self.args.R) for x, y in zip(xs, ys)], dim=0)
-                embedded_ys = self.y_embedding(normalized_ys)
+                # normalized_ys = torch.stack([normalize(y, mean=self.args.C*x, std=self.args.R) for x, y in zip(xs, ys)], dim=0)
+                # embedded_ys = self.y_embedding(normalized_ys)
 
                 prev_xt = torch.zeros(self.args.dim)
 
@@ -156,11 +196,12 @@ class VariationalLGM:
                 kls = []
                 for state_idx in range(traj_length):
                     double_prev_xt = prev_xts[-2] if len(prev_xts) > 1 else 0.
-                    normalized_xt = normalize(prev_xt, mean=self.args.A*double_prev_xt, std=self.args.Q)
+                    # normalized_xt = normalize(prev_xt, mean=self.args.A*double_prev_xt, std=self.args.Q)
 
-                    embedded_prev_xt = self.x_embedding(prev_xt)
+                    # embedded_prev_xt = self.x_embedding(prev_xt)
 
-                    obs = torch.cat([embedded_prev_xt.reshape(-1, self.args.embedding_dim), embedded_ys[state_idx:state_idx+self.args.condition_length].reshape(-1, self.args.embedding_dim)], dim=0)
+                    # obs = torch.cat([embedded_prev_xt.reshape(-1, self.args.embedding_dim), embedded_ys[state_idx:state_idx+self.args.condition_length].reshape(-1, self.args.embedding_dim)], dim=0)
+                    obs = torch.cat([prev_xt.reshape(-1, 1), ys[state_idx:state_idx+self.args.condition_length].reshape(-1, 1)], dim=0)
 
                     obses.append(obs)
 
@@ -208,7 +249,7 @@ class VariationalLGM:
         self.model.load_state_dict(torch.load(self.model_state_dict_path))
 
     def extract_policy(self):
-        return Policy(lambda obs: self.get_model_input_from_obs(obs), self.model, self.args.dim)
+        return RNNPolicy(self.rnn, self.y_embedding, self.x_embedding, self.model, self.args)
 
 
 class RNNWrapper(nn.RNN):
@@ -244,12 +285,31 @@ class RecurrentVariationalLGM(VariationalLGM):
         This is the case for the EnsembleLinearGaussianEnv
         """
         _obs = obs.squeeze()
-        embedded_prev_xt = _obs[:self.args.dim, :].squeeze()
-        embedded_future_ys = _obs[self.args.dim:, :]
-        embedded_future_ys = embedded_future_ys.reshape(1, *embedded_future_ys.shape)
-        obs_output, _ = self.rnn(embedded_future_ys)
-        b = obs_output[0, -1, :]
-        return torch.cat([embedded_prev_xt, b])
+        prev_xt = _obs[:self.args.dim]
+        future_ys = _obs[self.args.dim:].reshape(-1, 1, 1)
+        # we can ignore the ys before state_idx since they will be zeroed out anyway
+        ys = torch.zeros(self.args.traj_length)
+        ys[state_idx:] = future_ys
+        return self.get_model_input(prev_xt, ys, state_idx)
+
+    # def get_model_input_from_obs(self, obs):
+    #     """
+    #     This assumes that obs contains [prev_xt, future_ys], i.e.
+    #     that *only* future ys are passed in obs, *not all* obs.
+    #     This is the case for the EnsembleLinearGaussianEnv
+    #     """
+    #     _obs = obs.squeeze()
+    #     try:
+    #         embedded_prev_xt = _obs[:self.args.dim, :].squeeze()
+    #     except:
+    #         import pdb; pdb.set_trace()
+    #         embedded_prev_xt = _obs[:self.args.dim, :].squeeze()
+
+    #     embedded_future_ys = _obs[self.args.dim:, :]
+    #     embedded_future_ys = embedded_future_ys.reshape(1, *embedded_future_ys.shape)
+    #     obs_output, _ = self.rnn(embedded_future_ys)
+    #     b = obs_output[0, -1, :]
+    #     return torch.cat([embedded_prev_xt, b])
 
     def clip_gradients(self):
         super().clip_gradients()
