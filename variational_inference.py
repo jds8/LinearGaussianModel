@@ -116,8 +116,8 @@ class VariationalLGM:
         self.params = list(self.model.parameters())
 
         var_dir = 'variational_inference'
-        # self.run_dir = '{}/{}/m={}'.format(var_dir, self.name, self.args.m)
-        self.run_dir = '/home/jsefas/linear-gaussian-model/from_borg/Sep-13-2022/m=5'
+        self.run_dir = '{}/{}/m={}'.format(var_dir, self.name, self.args.m)
+        # self.run_dir = '/home/jsefas/linear-gaussian-model/from_borg/Sep-13-2022/m=5'
         # self.run_dir = '{}/m=0'.format(var_dir)
         self.model_state_dict_path = '{}/model_state_dict_traj_length_{}'.format(self.run_dir, self.args.traj_length)
         os.makedirs(self.run_dir, exist_ok=True)
