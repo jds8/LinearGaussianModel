@@ -91,6 +91,9 @@ def rollout_policy(policy, ys):
 def kl_divergence(p, q):
     return q.scale.log() - p.scale.log() + (p.scale / q.scale).abs().pow(2)/2 + ((p.loc - q.loc) / q.scale).abs().pow(2)/2 - 0.5
 
+def normalize(ys, mean, std):
+    return (ys - mean) / std
+
 
 class VariationalLGM:
     def __init__(self, args):
@@ -98,12 +101,23 @@ class VariationalLGM:
         self.args = args
         self.name = type(self).__name__
 
+        # embeds ys into larger space
+        self.y_embedding = nn.Linear(1, args.embedding_dim)
+        self.x_embedding = nn.Linear(args.dim, args.embedding_dim)
+
         # takes each observation as input
-        self.model = nn.Linear(args.model_dim, 2)
+        self.model = nn.Sequential(
+            nn.Linear(args.model_dim, args.model_dim)
+            nn.LeakyReLU(),
+            nn.Linear(args.hidden_dim, args.hidden_dim),
+            nn.LeakyReLU()
+            nn.Linear(args.hidden_dim, 2),
+        )
         self.params = list(self.model.parameters())
 
         var_dir = 'variational_inference'
-        self.run_dir = '{}/{}/m={}'.format(var_dir, self.name, self.args.m)
+        # self.run_dir = '{}/{}/m={}'.format(var_dir, self.name, self.args.m)
+        self.run_dir = '/home/jsefas/linear-gaussian-model/from_borg/Sep-13-2022/m=5'
         # self.run_dir = '{}/m=0'.format(var_dir)
         self.model_state_dict_path = '{}/model_state_dict_traj_length_{}'.format(self.run_dir, self.args.traj_length)
         os.makedirs(self.run_dir, exist_ok=True)
@@ -126,8 +140,12 @@ class VariationalLGM:
             loss = torch.tensor([0.])
             for _ in range(self.args.num_samples):
                 # sample new set of observations
-                ys, _, _, _ = generate_trajectory(traj_length, A=self.args.A, Q=self.args.Q, C=self.args.C,
-                                                  R=self.args.R, mu_0=self.args.mu_0, Q_0=self.args.Q_0)
+                ys, xs, _, _ = generate_trajectory(traj_length, A=self.args.A, Q=self.args.Q, C=self.args.C,
+                                                   R=self.args.R, mu_0=self.args.mu_0, Q_0=self.args.Q_0)
+
+                normalized_ys = torch.stack([normalize(y, mean=self.args.C*x, std=self.args.R) for x, y in zip(xs, ys)], dim=0)
+                embedded_ys = self.y_embedding(normalized_ys)
+
                 prev_xt = torch.zeros(self.args.dim)
 
                 # get current policy
@@ -137,7 +155,13 @@ class VariationalLGM:
                 prev_xts = [prev_xt]
                 kls = []
                 for state_idx in range(traj_length):
-                    obs = torch.cat([prev_xt.reshape(1, -1), ys[state_idx:state_idx+self.args.condition_length].reshape(1, -1)], dim=1)
+                    double_prev_xt = prev_xts[-2] if len(prev_xts) > 1 else 0.
+                    normalized_xt = normalize(prev_xt, mean=self.args.A*double_prev_xt, std=self.args.Q)
+
+                    embedded_prev_xt = self.x_embedding(prev_xt)
+
+                    obs = torch.cat([embedded_prev_xt.reshape(-1, self.args.embedding_dim), embedded_ys[state_idx:state_idx+self.args.condition_length].reshape(-1, self.args.embedding_dim)], dim=0)
+
                     obses.append(obs)
 
                     # compute kl divergence with prior
@@ -187,13 +211,18 @@ class VariationalLGM:
         return Policy(lambda obs: self.get_model_input_from_obs(obs), self.model, self.args.dim)
 
 
+class RNNWrapper(nn.RNN):
+    def forward(self, inpt, hx=None):
+        return super().forward(reversed(inpt), hx)
+
+
 class RecurrentVariationalLGM(VariationalLGM):
     def __init__(self, args):
-        args.model_dim = args.dim + args.obs_size
+        args.model_dim = args.dim*args.embedding_dim + args.obs_size
 
         super().__init__(args)
 
-        self.rnn = nn.RNN(1, args.obs_size, args.num_rnn_layers)
+        self.rnn = RNNWrapper(args.embedding_dim, args.obs_size, args.num_rnn_layers)
         self.params += list(self.rnn.parameters())
         self.initialize_optimizer()
         self.rnn_state_dict_path = '{}/rnn_state_dict_traj_length_{}'.format(self.run_dir, self.args.traj_length)
@@ -215,11 +244,12 @@ class RecurrentVariationalLGM(VariationalLGM):
         This is the case for the EnsembleLinearGaussianEnv
         """
         _obs = obs.squeeze()
-        prev_xt = _obs[:self.args.dim]
-        future_ys = _obs[self.args.dim:].reshape(-1, 1, 1)
-        obs_output, _ = self.rnn(future_ys)
-        b = obs_output[-1, :, :]
-        return torch.cat([prev_xt.reshape(1, -1), b.reshape(1, -1)], dim=1)
+        embedded_prev_xt = _obs[:self.args.dim, :].squeeze()
+        embedded_future_ys = _obs[self.args.dim:, :]
+        embedded_future_ys = embedded_future_ys.reshape(1, *embedded_future_ys.shape)
+        obs_output, _ = self.rnn(embedded_future_ys)
+        b = obs_output[0, -1, :]
+        return torch.cat([embedded_prev_xt, b])
 
     def clip_gradients(self):
         super().clip_gradients()
@@ -250,7 +280,6 @@ class LinearVariationalLGM(VariationalLGM):
 
     def get_obs_output(self, ys, state_idx):
         mask = torch.zeros(self.args.traj_length)
-        mask[:state_idx] = 0.
         future_ys = mask.mul(ys)
         return future_ys.reshape(-1, 1, 1)
 

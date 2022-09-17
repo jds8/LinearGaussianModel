@@ -1383,8 +1383,10 @@ def get_posterior_filtering_ess_outputs(table, traj_length, dim, epsilon):
     return get_perturbed_posterior_filtering_outputs(table=table, traj_length=traj_length, dim=dim, epsilons=[epsilon], condition_length=0)
 
 def get_posterior_filtering_conditional_ess_outputs(table, traj_length, dim, condition_length):
-    name = '{}(dim: {} traj_len: {} condition_length: {})'.format(FILTERING_POSTERIOR_CONDITIONAL_DISTRIBUTION, dim,
-                                                                  traj_length, condition_length)
+    A = table[dim]['A']
+    Q = table[dim]['Q']
+    name = '{}(A: {} Q: {} condition_length: {})'.format(FILTERING_POSTERIOR_CONDITIONAL_DISTRIBUTION, A,
+                                                         Q, condition_length)
     return [get_perturbed_posterior_filtering_output(table=table, traj_length=traj_length, dim=dim,
                                                      epsilon=0., name=name, condition_length=condition_length)]
 
@@ -1442,9 +1444,13 @@ def posterior_filtering_conditional_ess_traj(table, traj_lengths, dim, condition
         outputs += get_posterior_filtering_conditional_ess_outputs(table, traj_length, dim, condition_length)
     save_outputs_with_names_traj(outputs, distribution_type,
                                  '{}(traj_lengths_{}_dim_{}_condition_length_{})'.format(distribution_type, traj_lengths, dim, condition_length))
+    A = table[dim]['A']
+    Q = table[dim]['Q']
+    C = table[dim]['C']
+    R = table[dim]['R']
     make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=dim,
                        num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, traj_lengths=traj_lengths,
-                       xlabel='Trajectory Length', distribution_type=distribution_type, name='posterior_filtering (conditioned on {} obs)'.format(condition_length))
+                       xlabel='Trajectory Length', distribution_type=distribution_type, name='A_{}_Q_{}_C_{}_R_{}_posterior_filtering (conditioned on {} obs)'.format(A, Q, C, R, condition_length))
 
 def prior_ess_traj(table, traj_lengths, dim):
     distribution_type = PRIOR_DISTRIBUTION
@@ -2771,8 +2777,16 @@ if __name__ == "__main__":
     elif subroutine == 'posterior_filtering_conditional_ess_traj':
         print('executing: {}'.format('posterior_filtering_conditional_ess_traj'))
         table = create_dimension_table(torch.tensor([dim]), random=False)
-        posterior_filtering_conditional_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, condition_length=condition_length)
-        # posterior_filtering_conditional_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, condition_length=1)
+        table[dim]['R'] = torch.tensor(0.4).reshape(1,1)
+        # table[dim]['C'] = torch.tensor(1.0).reshape(1,1)
+        # table[dim]['R'] = torch.tensor(1.0).reshape(1,1)
+        # table[dim]['A'] = torch.tensor(1.0).reshape(1,1)
+        # posterior_filtering_conditional_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, condition_length=condition_length)
+        posterior_filtering_conditional_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, condition_length=1)
+        table[dim]['R'] = torch.tensor(1.1).reshape(1,1)
+        posterior_filtering_conditional_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, condition_length=1)
+        table[dim]['R'] = torch.tensor(2.2).reshape(1,1)
+        posterior_filtering_conditional_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, condition_length=1)
         # posterior_filtering_conditional_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, condition_length=2)
         # posterior_filtering_conditional_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, condition_length=3)
         # posterior_filtering_conditional_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, condition_length=4)
@@ -2839,14 +2853,14 @@ if __name__ == "__main__":
         print('executing: {}'.format('plot_variance'))
         save_dir = str(time.time())
         table = create_dimension_table(torch.tensor([dim]), random=False)
-        table[dim]['Q'] = torch.tensor(2.2).reshape(1,1)
-        table[dim]['C'] = torch.tensor(0.2).reshape(1,1)
-        table[dim]['R'] = torch.tensor(2.2).reshape(1,1)
-        table[dim]['A'] = torch.tensor(1.0).reshape(1,1)
-        # for A in torch.arange(0.2, 1.4, 0.1):
-        #     table[dim]['A'] = A.reshape(1,1)
-        #     true_variances = plot_posterior_variance(table, traj_length, dim, condition_length=0, save_dir=save_dir)
-        #     plot_posterior_variance(table, traj_length, dim, condition_length=condition_length, true_variances=true_variances, save_dir=save_dir)
+        table[dim]['Q'] = torch.tensor(1.0).reshape(1,1)
+        table[dim]['C'] = torch.tensor(1.0).reshape(1,1)
+        table[dim]['R'] = torch.tensor(1.0).reshape(1,1)
+        table[dim]['A'] = torch.tensor(0.8).reshape(1,1)
+        for R in torch.arange(0.2, 2.4, 0.1):
+            table[dim]['R'] = R.reshape(1,1)
+            true_variances = plot_posterior_variance(table, traj_length, dim, condition_length=0, save_dir=save_dir)
+            plot_posterior_variance(table, traj_length, dim, condition_length=condition_length, true_variances=true_variances, save_dir=save_dir)
         true_variances = plot_posterior_variance(table, traj_length, dim, condition_length=0, save_dir=save_dir)
         plot_posterior_variance(table, traj_length, dim, condition_length=condition_length, true_variances=true_variances, save_dir=save_dir)
     elif subroutine == 'plot_mean':

@@ -46,7 +46,9 @@ def get_args():
 
     # variational inference args
     parser.add_argument('--input_size', type=int, default=1, help='input dim to RNN')
-    parser.add_argument('--obs_size', type=int, default=4, help='hidden dim to RNN/size of sufficient statistic of observations')
+    parser.add_argument('--embedding_dim', type=int, default=64, help='input dim to RNN')
+    parser.add_argument('--obs_size', type=int, default=64, help='hidden dim to RNN/size of sufficient statistic of observations')
+    parser.add_argument('--hidden_dim', type=int, default=128, help='hidden dim of main NN')
     parser.add_argument('--output_size', type=int, default=2, help='output dim to RNN')
     parser.add_argument('--num_rnn_layers', type=int, default=1, help='number of rnn layers')
     parser.add_argument('--learning_rate', type=float, default=0.001, help='learning rate for Adam optimizer')
