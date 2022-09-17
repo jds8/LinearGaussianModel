@@ -107,10 +107,10 @@ class VariationalLGM:
 
         # takes each observation as input
         self.model = nn.Sequential(
-            nn.Linear(args.model_dim, args.model_dim)
+            nn.Linear(args.model_dim, args.model_dim),
             nn.LeakyReLU(),
             nn.Linear(args.hidden_dim, args.hidden_dim),
-            nn.LeakyReLU()
+            nn.LeakyReLU(),
             nn.Linear(args.hidden_dim, 2),
         )
         self.params = list(self.model.parameters())
