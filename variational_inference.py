@@ -156,8 +156,8 @@ class VariationalLGM:
         self.params = list(self.model.parameters()) + list(self.y_embedding.parameters()) + list(self.x_embedding.parameters())
 
         var_dir = 'variational_inference'
-        self.run_dir = '{}/{}/m={}'.format(var_dir, self.name, self.args.m)
-        # self.run_dir = '/home/jsefas/linear-gaussian-model/from_borg/Sep-17-2022/m=5'
+        # self.run_dir = '{}/{}/m={}'.format(var_dir, self.name, self.args.m)
+        self.run_dir = '/home/jsefas/linear-gaussian-model/from_borg/Sep-17-2022/m=5'
         # self.run_dir = '{}/m=0'.format(var_dir)
         self.model_state_dict_path = '{}/model_state_dict_traj_length_{}'.format(self.run_dir, self.args.traj_length)
         os.makedirs(self.run_dir, exist_ok=True)
@@ -246,7 +246,12 @@ class VariationalLGM:
         torch.save(self.model.state_dict(), self.model_state_dict_path)
 
     def load_models(self):
-        self.model.load_state_dict(torch.load(self.model_state_dict_path))
+        try:
+            self.model.load_state_dict(torch.load(self.model_state_dict_path))
+        except:
+            import pdb; pdb.set_trace()
+            self.model.load_state_dict(torch.load(self.model_state_dict_path))
+
 
     def extract_policy(self):
         return RNNPolicy(self.rnn, self.y_embedding, self.x_embedding, self.model, self.args)

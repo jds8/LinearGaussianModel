@@ -31,7 +31,7 @@ from evaluation import EvaluationObject, evaluate, evaluate_filtering_posterior,
     evaluate_agent_until, evaluate_rl_posterior_ensemble, \
     evaluate_smoothing_posterior_until, evaluate_pure_rl_ensemble
 from dimension_table import create_dimension_table
-from filtering_posterior import compute_conditional_filtering_posteriors
+from filtering_posterior import compute_conditional_filtering_posteriors, compute_smoothing_posteriors
 import pandas as pd
 from get_args import get_args
 from pathlib import Path
@@ -2315,6 +2315,66 @@ def compare_rewards(traj_length, dim, loss_type, linear_gaussian_env_type, model
     labels.append(rl_label)
     plot_smoothing_reward(torch.arange(1, traj_length+1), avg_rewards, labels, linestyles)
 
+def plot_smoothing_variance(table, traj_length, dim, condition_length, true_variances=None, save_dir=None):
+    posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
+    ys = posterior_evidence.ys
+
+    tds = compute_smoothing_posteriors(table=table, num_obs=len(posterior_evidence.ys),
+                                       dim=dim, m=condition_length, condition_on_x=True,
+                                       ys=ys)
+
+    m = condition_length if condition_length > 0 else traj_length
+
+    td = tds[0].condition(y_values=ys[:m])
+    variances = [td.covariance()]
+    last_state_of_constant_variance = 1
+    if true_variances:
+        first_state_of_correct_variance = 2 if torch.abs(variances[0] - true_variances[0]) > 0.001 else 1
+    for j in range(1, len(tds)):
+        td_fps = tds[j]
+        y = ys[:j+m]
+        dst = td_fps.condition(y_values=y)
+        variance = dst.covariance()
+
+        # find where states have constant variance
+        if torch.abs(variance - variances[-1]) < 0.0001 and last_state_of_constant_variance == j:
+            last_state_of_constant_variance = j+1
+        variances.append(variance)
+
+        # find where variances are equal to the true smoothing posterior
+        if true_variances and torch.abs(variance - true_variances[j]) > 0.0001:
+            first_state_of_correct_variance = j+2
+
+    x_values = torch.arange(1, traj_length+1)
+    plt.plot(x_values, variances)
+    # plt.scatter(x=last_state_of_constant_variance, y=variances[last_state_of_constant_variance-1],
+    #             label='This state and prior have constant variance', color='r')
+    if true_variances:
+        plt.scatter(x=first_state_of_correct_variance, y=variances[first_state_of_correct_variance-1],
+                    label='This state and after coincide with true smoothing posterior.', color='g')
+        plt.legend()
+    plt.xlabel('States')
+    plt.ylabel('Variance')
+    ax = plt.gca()
+    ax.set_xticks(x_values)
+    plt.title('Partially-conditioned ({} future observations) Smoothing Posterior\nVariance At Each State'.format(condition_length))
+
+    A = table[dim]['A'].item()
+    Q = table[dim]['Q'].item()
+    C = table[dim]['C'].item()
+    R = table[dim]['R'].item()
+
+    if save_dir:
+        os.makedirs('{}/{}'.format(TODAY, save_dir), exist_ok=True)
+        plt.savefig('{}/{}/TruncatedSmoothingPosteriorVariance(m={} traj_length={} A={} Q={} C={} R={}).pdf'.format(TODAY, save_dir, condition_length, traj_length, A, Q, C, R))
+        wandb.save('{}/{}/TruncatedSmoothingPosteriorVariance(m={} traj_length={} A={} Q={} C={} R={}).pdf'.format(TODAY, save_dir, condition_length, traj_length, A, Q, C, R))
+    else:
+        plt.savefig('{}/TruncatedSmoothingPosteriorVariance(m={} traj_length={} A={} Q={} C={} R={}).pdf'.format(TODAY, condition_length, traj_length, A, Q, C, R))
+        wandb.save('{}/TruncatedSmoothingPosteriorVariance(m={} traj_length={} A={} Q={} C={} R={}).pdf'.format(TODAY, condition_length, traj_length, A, Q, C, R))
+    plt.close()
+
+    return variances
+
 def plot_posterior_variance(table, traj_length, dim, condition_length, true_variances=None, save_dir=None):
     posterior_evidence = compute_evidence(table=table, traj_length=traj_length, dim=dim)
     ys = posterior_evidence.ys
@@ -2353,7 +2413,7 @@ def plot_posterior_variance(table, traj_length, dim, condition_length, true_vari
     #             label='This state and prior have constant variance', color='r')
     if true_variances:
         plt.scatter(x=first_state_of_correct_variance, y=variances[first_state_of_correct_variance-1],
-                    label='This state and after coincide with true smoothing posterior.', color='g')
+                    label='This state and after coincide with true posterior.', color='g')
         plt.legend()
     plt.xlabel('States')
     plt.ylabel('Variance')
@@ -2854,15 +2914,29 @@ if __name__ == "__main__":
         save_dir = str(time.time())
         table = create_dimension_table(torch.tensor([dim]), random=False)
         table[dim]['Q'] = torch.tensor(1.0).reshape(1,1)
-        table[dim]['C'] = torch.tensor(1.0).reshape(1,1)
-        table[dim]['R'] = torch.tensor(1.0).reshape(1,1)
-        table[dim]['A'] = torch.tensor(0.8).reshape(1,1)
-        for R in torch.arange(0.2, 2.4, 0.1):
-            table[dim]['R'] = R.reshape(1,1)
-            true_variances = plot_posterior_variance(table, traj_length, dim, condition_length=0, save_dir=save_dir)
-            plot_posterior_variance(table, traj_length, dim, condition_length=condition_length, true_variances=true_variances, save_dir=save_dir)
+        table[dim]['C'] = torch.tensor(0.6).reshape(1,1)
+        table[dim]['R'] = torch.tensor(2.2).reshape(1,1)
+        table[dim]['A'] = torch.tensor(1.2).reshape(1,1)
+        # for Q in torch.arange(0.2, 2.4, 0.1):
+        #     table[dim]['Q'] = Q.reshape(1,1)
+        #     true_variances = plot_posterior_variance(table, traj_length, dim, condition_length=0, save_dir=save_dir)
+        #     plot_posterior_variance(table, traj_length, dim, condition_length=condition_length, true_variances=true_variances, save_dir=save_dir)
         true_variances = plot_posterior_variance(table, traj_length, dim, condition_length=0, save_dir=save_dir)
         plot_posterior_variance(table, traj_length, dim, condition_length=condition_length, true_variances=true_variances, save_dir=save_dir)
+    elif subroutine == 'plot_smoothing_variance':
+        print('executing: {}'.format('plot_smoothing_variance'))
+        save_dir = str(time.time())
+        table = create_dimension_table(torch.tensor([dim]), random=False)
+        table[dim]['Q'] = torch.tensor(1.0).reshape(1,1)
+        table[dim]['C'] = torch.tensor(0.6).reshape(1,1)
+        table[dim]['R'] = torch.tensor(2.2).reshape(1,1)
+        table[dim]['A'] = torch.tensor(1.2).reshape(1,1)
+        # for Q in torch.arange(0.2, 2.4, 0.1):
+        #     table[dim]['Q'] = Q.reshape(1,1)
+        #     true_variances = plot_posterior_variance(table, traj_length, dim, condition_length=0, save_dir=save_dir)
+        #     plot_posterior_variance(table, traj_length, dim, condition_length=condition_length, true_variances=true_variances, save_dir=save_dir)
+        true_variances = plot_smoothing_variance(table, traj_length, dim, condition_length=0, save_dir=save_dir)
+        plot_smoothing_variance(table, traj_length, dim, condition_length=condition_length, true_variances=true_variances, save_dir=save_dir)
     elif subroutine == 'plot_mean':
         print('executing: {}'.format('plot_mean'))
         table = create_dimension_table(torch.tensor([dim]), random=False)

@@ -128,6 +128,12 @@ def compute_filtering_posterior(t, num_obs, xs, ys, A, C, m=1):
     condition_vars += rest_of_ys
     return FilteringPosterior(jvs.dist, condition_vars)
 
+def compute_smoothing_posterior(t, num_obs, xs, ys, A, C, m=1):
+    condition_vars = ys[:t+m] if m > 0 else ys
+    rvars = condition_vars + [xs[t]]
+    jvs = JointVariables(rvars, A=A, C=C)
+    return FilteringPosterior(jvs.dist, condition_vars)
+
 def old_compute_conditional_filtering_posteriors(table, num_obs, dim, ys=None):
     A = table[dim]['A']
     Q = table[dim]['Q']
@@ -152,6 +158,37 @@ def old_compute_conditional_filtering_posteriors(table, num_obs, dim, ys=None):
         filtering_posterior = old_compute_conditional_filtering_posterior(t, num_obs, fp_xs, fp_ys, p_y_next_given_x, A, C)
         fps.append(filtering_posterior)
     return fps, ys
+
+def compute_smoothing_posteriors(table, num_obs, dim, m=0, condition_on_x=True, ys=None):
+    A = table[dim]['A']
+    Q = table[dim]['Q']
+    C = table[dim]['C']
+    R = table[dim]['R']
+    mu_0 = table[dim]['mu_0']
+    Q_0 = table[dim]['Q_0']
+
+    return _compute_smoothing_posteriors(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0,
+                                         num_obs=num_obs, dim=dim, m=m, condition_on_x=condition_on_x, ys=ys)
+
+def _compute_smoothing_posteriors(A, Q, C, R, mu_0, Q_0, num_obs, dim, m=0, condition_on_x=True, ys=None):
+    table = {dim: {}}
+    table[dim]['A'] = A
+    table[dim]['Q'] = Q
+    table[dim]['C'] = C
+    table[dim]['R'] = R
+    table[dim]['mu_0'] = mu_0
+    table[dim]['Q_0'] = Q_0
+    lgv = get_linear_gaussian_variables(dim=dim, num_obs=num_obs, table=table)
+
+    # true evidence
+    jvs = JointVariables(lgv.ys, A=A, C=C)
+    # print('true evidence: ', jvs.dist.log_prob(ys).exp())
+
+    fps = []
+    for t in range(num_obs):
+        filtering_posterior = compute_smoothing_posterior(t, num_obs, lgv.xs, lgv.ys, A, C, m=m)
+        fps.append(filtering_posterior)
+    return fps
 
 def compute_conditional_filtering_posteriors(table, num_obs, dim, m=0, condition_on_x=True, ys=None):
     A = table[dim]['A']
