@@ -47,13 +47,14 @@ from variational_inference import VariationalLGM, get_vlgm
 MODEL = '/opt/agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{})'
 MODEL_W_CONDITION = '/opt/agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{}_condition_length_{}_use_mlp_policy_{})'
 MODEL_W_CONDITION_AND_RL_TYPE = '/opt/agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{}_condition_length_{}_use_mlp_policy_{}_rl_type_{})'
+TEST_MODEL_W_CONDITION = '/opt/agents/A={}_R={}/{}_{}_linear_gaussian_model_(traj_{}_dim_{}_condition_length_{}_use_mlp_policy_{})'
 # MODEL = 'from_borg/rl_agents/linear_gaussian_model_(traj_{}_dim_{})'
 # MODEL = 'new_linear_gaussian_model_(traj_{}_dim_{})'
 
 TODAY = date.today().strftime("%b-%d-%Y")
 
 SAVE_DIR = '/opt/linear_gaussian_data'
-RL_TIMESTEPS = 1000000
+RL_TIMESTEPS = 50000
 NUM_SAMPLES = 1000
 NUM_VARIANCE_SAMPLES = 10
 NUM_REPEATS = 20
@@ -125,7 +126,7 @@ class CustomCallback(BaseCallback):
                 prior_kls.append(dispatch_kl_with_prior(policy=self.model.policy,
                                                         prev_xt=prev_xt, ys=obs_env.get_condition_ys(),
                                                         condition_length=obs_env.condition_length,
-                                                        A=obs_env.A, Q=obs_env.Q, sac_num_samples=1000))
+                                                        A=obs_env.A, R=obs_env.R, sac_num_samples=1000))
                 # td = obs_env.tds[obs_env.index]
                 # posterior_kls.append(compute_conditional_kl(td_fps=td, policy=self.model.policy,
                 #                             prev_xt=prev_xt, ys=obs_env.get_condition_ys(),
@@ -263,7 +264,8 @@ def create_distribution_alignment_of_state_0_png(policy, condition_length, dim, 
                     pd.mean.detach().item(), (pd.scale.detach()**2).item(), 'rl policy',
                     save_dir, filename)
 
-def get_model_name(traj_length, dim, ent_coef, loss_type, condition_length, use_mlp_policy=False, rl_type='PPO'):
+def get_model_name(traj_length, dim, ent_coef, loss_type, condition_length, use_mlp_policy=False, rl_type='PPO', A=1., R=1.):
+    return TEST_MODEL_W_CONDITION.format(A, R, ent_coef, loss_type, traj_length, dim, condition_length, use_mlp_policy)+'.zip'
     if condition_length == 1:
         return MODEL.format(ent_coef, loss_type, traj_length, dim)+'.zip'
     elif rl_type == 'PPO':
@@ -281,7 +283,7 @@ def get_loss_type(model_name):
 def train(traj_length, env, dim, condition_length, ent_coef=1.0,
           loss_type='forward_kl', learning_rate=3e-4, clip_range=0.2,
           continue_training=False, ignore_reward=False, use_mlp_policy=False,
-          rl_type='PPO'):
+          rl_type='PPO', A=1., R=1.):
     params = {}
     run = wandb.init(project='linear_gaussian_model training', save_code=True, config=params, entity='iai')
 
@@ -298,7 +300,7 @@ def train(traj_length, env, dim, condition_length, ent_coef=1.0,
                                 ent_coef=ent_coef, loss_type=loss_type,
                                 condition_length=condition_length,
                                 use_mlp_policy=use_mlp_policy,
-                                rl_type=rl_type)
+                                rl_type=rl_type, A=A, R=R)
 
     print('training agent: {}'.format(model_name))
 
@@ -596,15 +598,18 @@ def make_ess_versus_dimension_plot(outputs, num_samples):
 
 def make_ess_plot_nice(outputs_with_names, fixed_feature_string,
                        fixed_feature, num_samples, num_repeats,
-                       traj_lengths, xlabel, distribution_type, name=''):
+                       traj_lengths, xlabel, distribution_type, name='',
+                       save_dir=''):
     plot_ess_estimators_traj(outputs_with_names, traj_lengths)
 
     plt.xlabel(xlabel)
     plt.ylabel('Effective Sample Size')
     plt.title('Effective Sample Size Versus {}\n (num samples: {}, num repeats: {})'.format(xlabel, num_samples, num_repeats))
     legend_without_duplicate_labels(plt.gca())
-    plt.savefig('{}/{}/{}_ess_plot_{}_{}.pdf'.format(TODAY, distribution_type, name, fixed_feature_string, fixed_feature))
-    wandb.save('{}/{}/{}_ess_plot_{}_{}.pdf'.format(TODAY, distribution_type, name, fixed_feature_string, fixed_feature))
+    save_dir = save_dir if save_dir else '{}/{}/'
+    os.makedirs(save_dir, exist_ok=True)
+    plt.savefig('{}/{}_ess_plot_{}_{}.pdf'.format(save_dir, name, fixed_feature_string, fixed_feature))
+    wandb.save('{}/{}_ess_plot_{}_{}.pdf'.format(save_dir, name, fixed_feature_string, fixed_feature))
 
 def make_ess_plot_nice_dim(outputs_with_names, fixed_feature_string,
                            fixed_feature, num_samples, num_repeats,
@@ -1168,19 +1173,20 @@ def save_outputs_with_names_dim(outputs, distribution_type, label):
     columns = [str(output.output.dimension) for output in outputs]
     save_outputs_with_names(outputs, distribution_type, label, columns, 'dim')
 
-def save_outputs_with_names_traj(outputs, distribution_type, label):
+def save_outputs_with_names_traj(outputs, distribution_type, label, save_dir=''):
     columns = [str(output.output.traj_length) for output in outputs]
-    save_outputs_with_names(outputs, distribution_type, label, columns, 'traj')
+    save_outputs_with_names(outputs, distribution_type, label, columns, 'traj', save_dir=save_dir)
 
 def save_outputs_with_names_general(outputs, distribution_type, label, output_type):
     columns = [str(output.output.traj_length) for output in outputs]
     save_outputs_with_names(outputs, distribution_type, label, columns, output_type)
 
-def save_outputs_with_names(outputs, distribution_type, label, columns, output_type):
-    os.makedirs('{}/{}'.format(TODAY, distribution_type), exist_ok=True)
+def save_outputs_with_names(outputs, distribution_type, label, columns, output_type, save_dir=''):
+    save_dir = save_dir if save_dir else '{}/{}'.format(TODAY, distribution_type)
+    os.makedirs(save_dir, exist_ok=True)
     ess_output = torch.stack([torch.tensor(output.output[output.name].ess) for output in outputs], dim=1)
     df = pd.DataFrame(ess_output.numpy(), columns=columns)
-    df.to_csv('{}/{}/{}_ESS_{}.csv'.format(TODAY, distribution_type, label, output_type))
+    df.to_csv('{}/{}_ESS_{}.csv'.format(save_dir, label, output_type))
 
 def get_perturbed_posterior_outputs(traj_length, dim, epsilons):
     outputs = []
@@ -1612,10 +1618,11 @@ def verify_filtering_posterior():
 def test_train(traj_length, dim, condition_length, ent_coef, loss_type,
                learning_rate, clip_range, linear_gaussian_env_type,
                continue_training, ignore_reward, use_mlp_policy,
-               rl_type):
-    table = create_dimension_table(torch.tensor([dim]), random=False)
-    posterior_evidence = compute_evidence(table, traj_length, dim)
+               rl_type, args):
+    # table = create_dimension_table(torch.tensor([dim]), random=False)
+    posterior_evidence = compute_evidence(args.table, traj_length, dim)
 
+    table = args.table
     A = table[dim]['A']
     Q = table[dim]['Q']
     C = table[dim]['C']
@@ -1633,7 +1640,7 @@ def test_train(traj_length, dim, condition_length, ent_coef, loss_type,
           learning_rate=learning_rate, clip_range=clip_range,
           continue_training=continue_training,
           ignore_reward=ignore_reward, use_mlp_policy=use_mlp_policy,
-          rl_type=rl_type)
+          rl_type=rl_type, A=A, R=R)
 
 def sample_variance_ratios(traj_length, model_name, condition_length, policy=None):
     """
@@ -2648,14 +2655,13 @@ def evaluate_vi_policy(vlgm, model_name, traj_length):
     policy = vlgm.extract_policy()
 
     rl_output = ImportanceOutput(traj_length=traj_length, ys=None, dim=dim)
-
-    print('Q: {}'.format(vlgm.args.Q))
-    env = EnsembleLinearGaussianEnv(A=vlgm.args.A, Q=vlgm.args.Q, C=vlgm.args.C, R=vlgm.args.R,
-                                    mu_0=vlgm.args.mu_0, Q_0=vlgm.args.Q, condition_length=vlgm.args.condition_length,
-                                    using_entropy_loss=False,
-                                    ys=None, traj_length=vlgm.args.traj_length, sample=True)
-
+ 
     for _ in range(vlgm.args.num_repeats):
+        ys = generate_trajectory(traj_length, A=vlgm.args.A, Q=vlgm.args.Q, C=vlgm.args.C, R=vlgm.args.R, mu_0=vlgm.args.mu_0, Q_0=vlgm.args.Q_0)[0]
+        env = EnsembleLinearGaussianEnv(A=vlgm.args.A, Q=vlgm.args.Q, C=vlgm.args.C, R=vlgm.args.R,
+                                        mu_0=vlgm.args.mu_0, Q_0=vlgm.args.Q, condition_length=vlgm.args.condition_length,
+                                        using_entropy_loss=False,
+                                        ys=ys, traj_length=vlgm.args.traj_length, sample=False)
         eval_obj = evaluate(d=policy, N=vlgm.args.num_samples, env=env)
 
         # add rl confidence interval
@@ -2669,11 +2675,13 @@ def evaluate_vi_policy(vlgm, model_name, traj_length):
 
 def vi_ess_traj(args):
     distribution_type = VI_DISTRIBUTION
-    os.makedirs('{}/{}'.format(TODAY, distribution_type), exist_ok=True)
     outputs = []
-    for traj_length in args.ess_traj_lengths:
+    vlgm = get_vlgm(args)
+    print('entering for loop')
+    for traj_length in vlgm.args.ess_traj_lengths:
         # create new args object to create a new VLGM
         new_args = deepcopy(args)
+        new_args.condition_length = args.m
         new_args.traj_length = traj_length
 
         # load VLGM for this traj_length
@@ -2681,11 +2689,14 @@ def vi_ess_traj(args):
         vlgm.load_models()
         model_name = 'VariationalInference'
         outputs += [evaluate_vi_policy(vlgm, model_name, traj_length)]
+    save_dir = '{}/{}_m={}_A={}_R={}'.format(TODAY, distribution_type, vlgm.args.m, vlgm.args.A, vlgm.args.R)
+    os.makedirs(save_dir, exist_ok=True)
     save_outputs_with_names_traj(outputs, distribution_type,
-                                 '{}(traj_lengths_{}_dim_{})'.format(distribution_type, args.ess_traj_lengths, args.dim))
+                                 'm={}_A={}_R={}_{}(traj_lengths_{}_dim_{})'.format(vlgm.args.m, vlgm.args.A, vlgm.args.R, distribution_type, args.ess_traj_lengths, args.dim), save_dir=save_dir)
     make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=args.dim,
                        num_samples=args.num_samples, num_repeats=args.num_repeats, traj_lengths=args.ess_traj_lengths,
-                       xlabel='Trajectory Length', distribution_type=distribution_type, name='VariationalInference')
+                       xlabel='Trajectory Length', distribution_type=distribution_type, name='VariationalInference_m={}_A={}_R={}'.format(vlgm.args.m, vlgm.args.A, vlgm.args.R),
+                       save_dir=save_dir)
 
 
 if __name__ == "__main__":
@@ -2732,13 +2743,35 @@ if __name__ == "__main__":
     delta = args.delta
     ignore_reward = args.ignore_reward
 
+    table = create_dimension_table([dim], random=False)
+    if args.Q > 0 or args.C > 0:
+        table[dim]['A'] = torch.tensor(args.A).reshape(table[dim]['A'].shape)
+        table[dim]['Q'] = torch.tensor(args.Q).reshape(table[dim]['Q'].shape)
+        table[dim]['C'] = torch.tensor(args.C).reshape(table[dim]['C'].shape)
+        table[dim]['R'] = torch.tensor(args.R).reshape(table[dim]['R'].shape)
+
+    A = table[dim]['A']
+    Q = table[dim]['Q']
+    C = table[dim]['C']
+    R = table[dim]['R']
+    mu_0 = table[dim]['mu_0']
+    Q_0 = table[dim]['Q_0']
+
+    args.table = table
+    args.A = A
+    args.Q = Q
+    args.C = C
+    args.R = R
+    args.mu_0 = mu_0
+    args.Q_0 = Q_0
+
     if subroutine == 'train_agent':
         print('executing: {}'.format('train_agent'))
         test_train(traj_length=traj_length, dim=dim, condition_length=condition_length,
                    ent_coef=ent_coef, loss_type=loss_type, learning_rate=learning_rate,
                    clip_range=clip_range, linear_gaussian_env_type=linear_gaussian_env_type,
                    continue_training=continue_training, ignore_reward=ignore_reward, use_mlp_policy=use_mlp_policy,
-                   rl_type=rl_type)
+                   rl_type=rl_type, args=args)
     elif subroutine == 'evaluate_agent':
         print('executing: {}'.format('evaluate_agent'))
         evaluate_agent(linear_gaussian_env_type, traj_length, dim, model_name, condition_length=condition_length)
@@ -2748,7 +2781,7 @@ if __name__ == "__main__":
                    ent_coef=ent_coef, loss_type=loss_type, learning_rate=learning_rate,
                    clip_range=clip_range, linear_gaussian_env_type=linear_gaussian_env_type,
                    continue_training=continue_training, ignore_reward=ignore_reward, use_mlp_policy=use_mlp_policy,
-                   rl_type=rl_type)
+                   rl_type=rl_type, args=args)
         evaluate_agent(linear_gaussian_env_type, traj_length, dim, model_name, condition_length=condition_length)
     elif subroutine == 'evaluate_until':
         print('executing: {}'.format('evaluate_until'))

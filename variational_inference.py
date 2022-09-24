@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import os
+import re
+import glob
 import matplotlib.pyplot as plt
 import math
 import gym
@@ -103,10 +105,23 @@ class VariationalLGM:
         self.params = list(self.model.parameters())
 
         var_dir = 'variational_inference'
-        self.run_dir = '{}/{}/m={}'.format(var_dir, self.name, self.args.m)
+        print('m in run_dir: {}'.format(args.m))
+        self.run_dir = '{}/{}/m={}/A={}_R={}'.format(var_dir, self.name, self.args.m, self.args.A, self.args.R)
+        self.args.ess_traj_lengths = self.get_ess_traj_lengths()
         # self.run_dir = '{}/m=0'.format(var_dir)
         self.model_state_dict_path = '{}/model_state_dict_traj_length_{}'.format(self.run_dir, self.args.traj_length)
         os.makedirs(self.run_dir, exist_ok=True)
+
+    def get_ess_traj_lengths(self):
+        old_cwd = os.getcwd()
+        os.chdir(self.run_dir)
+        file_regex = 'model_state_dict_traj_length_*'
+        filenames = glob.glob(file_regex)
+        ess_traj_lengths = []
+        for filename in filenames:
+            ess_traj_lengths.append(int(re.search('[0-9]+', filename)[0]))
+        os.chdir(old_cwd)
+        return ess_traj_lengths
 
     def initialize_optimizer(self):
         self.optimizer = torch.optim.Adam(self.params, lr=self.args.learning_rate)
@@ -181,10 +196,19 @@ class VariationalLGM:
         torch.save(self.model.state_dict(), self.model_state_dict_path)
 
     def load_models(self):
-        self.model.load_state_dict(torch.load(self.model_state_dict_path))
+        try:
+            self.model.load_state_dict(torch.load(self.model_state_dict_path))
+        except:
+            print(self.model_state_dict_path)
+            self.model.load_state_dict(torch.load(self.model_state_dict_path))
 
     def extract_policy(self):
         return Policy(lambda obs: self.get_model_input_from_obs(obs), self.model, self.args.dim)
+
+
+class RNNWrapper(nn.RNN):
+    def forward(self, inpt, hx=None):
+        return super().forward(reversed(inpt), hx)
 
 
 class RecurrentVariationalLGM(VariationalLGM):
@@ -193,7 +217,7 @@ class RecurrentVariationalLGM(VariationalLGM):
 
         super().__init__(args)
 
-        self.rnn = nn.RNN(1, args.obs_size, args.num_rnn_layers)
+        self.rnn = RNNWrapper(1, args.obs_size, args.num_rnn_layers)
         self.params += list(self.rnn.parameters())
         self.initialize_optimizer()
         self.rnn_state_dict_path = '{}/rnn_state_dict_traj_length_{}'.format(self.run_dir, self.args.traj_length)
@@ -326,6 +350,7 @@ def get_vlgm(args):
     args.Q_0 = Q_0
 
     args.m = args.condition_length
+    print('initial m from get_vlgm: {}'.format(args.m))
     args.condition_length = args.condition_length if args.condition_length > 0 else args.traj_length
 
     lgm_class = get_lgm_class_type(args.lgm_type)
