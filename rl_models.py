@@ -19,7 +19,7 @@ def get_rl_type_from_str(rl_type):
     elif rl_type == SAC_STR:
         return SAC
     else:
-        raise NotImplementedError
+        return PPO
 
 
 def load_rl_model(model_name, device, env=None):
@@ -34,7 +34,7 @@ def load_rl_model(model_name, device, env=None):
     elif SAC_STR in model_name:
         rl_type = SAC
     else:
-        raise BaseException("Cannot determine rl model type for: {}".format(model_name))
+        rl_type = PPO
 
     try:
         model = rl_type.load(model_name, env=env, device=device)

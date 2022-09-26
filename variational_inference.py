@@ -106,8 +106,9 @@ class VariationalLGM:
 
         var_dir = 'variational_inference'
         print('m in run_dir: {}'.format(args.m))
-        self.run_dir = '{}/{}/m={}/A={}_R={}'.format(var_dir, self.name, self.args.m, self.args.A, self.args.R)
-        self.args.ess_traj_lengths = self.get_ess_traj_lengths()
+        self.run_dir = '{}/{}/m={}/lr={}_A={}_R={}'.format(var_dir, self.name, self.args.m, self.args.lr, self.args.A, self.args.R)
+        if os.path.exists(self.run_dir):
+            self.args.ess_traj_lengths = self.get_ess_traj_lengths()
         # self.run_dir = '{}/m=0'.format(var_dir)
         self.model_state_dict_path = '{}/model_state_dict_traj_length_{}'.format(self.run_dir, self.args.traj_length)
         os.makedirs(self.run_dir, exist_ok=True)
@@ -124,7 +125,7 @@ class VariationalLGM:
         return ess_traj_lengths
 
     def initialize_optimizer(self):
-        self.optimizer = torch.optim.Adam(self.params, lr=self.args.learning_rate)
+        self.optimizer = torch.optim.Adam(self.params, lr=self.args.lr)
 
     def get_model_input(self, prev_xt, obs_output, state_idx):
         raise NotImplementedError

@@ -44,9 +44,10 @@ from variational_inference import VariationalLGM, get_vlgm
 # model name
 # MODEL = 'trial_linear_gaussian_model_(traj_{}_dim_{})'
 # MODEL = 'linear_gaussian_model_(traj_{}_dim_{})'
-MODEL = '/opt/agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{})'
-MODEL_W_CONDITION = '/opt/agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{}_condition_length_{}_use_mlp_policy_{})'
-MODEL_W_CONDITION_AND_RL_TYPE = '/opt/agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{}_condition_length_{}_use_mlp_policy_{}_rl_type_{})'
+OLD_MODEL = '/opt/agents/{}_{}_linear_gaussian_model_(traj_{}_dim_{})'
+MODEL = '{}_{}_linear_gaussian_model_(traj_{}_dim_{})'
+MODEL_W_CONDITION = '{}_{}_linear_gaussian_model_(traj_{}_dim_{}_condition_length_{}_use_mlp_policy_{})'
+MODEL_W_CONDITION_AND_RL_TYPE = '{}_{}_linear_gaussian_model_(traj_{}_dim_{}_condition_length_{}_use_mlp_policy_{}_rl_type_{})'
 TEST_MODEL_W_CONDITION = '/opt/agents/A={}_R={}/{}_{}_linear_gaussian_model_(traj_{}_dim_{}_condition_length_{}_use_mlp_policy_{})'
 # MODEL = 'from_borg/rl_agents/linear_gaussian_model_(traj_{}_dim_{})'
 # MODEL = 'new_linear_gaussian_model_(traj_{}_dim_{})'
@@ -126,7 +127,7 @@ class CustomCallback(BaseCallback):
                 prior_kls.append(dispatch_kl_with_prior(policy=self.model.policy,
                                                         prev_xt=prev_xt, ys=obs_env.get_condition_ys(),
                                                         condition_length=obs_env.condition_length,
-                                                        A=obs_env.A, R=obs_env.R, sac_num_samples=1000))
+                                                        A=obs_env.A, Q=obs_env.Q, sac_num_samples=1000))
                 # td = obs_env.tds[obs_env.index]
                 # posterior_kls.append(compute_conditional_kl(td_fps=td, policy=self.model.policy,
                 #                             prev_xt=prev_xt, ys=obs_env.get_condition_ys(),
@@ -265,8 +266,8 @@ def create_distribution_alignment_of_state_0_png(policy, condition_length, dim, 
                     save_dir, filename)
 
 def get_model_name(traj_length, dim, ent_coef, loss_type, condition_length, use_mlp_policy=False, rl_type='PPO', A=1., R=1.):
-    return TEST_MODEL_W_CONDITION.format(A, R, ent_coef, loss_type, traj_length, dim, condition_length, use_mlp_policy)+'.zip'
-    if condition_length == 1:
+    # return TEST_MODEL_W_CONDITION.format(A, R, ent_coef, loss_type, traj_length, dim, condition_length, use_mlp_policy)+'.zip'
+    if condition_length == 1 and condition_length == 'reverse_kl':
         return MODEL.format(ent_coef, loss_type, traj_length, dim)+'.zip'
     elif rl_type == 'PPO':
         return MODEL_W_CONDITION.format(ent_coef, loss_type, traj_length, dim, condition_length, use_mlp_policy)+'.zip'
@@ -283,7 +284,7 @@ def get_loss_type(model_name):
 def train(traj_length, env, dim, condition_length, ent_coef=1.0,
           loss_type='forward_kl', learning_rate=3e-4, clip_range=0.2,
           continue_training=False, ignore_reward=False, use_mlp_policy=False,
-          rl_type='PPO', A=1., R=1.):
+          rl_type='PPO', A=1., R=1., model_dir=''):
     params = {}
     run = wandb.init(project='linear_gaussian_model training', save_code=True, config=params, entity='iai')
 
@@ -303,6 +304,10 @@ def train(traj_length, env, dim, condition_length, ent_coef=1.0,
                                 rl_type=rl_type, A=A, R=R)
 
     print('training agent: {}'.format(model_name))
+
+    loss_type_dir_prefix = '' if loss_type == 'forward_kl' else 'reverse_'
+    save_dir = '/opt/agents/{}A={}_R={}/'.format(loss_type_dir_prefix, A, R)
+    os.makedirs(save_dir, exist_ok=True)
 
     if continue_training:
         model, _ = load_rl_model(model_name=model_name, device='cpu', env=env)
@@ -334,7 +339,7 @@ def train(traj_length, env, dim, condition_length, ent_coef=1.0,
     model.learn(total_timesteps=RL_TIMESTEPS, callback=CustomCallback(env, model_name, verbose=1))
 
     # save model
-    model.save(model_name)
+    model.save(save_dir + model_name)
     wandb.save(model_name)
 
 
@@ -1476,7 +1481,7 @@ def prior_ess_dim(table, traj_length, dims):
 
 def rl_ess_traj(linear_gaussian_env_type, table, traj_lengths,
                 dim, ent_coef, loss_type, condition_length,
-                use_mlp_policy):
+                use_mlp_policy, args=None):
     distribution_type = RL_DISTRIBUTION
     os.makedirs('{}/{}'.format(TODAY, distribution_type), exist_ok=True)
     outputs = []
@@ -1485,7 +1490,12 @@ def rl_ess_traj(linear_gaussian_env_type, table, traj_lengths,
                                     ent_coef=ent_coef, loss_type=loss_type,
                                     condition_length=condition_length,
                                     use_mlp_policy=use_mlp_policy)
-        outputs += [get_rl_output(linear_gaussian_env_type, table=table, ys=None, dim=dim, model_name=model_name, traj_length=traj_length)]
+        if args is not None:
+            loss_type_dir_prefix = '' if loss_type == 'forward_kl' else 'reverse_'
+            full_model_name = '/opt/agents/{}A={}_R={}/'.format(loss_type_dir_prefix, args.A, args.R) + model_name
+        else:
+            full_model_name = model_name
+        outputs += [get_rl_output(linear_gaussian_env_type, table=table, ys=None, dim=dim, model_name=full_model_name, traj_length=traj_length)]
     save_outputs_with_names_traj(outputs, distribution_type,
                                  '{}_{}(traj_lengths_{}_dim_{})'.format(distribution_type, loss_type, traj_lengths, dim))
     make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=dim,
@@ -1640,7 +1650,7 @@ def test_train(traj_length, dim, condition_length, ent_coef, loss_type,
           learning_rate=learning_rate, clip_range=clip_range,
           continue_training=continue_training,
           ignore_reward=ignore_reward, use_mlp_policy=use_mlp_policy,
-          rl_type=rl_type, A=A, R=R)
+          rl_type=rl_type, A=A, R=R, model_dir=args.model_dir)
 
 def sample_variance_ratios(traj_length, model_name, condition_length, policy=None):
     """
@@ -2421,7 +2431,7 @@ def plot_posterior_mean(ys, traj_length, dim, condition_length, xs=None):
 
     return means, xs
 
-def execute_pure_rl_ensemble(traj_lengths, dim, ent_coef, condition_length, use_mlp_policy):
+def execute_pure_rl_ensemble(traj_lengths, dim, ent_coef, condition_length, use_mlp_policy, model_dir='.'):
     table = create_dimension_table(torch.tensor([dim]), random=False)
     A = table[dim]['A']
     Q = table[dim]['Q']
@@ -2430,28 +2440,29 @@ def execute_pure_rl_ensemble(traj_lengths, dim, ent_coef, condition_length, use_
     Q_0 = table[dim]['Q_0']
     mu_0 = table[dim]['mu_0']
 
-    outputs = []
-    rl_ds = []
-    _, policy = load_rl_model(model_name='/opt/agents/0.1_reverse_kl_linear_gaussian_model_(traj_10_dim_1_condition_length_5_use_mlp_policy_True).zip', device='cpu')
-    rl_ds.append(policy)
-    _, policy = load_rl_model(model_name='/opt/agents/0.1_reverse_kl_linear_gaussian_model_(traj_10_dim_1_condition_length_4_use_mlp_policy_True).zip', device='cpu')
-    rl_ds.append(policy)
-    _, policy = load_rl_model(model_name='/opt/agents/0.1_reverse_kl_linear_gaussian_model_(traj_10_dim_1_condition_length_3_use_mlp_policy_True).zip', device='cpu')
-    rl_ds.append(policy)
-    _, policy = load_rl_model(model_name='/opt/agents/0.1_reverse_kl_linear_gaussian_model_(traj_10_dim_1_condition_length_2_use_mlp_policy_True).zip', device='cpu')
-    rl_ds.append(policy)
-    _, policy = load_rl_model(model_name='/opt/agents/0.1_reverse_kl_linear_gaussian_model_(traj_10_dim_1).zip', device='cpu')
-    rl_ds.append(policy)
+    # outputs = []
+    # rl_ds = []
+    # _, policy = load_rl_model(model_name='/opt/agents/0.1_reverse_kl_linear_gaussian_model_(traj_10_dim_1_condition_length_5_use_mlp_policy_True).zip', device='cpu')
+    # rl_ds.append(policy)
+    # _, policy = load_rl_model(model_name='/opt/agents/0.1_reverse_kl_linear_gaussian_model_(traj_10_dim_1_condition_length_4_use_mlp_policy_True).zip', device='cpu')
+    # rl_ds.append(policy)
+    # _, policy = load_rl_model(model_name='/opt/agents/0.1_reverse_kl_linear_gaussian_model_(traj_10_dim_1_condition_length_3_use_mlp_policy_True).zip', device='cpu')
+    # rl_ds.append(policy)
+    # _, policy = load_rl_model(model_name='/opt/agents/0.1_reverse_kl_linear_gaussian_model_(traj_10_dim_1_condition_length_2_use_mlp_policy_True).zip', device='cpu')
+    # rl_ds.append(policy)
+    # _, policy = load_rl_model(model_name='/opt/agents/0.1_reverse_kl_linear_gaussian_model_(traj_10_dim_1).zip', device='cpu')
+    # rl_ds.append(policy)
 
     for traj_length in traj_lengths:
-        # rl_ds = []
-        # for m in torch.arange(condition_length, 0, -1):
-        #     model_name = get_model_name(traj_length=traj_length, dim=dim,
-        #                                 ent_coef=ent_coef, loss_type=loss_type,
-        #                                 condition_length=m, use_mlp_policy=use_mlp_policy)
+        rl_ds = []
+        for m in torch.arange(condition_length, 0, -1):
+            base_model_name = get_model_name(traj_length=traj_length, dim=dim,
+                                             ent_coef=ent_coef, loss_type=loss_type,
+                                             condition_length=m, use_mlp_policy=use_mlp_policy)
 
-        #     _, policy = load_rl_model(model_name=model_name, device='cpu')
-        #     rl_ds.append(policy)
+            model_name = '{}/{}'.format(model_dir, base_model_name)
+            _, policy = load_rl_model(model_name=model_name, device='cpu')
+            rl_ds.append(policy)
 
         name = '{}(traj_len {} dim {})'.format(RL_DISTRIBUTION, traj_length, dim)
         rl_output = ImportanceOutput(traj_length=traj_length, ys=None, dim=dim)
@@ -2689,13 +2700,13 @@ def vi_ess_traj(args):
         vlgm.load_models()
         model_name = 'VariationalInference'
         outputs += [evaluate_vi_policy(vlgm, model_name, traj_length)]
-    save_dir = '{}/{}_m={}_A={}_R={}'.format(TODAY, distribution_type, vlgm.args.m, vlgm.args.A, vlgm.args.R)
+    save_dir = '{}/{}_m={}_lr={}_A={}_R={}'.format(TODAY, distribution_type, vlgm.args.m, vlgm.args.lr, vlgm.args.A, vlgm.args.R)
     os.makedirs(save_dir, exist_ok=True)
     save_outputs_with_names_traj(outputs, distribution_type,
-                                 'm={}_A={}_R={}_{}(traj_lengths_{}_dim_{})'.format(vlgm.args.m, vlgm.args.A, vlgm.args.R, distribution_type, args.ess_traj_lengths, args.dim), save_dir=save_dir)
+                                 'm={}_lr={}_A={}_R={}_{}(traj_lengths_{}_dim_{})'.format(vlgm.args.m, vlgm.args.lr, vlgm.args.A, vlgm.args.R, distribution_type, args.ess_traj_lengths, args.dim), save_dir=save_dir)
     make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=args.dim,
                        num_samples=args.num_samples, num_repeats=args.num_repeats, traj_lengths=args.ess_traj_lengths,
-                       xlabel='Trajectory Length', distribution_type=distribution_type, name='VariationalInference_m={}_A={}_R={}'.format(vlgm.args.m, vlgm.args.A, vlgm.args.R),
+                       xlabel='Trajectory Length', distribution_type=distribution_type, name='VariationalInference_m={}_lr={}_A={}_R={}'.format(vlgm.args.m, vlgm.args.lr, vlgm.args.A, vlgm.args.R),
                        save_dir=save_dir)
 
 
@@ -2742,6 +2753,7 @@ if __name__ == "__main__":
     RL_TIMESTEPS = args.rl_timesteps
     delta = args.delta
     ignore_reward = args.ignore_reward
+    model_dir = args.model_dir
 
     table = create_dimension_table([dim], random=False)
     if args.Q > 0 or args.C > 0:
@@ -2764,6 +2776,18 @@ if __name__ == "__main__":
     args.R = R
     args.mu_0 = mu_0
     args.Q_0 = Q_0
+
+    model_type_dir = ''
+    if A > 1.:
+        model_type_dir = 'A=tensor([[1.2000]])_R=tensor([[1.]])'
+    elif A < 1.:
+        model_type_dir = 'A=tensor([[0.6000]])_R=tensor([[1.]])'
+    elif R > 1.:
+        model_type_dir = 'A=tensor([[1.]])_R=tensor([[1.8000]])'
+    elif R < 1.:
+        model_type_dir = 'A=tensor([[1.]])_R=tensor([[0.8000]])'
+    model_dir = '{}/{}'.format(model_dir, model_type_dir)
+    args.model_dir = model_dir
 
     if subroutine == 'train_agent':
         print('executing: {}'.format('train_agent'))
@@ -2821,7 +2845,7 @@ if __name__ == "__main__":
         print('executing: {}'.format('rl_ess_traj'))
         table = create_dimension_table(torch.tensor([dim]), random=False)
         rl_ess_traj(linear_gaussian_env_type, table=table, traj_lengths=ess_traj_lengths, dim=dim,
-                    ent_coef=ent_coef, loss_type=loss_type, condition_length=condition_length, use_mlp_policy=use_mlp_policy)
+                    ent_coef=ent_coef, loss_type=loss_type, condition_length=condition_length, use_mlp_policy=use_mlp_policy, args=args)
     elif subroutine == 'ess_dim':
         print('executing: {}'.format('ess_dim'))
         dims = [x for x in range(1, 50)]
@@ -2898,7 +2922,7 @@ if __name__ == "__main__":
         execute_rl_posterior_ensemble(ess_traj_lengths, dim, condition_length, model_name)
     elif subroutine == 'evaluate_pure_rl_ensemble':
         print('executing: {}'.format('evaluate_pure_rl_ensemble'))
-        execute_pure_rl_ensemble(ess_traj_lengths, dim, ent_coef, condition_length, use_mlp_policy)
+        execute_pure_rl_ensemble(ess_traj_lengths, dim, ent_coef, condition_length, use_mlp_policy, model_dir=model_dir)
     elif subroutine == 'compute_analytical_kl_at_each_state':
         print('executing: {}'.format('compute_analytical_kl_at_each_state'))
         kls = execute_compute_analytical_kl_at_each_state(traj_length, dim, condition_length)

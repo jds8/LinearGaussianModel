@@ -26,6 +26,7 @@ def get_args():
     parser.add_argument('--continue_training', type=bool, default=False, help='whether to continue training the rl model')
     parser.add_argument('--use_mlp_policy', type=bool, default=True, help='whether to use an MLP policy')
     parser.add_argument('--rl_type', type=str, default='PPO', help='which RL algorithm to use')
+    parser.add_argument('--model_dir', type=str, default='/opt/agents', help='the directory containing rl models')
 
     # hyperparameters
     parser.add_argument('--clip_range', type=float, default=0.1, help='clip range')
@@ -49,7 +50,7 @@ def get_args():
     parser.add_argument('--obs_size', type=int, default=4, help='hidden dim to RNN/size of sufficient statistic of observations')
     parser.add_argument('--output_size', type=int, default=2, help='output dim to RNN')
     parser.add_argument('--num_rnn_layers', type=int, default=1, help='number of rnn layers')
-    parser.add_argument('--learning_rate', type=float, default=0.001, help='learning rate for Adam optimizer')
+    parser.add_argument('--lr', type=float, default=0.001, help='learning rate for Adam optimizer')
     parser.add_argument('--num_epochs', type=int, default=1000, help='number optimizer steps')
     parser.add_argument('--lgm_type', type=str, default='linear', help='what type of model to use')
     parser.add_argument('--A', type=float, default=-1., help='The generative parameter A')
