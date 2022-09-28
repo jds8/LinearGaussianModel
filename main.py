@@ -269,9 +269,11 @@ def get_model_name(traj_length, dim, ent_coef, loss_type, condition_length, use_
     # return TEST_MODEL_W_CONDITION.format(A, R, ent_coef, loss_type, traj_length, dim, condition_length, use_mlp_policy)+'.zip'
     if condition_length == 1 and condition_length == 'reverse_kl':
         return MODEL.format(ent_coef, loss_type, traj_length, dim)+'.zip'
-    elif rl_type == 'PPO':
-        return MODEL_W_CONDITION.format(ent_coef, loss_type, traj_length, dim, condition_length, use_mlp_policy)+'.zip'
+    # elif rl_type == 'PPO':
+    #    return MODEL_W_CONDITION.format(ent_coef, loss_type, traj_length, dim, condition_length, use_mlp_policy)+'.zip'
     else:
+        if rl_type == 'PPO':
+            rl_type = PPO
         return MODEL_W_CONDITION_AND_RL_TYPE.format(ent_coef, loss_type, traj_length, dim, condition_length, use_mlp_policy, rl_type)+'.zip'
 
 def model_without_directory(model):
@@ -2666,13 +2668,15 @@ def evaluate_vi_policy(vlgm, model_name, traj_length):
     policy = vlgm.extract_policy()
 
     rl_output = ImportanceOutput(traj_length=traj_length, ys=None, dim=dim)
- 
+
+    evidence_diffs = []
     for _ in range(vlgm.args.num_repeats):
         ys = generate_trajectory(traj_length, A=vlgm.args.A, Q=vlgm.args.Q, C=vlgm.args.C, R=vlgm.args.R, mu_0=vlgm.args.mu_0, Q_0=vlgm.args.Q_0)[0]
         env = EnsembleLinearGaussianEnv(A=vlgm.args.A, Q=vlgm.args.Q, C=vlgm.args.C, R=vlgm.args.R,
                                         mu_0=vlgm.args.mu_0, Q_0=vlgm.args.Q, condition_length=vlgm.args.condition_length,
                                         using_entropy_loss=False,
                                         ys=ys, traj_length=vlgm.args.traj_length, sample=False)
+
         eval_obj = evaluate(d=policy, N=vlgm.args.num_samples, env=env)
 
         # add rl confidence interval
@@ -2681,8 +2685,44 @@ def evaluate_vi_policy(vlgm, model_name, traj_length):
                                                   max_weight_prop=eval_obj.log_max_weight_prop.exp(),
                                                   ess=eval_obj.log_effective_sample_size.exp(),
                                                   ess_ci=eval_obj.ess_ci, idstr=model_name)
+
+        posterior_evidence = compute_evidence(table=vlgm.args.table, traj_length=traj_length, dim=dim)
+        evidence_diffs.append(torch.abs(eval_obj.running_log_estimates[-1] - posterior_evidence.evidence))
     rl_estimator.save_data()
-    return OutputWithName(rl_output, model_name)
+    return OutputWithName(rl_output, model_name), evidence_diffs
+
+def vi_evidence_estimate(args):
+    evidence_diffs = []
+    vlgm = get_vlgm(args)
+    for traj_length in vlgm.args.ess_traj_lengths:
+        # create new args object to create a new VLGM
+        new_args = deepcopy(args)
+        new_args.condition_length = args.m
+        new_args.traj_length = traj_length
+
+        # load VLGM for this traj_length
+        vlgm = get_vlgm(new_args)
+        vlgm.load_models()
+        model_name = 'VariationalInference_traj_len={}_A={}_R={}_m={}'.format(traj_length, vlgm.args.A, vlgm.args.R, vlgm.args.m)
+        _, lik_diffs = evaluate_vi_policy(vlgm, model_name, traj_length)
+        evidence_diffs.append(lik_diffs)
+    quantiles = torch.tensor([0.05, 0.5, 0.95])
+    lower_ci, med, upper_ci = torch.quantile(torch.tensor(evidence_diffs), quantiles, dim=1)
+    plt.plot(args.ess_traj_lengths, med)
+    plt.fill_between(args.ess_traj_lengths, y1=lower_ci, y2=upper_ci, alpha=0.3)
+    plt.xlabel('Trajectory Lengths')
+    plt.ylabel('Average Evidence Difference')
+    plt.legend()
+    ax = plt.gca()
+    ax.set_xticks(args.ess_traj_lengths)
+    plt.title('Avg Evidence Difference vs. Trajectory Length')
+    plt.savefig('{}/EvidenceDifference(A={}_R={}_condition_length={}).pdf'.format(TODAY, vlgm.args.A, vlgm.args.R, condition_length))
+    wandb.save('{}/EvidenceDifference(A={}_R={}_condition_length={}).pdf'.format(TODAY, vlgm.args.A, vlgm.args.R, condition_length))
+    plt.close()
+
+    estimates_df = pd.DataFrame(torch.stack([lower_ci, med, upper_ci]))
+    evidence_diffs_str = '{}/{}_EvidenceDifferences_m={}_A={}_R={}.csv'.format(TODAY, distribution_type, vlgm.args.m, vlgm.args.A, vlgm.args.R)
+    estimates_df.to_csv(evidence_diffs_str)
 
 def vi_ess_traj(args):
     distribution_type = VI_DISTRIBUTION
@@ -2746,7 +2786,7 @@ if __name__ == "__main__":
                                 use_mlp_policy=use_mlp_policy,
                                 rl_type=rl_type)
 
-    learning_rate = args.learning_rate
+    learning_rate = args.lr
     clip_range = args.clip_range
 
     NUM_SAMPLES = args.num_samples
@@ -2944,6 +2984,9 @@ if __name__ == "__main__":
     elif subroutine == 'vi_ess_traj':
         print('executing: {} condition_length: {}'.format('vi_ess_traj', args.condition_length))
         vi_ess_traj(args)
+    elif subroutine == 'vi_evidence_estimate':
+        print('executing: {} condition_length: {}'.format('vi_evidence_estimate', args.condition_length))
+        vi_evidence_estimate(args)
     else:
         print('executing: {}'.format('custom'))
         table = create_dimension_table(torch.tensor([dim]), random=False)
