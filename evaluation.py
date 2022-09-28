@@ -469,8 +469,13 @@ def evaluate_filtering_posterior(ys, N, tds, epsilon, env, m=0):
         for j in range(1, len(tds)):
             td_fps = tds[j]
             y = ys[j:j+m]
-            # import pdb; pdb.set_trace()
-            _dst = td_fps.condition(y_values=y, x_value=xt)
+            try:
+                _dst = td_fps.condition(y_values=y, x_value=xt)
+            except:
+                import pdb; pdb.set_trace()
+                old_dst = tds[j-1].condition(y_values=ys[j-1:j-1+m], x_value=states[-2])
+                _dst = td_fps.condition(y_values=y, x_value=xt)
+
             dst = dist.MultivariateNormal(_dst.mean(), _dst.covariance() + epsilon * torch.eye(_dst.mean().shape[0]))
             prev_xt = xt
             xt = dst.sample()

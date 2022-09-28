@@ -103,7 +103,17 @@ class VariationalLGM:
         self.params = list(self.model.parameters())
 
         var_dir = 'variational_inference'
-        self.run_dir = '{}/{}/m={}'.format(var_dir, self.name, self.args.m)
+        # self.run_dir = '{}/{}/m={}'.format(var_dir, self.name, self.args.m)
+        suffix_dir = 'wowza'
+        if args.A > 1:
+            suffix_dir = 'bigA'
+        elif args.A < 1:
+            suffix_dir = 'smallA'
+        elif args.R > 1:
+            suffix_dir = 'bigR'
+        elif args.R < 1:
+            suffix_dir = 'smallR'
+        self.run_dir = '/home/jsefas/linear-gaussian-model/from_borg/Sep-19-2022/m={}/{}/'.format(self.args.m, suffix_dir)
         # self.run_dir = '{}/m=0'.format(var_dir)
         self.model_state_dict_path = '{}/model_state_dict_traj_length_{}'.format(self.run_dir, self.args.traj_length)
         os.makedirs(self.run_dir, exist_ok=True)

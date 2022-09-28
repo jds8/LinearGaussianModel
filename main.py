@@ -596,15 +596,17 @@ def make_ess_versus_dimension_plot(outputs, num_samples):
 
 def make_ess_plot_nice(outputs_with_names, fixed_feature_string,
                        fixed_feature, num_samples, num_repeats,
-                       traj_lengths, xlabel, distribution_type, name=''):
+                       traj_lengths, xlabel, distribution_type, name='',
+                       save_dir=''):
     plot_ess_estimators_traj(outputs_with_names, traj_lengths)
 
     plt.xlabel(xlabel)
     plt.ylabel('Effective Sample Size')
     plt.title('Effective Sample Size Versus {}\n (num samples: {}, num repeats: {})'.format(xlabel, num_samples, num_repeats))
     legend_without_duplicate_labels(plt.gca())
-    plt.savefig('{}/{}/{}_ess_plot_{}_{}.pdf'.format(TODAY, distribution_type, name, fixed_feature_string, fixed_feature))
-    wandb.save('{}/{}/{}_ess_plot_{}_{}.pdf'.format(TODAY, distribution_type, name, fixed_feature_string, fixed_feature))
+    save_dir = save_dir if save_dir else '{}/{}'.format(TODAY, distribution_type)
+    plt.savefig('{}/{}_ess_plot_{}_{}.pdf'.format(save_dir, name, fixed_feature_string, fixed_feature))
+    wandb.save('{}/{}_ess_plot_{}_{}.pdf'.format(save_dir, name, fixed_feature_string, fixed_feature))
 
 def make_ess_plot_nice_dim(outputs_with_names, fixed_feature_string,
                            fixed_feature, num_samples, num_repeats,
@@ -976,7 +978,7 @@ def compute_evidence(table, traj_length, dim):
     Q_0 = table[dim]['Q_0']
 
     ys = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0]
-    env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, using_entropy_loss=True, ys=ys, sample=True)
+    env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, using_entropy_loss=True, ys=ys, sample=False)
 
     posterior = compute_posterior(A=A, Q=Q, C=C, R=R, num_observations=len(ys), dim=dim)
     td = condition_posterior(posterior, ys)
@@ -1180,7 +1182,8 @@ def save_outputs_with_names(outputs, distribution_type, label, columns, output_t
     os.makedirs('{}/{}'.format(TODAY, distribution_type), exist_ok=True)
     ess_output = torch.stack([torch.tensor(output.output[output.name].ess) for output in outputs], dim=1)
     df = pd.DataFrame(ess_output.numpy(), columns=columns)
-    df.to_csv('{}/{}/{}_ESS_{}.csv'.format(TODAY, distribution_type, label, output_type))
+    with open('{}/{}/{}_ESS_{}.csv'.format(TODAY, distribution_type, label, output_type), "w") as f:
+        df.to_csv(f)
 
 def get_perturbed_posterior_outputs(traj_length, dim, epsilons):
     outputs = []
@@ -1434,17 +1437,20 @@ def posterior_filtering_ess_dim(table, traj_length, dims, epsilon):
                            num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, dims=dims,
                            xlabel='Latent Dimension', distribution_type=distribution_type, name='posterior_{}'.format(epsilon))
 
-def posterior_filtering_conditional_ess_traj(table, traj_lengths, dim, condition_length):
+def posterior_filtering_conditional_ess_traj(table, traj_lengths, dim, condition_length, A=1., R=1.):
     distribution_type = FILTERING_POSTERIOR_CONDITIONAL_DISTRIBUTION
     os.makedirs('{}/{}'.format(TODAY, distribution_type), exist_ok=True)
     outputs = []
     for traj_length in traj_lengths:
         outputs += get_posterior_filtering_conditional_ess_outputs(table, traj_length, dim, condition_length)
+        if traj_length % 10 == 0:
+            save_outputs_with_names_traj(outputs, distribution_type,
+                                        'A={}_R={}{}(traj_lengths_{}-{}_dim_{}_condition_length_{})'.format(A, R, distribution_type, traj_lengths[0], traj_length, dim, condition_length))
     save_outputs_with_names_traj(outputs, distribution_type,
-                                 '{}(traj_lengths_{}_dim_{}_condition_length_{})'.format(distribution_type, traj_lengths, dim, condition_length))
+                                'A={}_R={}{}(traj_lengths_{}_dim_{}_condition_length_{})'.format(A, R, distribution_type, traj_lengths[0], traj_length, dim, condition_length))
     make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=dim,
                        num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, traj_lengths=traj_lengths,
-                       xlabel='Trajectory Length', distribution_type=distribution_type, name='posterior_filtering (conditioned on {} obs)'.format(condition_length))
+                       xlabel='Trajectory Length', distribution_type=distribution_type, name='A={}_R={}_posterior_filtering (conditioned on {} obs)'.format(A, R, condition_length))
 
 def prior_ess_traj(table, traj_lengths, dim):
     distribution_type = PRIOR_DISTRIBUTION
@@ -1972,6 +1978,7 @@ def plot_ess_from_data(directory, data_type, initial_idx=0):
 
 def plot_ess_from_dir_partial_data(directory, data_type, initial_idx=0):
     data = None
+    prefix = ''
     for j, fil in enumerate(os.listdir(os.fsencode(directory))):
         filename = os.fsdecode(fil)
         if 'ess' in filename.lower() and filename.endswith('.csv'):
@@ -1982,11 +1989,24 @@ def plot_ess_from_dir_partial_data(directory, data_type, initial_idx=0):
             quantiles = torch.tensor([0.05, 0.5, 0.95], dtype=data.dtype)
             lower_ci, med, upper_ci = torch.quantile(data, quantiles, dim=0)
 
-            df = pd.read_csv('{}/{}'.format(directory, filename), index_col=0)
-            x_vals = df.columns.astype(np.int)
+            _df = pd.read_csv('{}/{}'.format(directory, filename), index_col=0)
+            col_type = type(_df.columns[0])
+            x_vals = _df.columns.astype(np.int).sort_values()
+            df = _df[x_vals.astype(col_type)]
 
             plt.plot(x_vals, med.squeeze(), label=data_label)
             plt.fill_between(x_vals, y1=lower_ci, y2=upper_ci, alpha=0.3)
+
+            if 'big' in filename:
+                start_idx = filename.find('big')
+                end_idx = start_idx + len('big') + 1
+            elif 'small' in filename:
+                start_idx = filename.find('small')
+                end_idx = start_idx + len('small') + 1
+            else:
+                start_idx = 0
+                end_idx = 0
+            prefix = filename[start_idx:end_idx]
 
     xlabel = get_full_name_of_ess_type(ess_type)
     ax = plt.gca()
@@ -1995,8 +2015,9 @@ def plot_ess_from_dir_partial_data(directory, data_type, initial_idx=0):
     plt.ylabel('Effective Sample Size')
     plt.title('Effective Sample Size vs. {}'.format(xlabel))
     legend_without_duplicate_labels(plt.gca())
-    plt.savefig('{}/ess_{}.pdf'.format(TODAY, ess_type))
-    wandb.save('{}/ess_{}.pdf'.format(TODAY, ess_type))
+
+    plt.savefig('{}/{}_ess_{}.pdf'.format(directory, prefix, ess_type))
+    wandb.save('{}/{}_ess_{}.pdf'.format(directory, prefix, ess_type))
     plt.close()
 
 def plot_ess_from_partial_data(filenames, data_type):
@@ -2631,6 +2652,41 @@ def find_num_samples_for_traj_lengths(traj_lengths, dim, condition_length):
     wandb.save('{}/NumSamples(condition_length={}).pdf'.format(TODAY, condition_length))
     plt.close()
 
+def vi_evidence_estimate(args):
+    evidence_diffs = []
+    for traj_length in args.ess_traj_lengths:
+        distribution_type = VI_DISTRIBUTION
+        outputs = []
+
+        # create new args object to create a new VLGM
+        new_args = deepcopy(args)
+        new_args.traj_length = traj_length
+
+        # load VLGM for this traj_length
+        vlgm = get_vlgm(new_args)
+        vlgm.load_models()
+        model_name = 'VariationalInference_traj_len={}_A={}_R={}_m={}'.format(traj_length, vlgm.args.A, vlgm.args.R, vlgm.args.m)
+        _, lik_diffs = evaluate_vi_policy(vlgm, model_name, traj_length)
+        evidence_diffs.append(lik_diffs)
+    quantiles = torch.tensor([0.05, 0.5, 0.95])
+    lower_ci, med, upper_ci = torch.quantile(torch.tensor(evidence_diffs), quantiles, dim=1)
+    plt.plot(args.ess_traj_lengths, med)
+    plt.fill_between(args.ess_traj_lengths, y1=lower_ci, y2=upper_ci, alpha=0.3)
+    plt.xlabel('Trajectory Lengths')
+    plt.ylabel('Average Evidence Difference')
+    plt.legend()
+    ax = plt.gca()
+    ax.set_xticks(args.ess_traj_lengths)
+    plt.title('Avg Evidence Difference vs. Trajectory Length')
+    plt.savefig('{}/EvidenceDifference(condition_length={}).pdf'.format(TODAY, condition_length))
+    wandb.save('{}/EvidenceDifference(condition_length={}).pdf'.format(TODAY, condition_length))
+    plt.close()
+
+    estimates_df = pd.DataFrame(torch.stack([lower_ci, med, upper_ci]))
+    evidence_diffs_str = '{}/{}_EvidenceDifferences_m={}_A={}_R={}.csv'.format(TODAY, distribution_type, vlgm.args.m, vlgm.args.A, vlgm.args.R)
+    estimates_df.to_csv(evidence_diffs_str)
+
+
 def vi_variance_ratio(args, policy):
     forward_means, forward_vrs = sample_variance_ratios(traj_length=args.traj_length, model_name='',
                                                         condition_length=args.traj_length, policy=policy)
@@ -2649,13 +2705,14 @@ def evaluate_vi_policy(vlgm, model_name, traj_length):
 
     rl_output = ImportanceOutput(traj_length=traj_length, ys=None, dim=dim)
 
-    print('Q: {}'.format(vlgm.args.Q))
-    env = EnsembleLinearGaussianEnv(A=vlgm.args.A, Q=vlgm.args.Q, C=vlgm.args.C, R=vlgm.args.R,
-                                    mu_0=vlgm.args.mu_0, Q_0=vlgm.args.Q, condition_length=vlgm.args.condition_length,
-                                    using_entropy_loss=False,
-                                    ys=None, traj_length=vlgm.args.traj_length, sample=True)
-
+    evidence_diffs = []
     for _ in range(vlgm.args.num_repeats):
+        ys = generate_trajectory(traj_length, A=vlgm.args.A, Q=vlgm.args.Q, C=vlgm.args.C, R=vlgm.args.R, mu_0=vlgm.args.mu_0, Q_0=vlgm.args.Q_0)[0]
+        env = EnsembleLinearGaussianEnv(A=vlgm.args.A, Q=vlgm.args.Q, C=vlgm.args.C, R=vlgm.args.R,
+                                        mu_0=vlgm.args.mu_0, Q_0=vlgm.args.Q, condition_length=vlgm.args.condition_length,
+                                        using_entropy_loss=False,
+                                        ys=ys, traj_length=vlgm.args.traj_length, sample=False)
+
         eval_obj = evaluate(d=policy, N=vlgm.args.num_samples, env=env)
 
         # add rl confidence interval
@@ -2664,31 +2721,41 @@ def evaluate_vi_policy(vlgm, model_name, traj_length):
                                                   max_weight_prop=eval_obj.log_max_weight_prop.exp(),
                                                   ess=eval_obj.log_effective_sample_size.exp(),
                                                   ess_ci=eval_obj.ess_ci, idstr=model_name)
+
+        posterior_evidence = compute_evidence(table=vlgm.args.table, traj_length=traj_length, dim=dim)
+        evidence_diffs.append(torch.abs(eval_obj.running_log_estimates[-1] - posterior_evidence.evidence))
     rl_estimator.save_data()
-    return OutputWithName(rl_output, model_name)
+    return OutputWithName(rl_output, model_name), evidence_diffs
 
 def vi_ess_traj(args):
     distribution_type = VI_DISTRIBUTION
-    os.makedirs('{}/{}'.format(TODAY, distribution_type), exist_ok=True)
     outputs = []
+    vlgm = get_vlgm(args)
     for traj_length in args.ess_traj_lengths:
         # create new args object to create a new VLGM
         new_args = deepcopy(args)
         new_args.traj_length = traj_length
+        new_args.condition_length = vlgm.args.m
 
         # load VLGM for this traj_length
         vlgm = get_vlgm(new_args)
         vlgm.load_models()
         model_name = 'VariationalInference'
-        outputs += [evaluate_vi_policy(vlgm, model_name, traj_length)]
+        outputs += [evaluate_vi_policy(vlgm, model_name, traj_length)[0]]
+    save_dir = '{}/{}_m={}_A={}_R={}'.format(TODAY, distribution_type, vlgm.args.m, vlgm.args.A, vlgm.args.R)
+    os.makedirs(save_dir, exist_ok=True)
     save_outputs_with_names_traj(outputs, distribution_type,
-                                 '{}(traj_lengths_{}_dim_{})'.format(distribution_type, args.ess_traj_lengths, args.dim))
+                                 'm={}_A={}_R={}_{}(traj_lengths_{}_dim_{})'.format(vlgm.args.m, vlgm.args.A, vlgm.args.R, distribution_type, args.ess_traj_lengths, args.dim),
+                                 save_dir=save_dir)
     make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=args.dim,
                        num_samples=args.num_samples, num_repeats=args.num_repeats, traj_lengths=args.ess_traj_lengths,
-                       xlabel='Trajectory Length', distribution_type=distribution_type, name='VariationalInference')
+                       xlabel='Trajectory Length', distribution_type=distribution_type, name='VariationalInference',
+                       save_dir=save_dir)
 
 
 if __name__ == "__main__":
+    torch.manual_seed(10)
+
     args, _ = get_args()
     subroutine = args.subroutine
     SAVE_DIR = args.save_dir
@@ -2732,6 +2799,28 @@ if __name__ == "__main__":
     delta = args.delta
     ignore_reward = args.ignore_reward
 
+    table = create_dimension_table([dim], random=False)
+    if args.Q > 0 or args.C > 0:
+        table[dim]['A'] = torch.tensor(args.A).reshape(table[dim]['A'].shape)
+        table[dim]['Q'] = torch.tensor(args.Q).reshape(table[dim]['Q'].shape)
+        table[dim]['C'] = torch.tensor(args.C).reshape(table[dim]['C'].shape)
+        table[dim]['R'] = torch.tensor(args.R).reshape(table[dim]['R'].shape)
+
+    A = table[dim]['A']
+    Q = table[dim]['Q']
+    C = table[dim]['C']
+    R = table[dim]['R']
+    mu_0 = table[dim]['mu_0']
+    Q_0 = table[dim]['Q_0']
+
+    args.table = table
+    args.A = A
+    args.Q = Q
+    args.C = C
+    args.R = R
+    args.mu_0 = mu_0
+    args.Q_0 = Q_0
+
     if subroutine == 'train_agent':
         print('executing: {}'.format('train_agent'))
         test_train(traj_length=traj_length, dim=dim, condition_length=condition_length,
@@ -2770,12 +2859,12 @@ if __name__ == "__main__":
         posterior_filtering_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, epsilon=epsilon)
     elif subroutine == 'posterior_filtering_conditional_ess_traj':
         print('executing: {}'.format('posterior_filtering_conditional_ess_traj'))
-        table = create_dimension_table(torch.tensor([dim]), random=False)
-        posterior_filtering_conditional_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, condition_length=condition_length)
-        # posterior_filtering_conditional_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, condition_length=1)
-        # posterior_filtering_conditional_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, condition_length=2)
-        # posterior_filtering_conditional_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, condition_length=3)
-        # posterior_filtering_conditional_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, condition_length=4)
+        # table = create_dimension_table(torch.tensor([dim]), random=False)
+        posterior_filtering_conditional_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, condition_length=condition_length, A=args.A, R=args.R)
+        # posterior_filtering_conditional_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, condition_length=1, A=args.A, R=args.R)
+        # posterior_filtering_conditional_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, condition_length=2, A=args.A, R=args.R)
+        # posterior_filtering_conditional_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, condition_length=3, A=args.A, R=args.R)
+        # posterior_filtering_conditional_ess_traj(table=table, traj_lengths=ess_traj_lengths, dim=dim, condition_length=4, A=args.A, R=args.R)
     elif subroutine == 'posterior_filtering_conditional_ess_condition_length':
         print('executing: {}'.format('posterior_filtering_conditional_ess_condition_length'))
         table = create_dimension_table(torch.tensor([dim]), random=False)
@@ -2839,10 +2928,10 @@ if __name__ == "__main__":
         print('executing: {}'.format('plot_variance'))
         save_dir = str(time.time())
         table = create_dimension_table(torch.tensor([dim]), random=False)
-        table[dim]['Q'] = torch.tensor(2.2).reshape(1,1)
-        table[dim]['C'] = torch.tensor(0.2).reshape(1,1)
-        table[dim]['R'] = torch.tensor(2.2).reshape(1,1)
-        table[dim]['A'] = torch.tensor(1.0).reshape(1,1)
+        table[dim]['Q'] = torch.tensor(1.0).reshape(1,1)
+        table[dim]['C'] = torch.tensor(1.0).reshape(1,1)
+        table[dim]['R'] = torch.tensor(0.8).reshape(1,1)
+        table[dim]['A'] = torch.tensor(0.9).reshape(1,1)
         # for A in torch.arange(0.2, 1.4, 0.1):
         #     table[dim]['A'] = A.reshape(1,1)
         #     true_variances = plot_posterior_variance(table, traj_length, dim, condition_length=0, save_dir=save_dir)
@@ -2887,6 +2976,9 @@ if __name__ == "__main__":
     elif subroutine == 'vi_ess_traj':
         print('executing: {} condition_length: {}'.format('vi_ess_traj', args.condition_length))
         vi_ess_traj(args)
+    elif subroutine == 'vi_evidence_estimate':
+        print('executing: {} condition_length: {}'.format('vi_ess_traj', args.condition_length))
+        vi_evidence_estimate(args)
     else:
         print('executing: {}'.format('custom'))
         table = create_dimension_table(torch.tensor([dim]), random=False)
