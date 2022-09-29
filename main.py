@@ -342,7 +342,7 @@ def train(traj_length, env, dim, condition_length, ent_coef=1.0,
 
     # save model
     model.save(save_dir + model_name)
-    wandb.save(model_name)
+    # wandb.save(model_name)
 
 
 class ProposalDist:
@@ -600,7 +600,7 @@ def make_ess_versus_dimension_plot(outputs, num_samples):
     plt.title('Effective Sample Size Versus Hidden Dimension\n(num samples: {} trajectory length: {})'.format(num_samples, traj_length))
     legend_without_duplicate_labels(plt.gca())
     plt.savefig('{}/ess_versus_dimension_(traj_len: {}).pdf'.format(TODAY, traj_length))
-    wandb.save('{}/ess_versus_dimension_(traj_len: {}).pdf'.format(TODAY, traj_length))
+    # wandb.save('{}/ess_versus_dimension_(traj_len: {}).pdf'.format(TODAY, traj_length))
     plt.close()
 
 def make_ess_plot_nice(outputs_with_names, fixed_feature_string,
@@ -616,7 +616,7 @@ def make_ess_plot_nice(outputs_with_names, fixed_feature_string,
     save_dir = save_dir if save_dir else '{}/{}/'
     os.makedirs(save_dir, exist_ok=True)
     plt.savefig('{}/{}_ess_plot_{}_{}.pdf'.format(save_dir, name, fixed_feature_string, fixed_feature))
-    wandb.save('{}/{}_ess_plot_{}_{}.pdf'.format(save_dir, name, fixed_feature_string, fixed_feature))
+    # wandb.save('{}/{}_ess_plot_{}_{}.pdf'.format(save_dir, name, fixed_feature_string, fixed_feature))
 
 def make_ess_plot_nice_dim(outputs_with_names, fixed_feature_string,
                            fixed_feature, num_samples, num_repeats,
@@ -628,7 +628,7 @@ def make_ess_plot_nice_dim(outputs_with_names, fixed_feature_string,
     plt.title('Effective Sample Size Versus {}\n (num samples: {}, num repeats: {})'.format(xlabel, num_samples, num_repeats))
     legend_without_duplicate_labels(plt.gca())
     plt.savefig('{}/{}/{}_ess_plot_{}_{}.pdf'.format(TODAY, distribution_type, name, fixed_feature_string, fixed_feature))
-    wandb.save('{}/{}/{}_ess_plot_{}_{}.pdf'.format(TODAY, distribution_type, name, fixed_feature_string, fixed_feature))
+    # wandb.save('{}/{}/{}_ess_plot_{}_{}.pdf'.format(TODAY, distribution_type, name, fixed_feature_string, fixed_feature))
 
 def make_ess_plot_nice_condition_length(outputs_with_names, fixed_feature_string,
                                         fixed_feature, num_samples, num_repeats,
@@ -640,7 +640,7 @@ def make_ess_plot_nice_condition_length(outputs_with_names, fixed_feature_string
     plt.title('Effective Sample Size Versus {}\n (num samples: {}, num repeats: {})'.format(xlabel, num_samples, num_repeats))
     legend_without_duplicate_labels(plt.gca())
     plt.savefig('{}/{}/{}_ess_plot_{}_{}.pdf'.format(TODAY, distribution_type, name, fixed_feature_string, fixed_feature))
-    wandb.save('{}/{}/{}_ess_plot_{}_{}.pdf'.format(TODAY, distribution_type, name, fixed_feature_string, fixed_feature))
+    # wandb.save('{}/{}/{}_ess_plot_{}_{}.pdf'.format(TODAY, distribution_type, name, fixed_feature_string, fixed_feature))
 
 
 class Plotter:
@@ -776,7 +776,7 @@ class Plotter:
             plt.title('Convergence of Prob. {} Estimate to True Prob. {} \n(trajectory length: {}, dimension: {})'.format(self.name, self.name, traj_length, self.dimension))
             plt.legend()
             plt.savefig('{}/{}traj_length_{}_dimension_{}_{}_convergence.pdf'.format(TODAY, name, traj_length, self.dimension, self.name))
-            wandb.save('{}/{}traj_length_{}_dimension_{}_{}_convergence.pdf'.format(TODAY, name, traj_length, self.dimension, self.name))
+            # wandb.save('{}/{}traj_length_{}_dimension_{}_{}_convergence.pdf'.format(TODAY, name, traj_length, self.dimension, self.name))
             plt.close()
         return outputs
 
@@ -1278,7 +1278,7 @@ def plot_convergence(outputs_with_names, traj_length, dim, true, name):
     legend_without_duplicate_labels(plt.gca())
     model_name = model_without_directory(name)
     plt.savefig(TODAY+'/'+model_name+'(traj_length_{}_dim_{})Convergence.pdf'.format(traj_length, dim))
-    wandb.save(TODAY+'/'+model_name+'Convergence.pdf')
+    # wandb.save(TODAY+'/'+model_name+'Convergence.pdf')
     plt.close()
 
 def posterior_convergence(posterior_evidence, dim, epsilons):
@@ -1871,7 +1871,7 @@ def basic_plot(datas, quantiles, traj_length, labels, xlabel, ylabel, title, sav
     plt.title(title)
     plt.legend()
     plt.savefig(save_path)
-    wandb.save(save_path)
+    # wandb.save(save_path)
     plt.close()
 
 def execute_variance_ratio_runs(t_len, ent_coef, condition_length):
@@ -1972,7 +1972,7 @@ def _plot_ess(ess_type):
     plt.title('Effective Sample Size vs. {}'.format(xlabel))
     legend_without_duplicate_labels(plt.gca())
     plt.savefig('{}/ess_{}.pdf'.format(TODAY, ess_type))
-    wandb.save('{}/ess_{}.pdf'.format(TODAY, ess_type))
+    # wandb.save('{}/ess_{}.pdf'.format(TODAY, ess_type))
     plt.close()
 
 def plot_ess_from_data_from_files(filenames, data_type):
@@ -2022,7 +2022,7 @@ def plot_ess_from_dir_partial_data(directory, data_type, initial_idx=0):
     plt.title('Effective Sample Size vs. {}'.format(xlabel))
     legend_without_duplicate_labels(plt.gca())
     plt.savefig('{}/ess_{}.pdf'.format(TODAY, ess_type))
-    wandb.save('{}/ess_{}.pdf'.format(TODAY, ess_type))
+    # wandb.save('{}/ess_{}.pdf'.format(TODAY, ess_type))
     plt.close()
 
 def plot_ess_from_partial_data(filenames, data_type):
@@ -2052,7 +2052,7 @@ def plot_ess_from_partial_data(filenames, data_type):
     plt.title('Effective Sample Size vs. {}'.format(xlabel))
     legend_without_duplicate_labels(plt.gca())
     plt.savefig('{}/ess_{}.pdf'.format(TODAY, ess_type))
-    wandb.save('{}/ess_{}.pdf'.format(TODAY, ess_type))
+    # wandb.save('{}/ess_{}.pdf'.format(TODAY, ess_type))
     plt.close()
 
 def get_env_type_from_arg(env_type_arg, condition_length=0):
@@ -2210,7 +2210,7 @@ def execute_evaluate_agent_until(linear_gaussian_env_type, traj_lengths, dim, lo
 
     save_path = '{}/ent_coef_{}_loss_type_{}_dim_{}EvalUntilSampleSize.pdf'.format(rl_estimator.save_dir, ent_coef, loss_type, dim)
     plt.savefig(save_path)
-    wandb.save(save_path)
+    # wandb.save(save_path)
 
 def generate_rewards(traj_length, dim, loss_type):
     table = create_dimension_table(torch.tensor([dim]), random=False)
@@ -2281,7 +2281,7 @@ def plot_smoothing_reward(xlabels, all_rewards, labels, linestyles):
                          box.width, box.height * 0.9])
         ax.legend(loc='lower center', bbox_to_anchor=(0.5, -1.3), ncol=int(len(labels)/2))
         plt.savefig('{}/(traj_length_{})DeterministicRewardPlot.pdf'.format(TODAY, traj_length))
-        wandb.save('{}/(traj_length_{})DeterministicRewardPlot.pdf'.format(TODAY, traj_length))
+        # wandb.save('{}/(traj_length_{})DeterministicRewardPlot.pdf'.format(TODAY, traj_length))
 
 def policy_reward(traj_length, dim, linear_gaussian_env_type, model_name, ys, condition_length):
     # evaluate rl policy
@@ -2389,10 +2389,10 @@ def plot_posterior_variance(table, traj_length, dim, condition_length, true_vari
     if save_dir:
         os.makedirs('{}/{}'.format(TODAY, save_dir), exist_ok=True)
         plt.savefig('{}/{}/TruncatedSmoothingPosteriorVariance(m={} traj_length={} A={} Q={} C={} R={}).pdf'.format(TODAY, save_dir, condition_length, traj_length, A, Q, C, R))
-        wandb.save('{}/{}/TruncatedSmoothingPosteriorVariance(m={} traj_length={} A={} Q={} C={} R={}).pdf'.format(TODAY, save_dir, condition_length, traj_length, A, Q, C, R))
+        # wandb.save('{}/{}/TruncatedSmoothingPosteriorVariance(m={} traj_length={} A={} Q={} C={} R={}).pdf'.format(TODAY, save_dir, condition_length, traj_length, A, Q, C, R))
     else:
         plt.savefig('{}/TruncatedSmoothingPosteriorVariance(m={} traj_length={} A={} Q={} C={} R={}).pdf'.format(TODAY, condition_length, traj_length, A, Q, C, R))
-        wandb.save('{}/TruncatedSmoothingPosteriorVariance(m={} traj_length={} A={} Q={} C={} R={}).pdf'.format(TODAY, condition_length, traj_length, A, Q, C, R))
+        # wandb.save('{}/TruncatedSmoothingPosteriorVariance(m={} traj_length={} A={} Q={} C={} R={}).pdf'.format(TODAY, condition_length, traj_length, A, Q, C, R))
     plt.close()
 
     return variances
@@ -2435,7 +2435,7 @@ def plot_posterior_mean(ys, traj_length, dim, condition_length, xs=None):
     R = table[dim]['R'].item()
 
     plt.savefig('{}/TruncatedSmoothingPosteriorMean(m={} traj_length={} A={} Q={} C={} R={}).pdf'.format(TODAY, condition_length, traj_length, A, Q, C, R))
-    wandb.save('{}/TruncatedSmoothingPosteriorMean(m={} traj_length={} A={} Q={} C={} R={}).pdf'.format(TODAY, condition_length, traj_length, A, Q, C, R))
+    # wandb.save('{}/TruncatedSmoothingPosteriorMean(m={} traj_length={} A={} Q={} C={} R={}).pdf'.format(TODAY, condition_length, traj_length, A, Q, C, R))
     plt.close()
 
     return means, xs
@@ -2630,7 +2630,7 @@ def find_num_samples_for_condition_lengths(traj_length, dim, condition_lengths):
     ax.set_xticks(condition_lengths)
     plt.title('Num Samples for Evidence Estimate to be Within {} of Truth'.format(delta))
     plt.savefig('{}/NumSamples(traj_length={}).pdf'.format(TODAY, traj_length))
-    wandb.save('{}/NumSamples(traj_length={}).pdf'.format(TODAY, traj_length))
+    # wandb.save('{}/NumSamples(traj_length={}).pdf'.format(TODAY, traj_length))
     plt.close()
 
 def find_num_samples_for_traj_lengths(traj_lengths, dim, condition_length):
@@ -2655,7 +2655,7 @@ def find_num_samples_for_traj_lengths(traj_lengths, dim, condition_length):
     ax.set_xticks(traj_lengths)
     plt.title('Num Samples for Evidence Estimate to be Within {} of Truth'.format(delta))
     plt.savefig('{}/NumSamples(condition_length={}).pdf'.format(TODAY, condition_length))
-    wandb.save('{}/NumSamples(condition_length={}).pdf'.format(TODAY, condition_length))
+    # wandb.save('{}/NumSamples(condition_length={}).pdf'.format(TODAY, condition_length))
     plt.close()
 
 def vi_variance_ratio(args, policy):
@@ -2751,7 +2751,7 @@ def make_evidence_plot(args, distribution_type, evidence_diffs):
     ax.set_xticks(args.ess_traj_lengths)
     plt.title('Avg Evidence Difference vs. Trajectory Length')
     plt.savefig('{}/EvidenceDifference(A={}_R={}_condition_length={}).pdf'.format(TODAY, args.A, args.R, args.condition_length))
-    wandb.save('{}/EvidenceDifference(A={}_R={}_condition_length={}).pdf'.format(TODAY, args.A, args.R, args.condition_length))
+    # wandb.save('{}/EvidenceDifference(A={}_R={}_condition_length={}).pdf'.format(TODAY, args.A, args.R, args.condition_length))
     plt.close()
 
     estimates_df = pd.DataFrame(torch.stack([lower_ci, med, upper_ci]))
