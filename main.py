@@ -2001,8 +2001,10 @@ def plot_ess_from_dir_partial_data(directory, data_type, initial_idx=0):
             quantiles = torch.tensor([0.05, 0.5, 0.95], dtype=data.dtype)
             lower_ci, med, upper_ci = torch.quantile(data, quantiles, dim=0)
 
-            df = pd.read_csv('{}/{}'.format(directory, filename), index_col=0)
-            x_vals = df.columns.astype(np.int)
+            _df = pd.read_csv('{}/{}'.format(directory, filename), index_col=0)
+            col_type = type(_df.columns[0])
+            x_vals = _df.columns.astype(np.int).sort_values()
+            df = _df[x_vals.astype(col_type)]
 
             plt.plot(x_vals, med.squeeze(), label=data_label)
             plt.fill_between(x_vals, y1=lower_ci, y2=upper_ci, alpha=0.3)
@@ -2728,7 +2730,6 @@ def vi_ess_traj(args):
     distribution_type = VI_DISTRIBUTION
     outputs = []
     vlgm = get_vlgm(args)
-    print('entering for loop')
     for traj_length in vlgm.args.ess_traj_lengths:
         # create new args object to create a new VLGM
         new_args = deepcopy(args)
@@ -2739,7 +2740,8 @@ def vi_ess_traj(args):
         vlgm = get_vlgm(new_args)
         vlgm.load_models()
         model_name = 'VariationalInference'
-        outputs += [evaluate_vi_policy(vlgm, model_name, traj_length)]
+        output, lik_diffs = evaluate_vi_policy(vlgm, model_name, traj_length)
+        outputs.append(output)
     save_dir = '{}/{}_m={}_lr={}_A={}_R={}'.format(TODAY, distribution_type, vlgm.args.m, vlgm.args.lr, vlgm.args.A, vlgm.args.R)
     os.makedirs(save_dir, exist_ok=True)
     save_outputs_with_names_traj(outputs, distribution_type,
@@ -2751,6 +2753,8 @@ def vi_ess_traj(args):
 
 
 if __name__ == "__main__":
+    torch.manual_seed(10)
+
     args, _ = get_args()
     subroutine = args.subroutine
     SAVE_DIR = args.save_dir
