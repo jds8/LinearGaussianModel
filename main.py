@@ -1994,6 +1994,8 @@ def plot_ess_from_data(directory, data_type, initial_idx=0):
 
 def plot_ess_from_dir_partial_data(directory, data_type, initial_idx=0):
     data = None
+    if not directory.endswith('/'):
+        directory = directory + '/'
     for j, fil in enumerate(os.listdir(os.fsencode(directory))):
         filename = os.fsdecode(fil)
         if 'ess' in filename.lower() and filename.endswith('.csv'):
@@ -2797,7 +2799,7 @@ if __name__ == "__main__":
 
     # MODEL = 'agents/'+save_dir+'/{}_{}_linear_gaussian_model_(traj_{}_dim_{})'
     if subroutine != 'train_agent':
-        # run = wandb.init(project='linear_gaussian_model', save_code=True, entity='iai')
+        run = wandb.init(project='linear_gaussian_model', save_code=True, entity='iai')
         os.makedirs(SAVE_DIR, exist_ok=True)
 
     os.makedirs('agents/', exist_ok=True)
