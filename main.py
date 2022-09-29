@@ -2780,11 +2780,12 @@ def vi_ess_traj(args):
         output, lik_diffs = evaluate_vi_policy(vlgm, model_name, traj_length, ys_set=ys_set)
         outputs.append(output)
         evidence_diffs.append(lik_diffs)
-        save_outputs_with_names_traj(outputs, distribution_type,
-                                    'm={}_lr={}_A={}_R={}_{}(traj_lengths_thus_far_{}_dim_{})'.format(vlgm.args.m, vlgm.args.lr, vlgm.args.A,
-                                                                                             vlgm.args.R, distribution_type,
-                                                                                             args.ess_traj_lengths[0:i], args.dim),
-                                     save_dir=save_dir)
+        if i%5 == 0
+            save_outputs_with_names_traj(outputs, distribution_type,
+                                        'm={}_lr={}_A={}_R={}_{}(traj_lengths_thus_far_{}_dim_{})'.format(vlgm.args.m, vlgm.args.lr, vlgm.args.A,
+                                                                                                vlgm.args.R, distribution_type,
+                                                                                                args.ess_traj_lengths[0:i], args.dim),
+                                        save_dir=save_dir)
     make_evidence_plot(vlgm.args, VI_DISTRIBUTION, evidence_diffs)
     save_outputs_with_names_traj(outputs, distribution_type,
                                  'm={}_lr={}_A={}_R={}_{}(traj_lengths_{}_dim_{})'.format(vlgm.args.m, vlgm.args.lr, vlgm.args.A, vlgm.args.R, distribution_type, args.ess_traj_lengths, args.dim), save_dir=save_dir)
