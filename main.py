@@ -977,7 +977,7 @@ class PosteriorEvidence:
         self.env = env
 
 
-def compute_evidence(table, traj_length, dim):
+def compute_evidence(table, traj_length, dim, ys=None):
     os.makedirs(TODAY, exist_ok=True)
 
     A = table[dim]['A']
@@ -987,8 +987,9 @@ def compute_evidence(table, traj_length, dim):
     mu_0 = table[dim]['mu_0']
     Q_0 = table[dim]['Q_0']
 
-    ys = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0]
-    env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, using_entropy_loss=True, ys=ys, sample=True)
+    if ys is None:
+        ys = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0]
+    env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, using_entropy_loss=True, ys=ys, sample=False)
 
     posterior = compute_posterior(A=A, Q=Q, C=C, R=R, num_observations=len(ys), dim=dim)
     td = condition_posterior(posterior, ys)
@@ -1027,10 +1028,10 @@ def get_prior_output(table, ys, dim, sample, traj_length=0):
                                                      idstr=name)
     return OutputWithName(prior_output, name)
 
-def get_rl_output(linear_gaussian_env_type, table, ys, dim, model_name, traj_length=0):
-    if ys is not None:
-        traj_length = len(ys)
-    rl_output = ImportanceOutput(traj_length=traj_length, ys=ys, dim=dim)
+def get_rl_output(linear_gaussian_env_type, table, ys_set, dim, model_name, traj_length=0):
+    if ys_set is not None:
+        traj_length = len(ys_set[0])
+    rl_output = ImportanceOutput(traj_length=traj_length, ys=None, dim=dim)
 
     A = table[dim]['A']
     Q = table[dim]['Q']
@@ -1041,19 +1042,17 @@ def get_rl_output(linear_gaussian_env_type, table, ys, dim, model_name, traj_len
 
     loss_type = get_loss_type(model_name)
 
-    env = linear_gaussian_env_type(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q,
-                                    using_entropy_loss=(loss_type==ENTROPY_LOSS),
-                                    ys=ys, traj_length=traj_length, sample=False)
-
-    sample_ys = ys is None
-    for _ in range(NUM_REPEATS):
+    sample_ys = ys_set is None
+    for i in range(NUM_REPEATS):
         if sample_ys:
             # create a new environment
             ys = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0]
-            env = linear_gaussian_env_type(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q,
-                                           using_entropy_loss=(loss_type==ENTROPY_LOSS),
-                                           ys=ys, traj_length=traj_length, sample=False)
-            env.reset()
+        else:
+            ys = ys_set[i]
+
+        env = linear_gaussian_env_type(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q,
+                                       using_entropy_loss=(loss_type==ENTROPY_LOSS),
+                                       ys=ys, traj_length=traj_length, sample=False)
 
         eval_obj = rl_estimate(ys, dim=dim, N=NUM_SAMPLES*traj_length**0, model_name=model_name,
                                env=env, traj_length=traj_length)
@@ -1227,11 +1226,13 @@ def plot_ess_estimators_traj(outputs_with_names, traj_lengths):
     #     estimates.append(torch.tensor([repeat[-1] for repeat in output.output[output.name].ess]))
     # estimates = torch.stack(estimates, dim=1)
 
+    sorted_traj_lengths = torch.tensor(traj_lengths).sort().values
+
     outputs = torch.stack([torch.tensor(output.output[output.name].ess) for output in outputs_with_names], dim=1)
     quantiles = torch.tensor([0.05, 0.5, 0.95])
     lower_ci, med, upper_ci = torch.quantile(outputs, quantiles, dim=0)
-    plt.plot(traj_lengths, med.squeeze(), label=outputs_with_names[0].name)
-    plt.fill_between(traj_lengths, y1=lower_ci, y2=upper_ci, alpha=0.3)
+    plt.plot(sorted_traj_lengths, med.squeeze(), label=outputs_with_names[0].name)
+    plt.fill_between(sorted_traj_lengths, y1=lower_ci, y2=upper_ci, alpha=0.3)
 
     ax = plt.gca()
     ax.xaxis.get_major_locator().set_params(integer=True)
@@ -1483,10 +1484,11 @@ def prior_ess_dim(table, traj_length, dims):
 
 def rl_ess_traj(linear_gaussian_env_type, table, traj_lengths,
                 dim, ent_coef, loss_type, condition_length,
-                use_mlp_policy, args=None):
+                use_mlp_policy, args):
     distribution_type = RL_DISTRIBUTION
     os.makedirs('{}/{}'.format(TODAY, distribution_type), exist_ok=True)
     outputs = []
+    ys_map = load_ys_map(args)
     for traj_length in traj_lengths:
         model_name = get_model_name(traj_length=traj_length, dim=dim,
                                     ent_coef=ent_coef, loss_type=loss_type,
@@ -1497,7 +1499,8 @@ def rl_ess_traj(linear_gaussian_env_type, table, traj_lengths,
             full_model_name = '/opt/agents/{}A={}_R={}/'.format(loss_type_dir_prefix, args.A, args.R) + model_name
         else:
             full_model_name = model_name
-        outputs += [get_rl_output(linear_gaussian_env_type, table=table, ys=None, dim=dim, model_name=full_model_name, traj_length=traj_length)]
+        ys_set = ys_map[traj_length]
+        outputs += [get_rl_output(linear_gaussian_env_type, table=table, ys_set=ys_set, dim=dim, model_name=full_model_name, traj_length=traj_length)]
     save_outputs_with_names_traj(outputs, distribution_type,
                                  '{}_{}(traj_lengths_{}_dim_{})'.format(distribution_type, loss_type, traj_lengths, dim))
     make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=dim,
@@ -1558,12 +1561,12 @@ def posterior_filtering_conditional_ess_condition_length(table, traj_length, dim
 
 def execute_ess_traj(linear_gaussian_env_type, traj_lengths, dim,
                      epsilons, ent_coef, loss_type, condition_length,
-                     use_mlp_policy):
+                     use_mlp_policy, args):
     table = create_dimension_table(torch.tensor([dim]), random=False)
     os.makedirs(TODAY, exist_ok=True)
     rl_ess_traj(linear_gaussian_env_type, table=table, traj_lengths=traj_lengths,
                 dim=dim, ent_coef=ent_coef, loss_type=loss_type,
-                condition_length=condition_length, use_mlp_policy=use_mlp_policy)
+                condition_length=condition_length, use_mlp_policy=use_mlp_policy, args=args)
     for epsilon in epsilons:
         # posterior_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, epsilon=epsilon)
         posterior_filtering_ess_traj(table=table, traj_lengths=traj_lengths, dim=dim, epsilon=epsilon)
@@ -2666,14 +2669,17 @@ def vi_variance_ratio(args, policy):
     plot_variance_ratios(vrs=vrs, quantiles=quantiles, traj_length=args.traj_length,
                          ent_coef=args.ent_coef, loss_type=args.loss_type, labels=labels)
 
-def evaluate_vi_policy(vlgm, model_name, traj_length):
+def evaluate_vi_policy(vlgm, model_name, traj_length, ys_set=None):
     policy = vlgm.extract_policy()
 
     rl_output = ImportanceOutput(traj_length=traj_length, ys=None, dim=dim)
 
     evidence_diffs = []
-    for _ in range(vlgm.args.num_repeats):
-        ys = generate_trajectory(traj_length, A=vlgm.args.A, Q=vlgm.args.Q, C=vlgm.args.C, R=vlgm.args.R, mu_0=vlgm.args.mu_0, Q_0=vlgm.args.Q_0)[0]
+    for i in range(vlgm.args.num_repeats):
+        if ys_set is None:
+            ys = generate_trajectory(traj_length, A=vlgm.args.A, Q=vlgm.args.Q, C=vlgm.args.C, R=vlgm.args.R, mu_0=vlgm.args.mu_0, Q_0=vlgm.args.Q_0)[0]
+        else:
+            ys = ys_set[i]
         env = EnsembleLinearGaussianEnv(A=vlgm.args.A, Q=vlgm.args.Q, C=vlgm.args.C, R=vlgm.args.R,
                                         mu_0=vlgm.args.mu_0, Q_0=vlgm.args.Q, condition_length=vlgm.args.condition_length,
                                         using_entropy_loss=False,
@@ -2688,14 +2694,35 @@ def evaluate_vi_policy(vlgm, model_name, traj_length):
                                                   ess=eval_obj.log_effective_sample_size.exp(),
                                                   ess_ci=eval_obj.ess_ci, idstr=model_name)
 
-        posterior_evidence = compute_evidence(table=vlgm.args.table, traj_length=traj_length, dim=dim)
-        evidence_diffs.append(torch.abs(eval_obj.running_log_estimates[-1] - posterior_evidence.evidence))
+        try:
+            posterior_evidence = compute_evidence(table=vlgm.args.table, traj_length=traj_length, dim=dim, ys=ys)
+            evidence_diffs.append(torch.abs(eval_obj.running_log_estimates[-1] - posterior_evidence.evidence))
+        except:
+            print('error computing evidence in evaluate_vi_policy')
+            evidence_diffs.append(torch.tensor(-1))
     rl_estimator.save_data()
     return OutputWithName(rl_output, model_name), evidence_diffs
+
+def save_ys_map(args):
+    for traj_length in torch.arange(1, args.ys_map_range):
+        ys_set = []
+        for _ in range(args.num_repeats):
+            ys = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0]
+            ys_set.append(ys)
+        torch.save(ys_set, '{}/ys_for_traj_length_{}'.format(args.ys_sets_location, traj_length.item()))
+    raise BaseException("executed ys")
+
+def load_ys_map(args):
+    ys_map = {}
+    for traj_length in torch.arange(1, args.ys_map_range):
+        ys_map[traj_length.item()] = torch.load(args.ys_sets_location+'/ys_for_traj_length_{}'.format(traj_length.item()))
+    return ys_map
 
 def vi_evidence_estimate(args):
     evidence_diffs = []
     vlgm = get_vlgm(args)
+    ys_map = load_ys_map(args)
+    vlgm.args.ess_traj_lengths = torch.tensor(vlgm.args.ess_traj_lengths).sort().values
     for traj_length in vlgm.args.ess_traj_lengths:
         # create new args object to create a new VLGM
         new_args = deepcopy(args)
@@ -2706,9 +2733,14 @@ def vi_evidence_estimate(args):
         vlgm = get_vlgm(new_args)
         vlgm.load_models()
         model_name = 'VariationalInference_traj_len={}_A={}_R={}_m={}'.format(traj_length, vlgm.args.A, vlgm.args.R, vlgm.args.m)
-        _, lik_diffs = evaluate_vi_policy(vlgm, model_name, traj_length)
+        ys_set = ys_map[traj_length.item()]
+        _, lik_diffs = evaluate_vi_policy(vlgm, model_name, traj_length, ys_set=ys_set)
         evidence_diffs.append(lik_diffs)
+    make_evidence_plot(vlgm.args, VI_DISTRIBUTION, evidence_diffs)
+
+def make_evidence_plot(args, distribution_type, evidence_diffs):
     quantiles = torch.tensor([0.05, 0.5, 0.95])
+    traj_lengths = torch.tensor(args.ess_traj_lengths).sort().values
     lower_ci, med, upper_ci = torch.quantile(torch.tensor(evidence_diffs), quantiles, dim=1)
     plt.plot(args.ess_traj_lengths, med)
     plt.fill_between(args.ess_traj_lengths, y1=lower_ci, y2=upper_ci, alpha=0.3)
@@ -2718,18 +2750,21 @@ def vi_evidence_estimate(args):
     ax = plt.gca()
     ax.set_xticks(args.ess_traj_lengths)
     plt.title('Avg Evidence Difference vs. Trajectory Length')
-    plt.savefig('{}/EvidenceDifference(A={}_R={}_condition_length={}).pdf'.format(TODAY, vlgm.args.A, vlgm.args.R, condition_length))
-    wandb.save('{}/EvidenceDifference(A={}_R={}_condition_length={}).pdf'.format(TODAY, vlgm.args.A, vlgm.args.R, condition_length))
+    plt.savefig('{}/EvidenceDifference(A={}_R={}_condition_length={}).pdf'.format(TODAY, args.A, args.R, args.condition_length))
+    wandb.save('{}/EvidenceDifference(A={}_R={}_condition_length={}).pdf'.format(TODAY, args.A, args.R, args.condition_length))
     plt.close()
 
     estimates_df = pd.DataFrame(torch.stack([lower_ci, med, upper_ci]))
-    evidence_diffs_str = '{}/{}_EvidenceDifferences_m={}_A={}_R={}.csv'.format(TODAY, distribution_type, vlgm.args.m, vlgm.args.A, vlgm.args.R)
+    evidence_diffs_str = '{}/{}_EvidenceDifferences_m={}_A={}_R={}.csv'.format(TODAY, distribution_type, args.m, args.A, args.R)
     estimates_df.to_csv(evidence_diffs_str)
 
 def vi_ess_traj(args):
     distribution_type = VI_DISTRIBUTION
     outputs = []
+    evidence_diffs = []
     vlgm = get_vlgm(args)
+    ys_map = load_ys_map(args)
+    vlgm.args.ess_traj_lengths = torch.tensor(vlgm.args.ess_traj_lengths).sort().values
     for traj_length in vlgm.args.ess_traj_lengths:
         # create new args object to create a new VLGM
         new_args = deepcopy(args)
@@ -2740,8 +2775,11 @@ def vi_ess_traj(args):
         vlgm = get_vlgm(new_args)
         vlgm.load_models()
         model_name = 'VariationalInference'
-        output, lik_diffs = evaluate_vi_policy(vlgm, model_name, traj_length)
+        ys_set = ys_map[traj_length.item()]
+        output, lik_diffs = evaluate_vi_policy(vlgm, model_name, traj_length, ys_set=ys_set)
         outputs.append(output)
+        evidence_diffs.append(lik_diffs)
+    make_evidence_plot(vlgm.args, VI_DISTRIBUTION, evidence_diffs)
     save_dir = '{}/{}_m={}_lr={}_A={}_R={}'.format(TODAY, distribution_type, vlgm.args.m, vlgm.args.lr, vlgm.args.A, vlgm.args.R)
     os.makedirs(save_dir, exist_ok=True)
     save_outputs_with_names_traj(outputs, distribution_type,
@@ -2762,7 +2800,7 @@ if __name__ == "__main__":
 
     # MODEL = 'agents/'+save_dir+'/{}_{}_linear_gaussian_model_(traj_{}_dim_{})'
     if subroutine != 'train_agent':
-        run = wandb.init(project='linear_gaussian_model', save_code=True, entity='iai')
+        # run = wandb.init(project='linear_gaussian_model', save_code=True, entity='iai')
         os.makedirs(SAVE_DIR, exist_ok=True)
 
     os.makedirs('agents/', exist_ok=True)
@@ -2863,7 +2901,8 @@ if __name__ == "__main__":
         epsilons = [-5e-3]
         execute_ess_traj(linear_gaussian_env_type, traj_lengths=traj_lengths,
                          dim=dim, epsilons=epsilons, ent_coef=ent_coef, loss_type=loss_type,
-                         condition_length=condition_length, use_mlp_policy=use_mlp_policy)
+                         condition_length=condition_length, use_mlp_policy=use_mlp_policy,
+                         args=args)
     elif subroutine == 'posterior_filtering_ess_traj':
         print('executing: {}'.format('posterior_filtering_ess_traj'))
         epsilons = [-5e-3]
