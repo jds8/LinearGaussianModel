@@ -2780,7 +2780,7 @@ def vi_ess_traj(args):
         output, lik_diffs = evaluate_vi_policy(vlgm, model_name, traj_length, ys_set=ys_set)
         outputs.append(output)
         evidence_diffs.append(lik_diffs)
-        if i%5 == 0
+        if i%5 == 0:
             save_outputs_with_names_traj(outputs, distribution_type,
                                         'm={}_lr={}_A={}_R={}_{}(traj_lengths_thus_far_{}_dim_{})'.format(vlgm.args.m, vlgm.args.lr, vlgm.args.A,
                                                                                                 vlgm.args.R, distribution_type,
@@ -2805,7 +2805,7 @@ if __name__ == "__main__":
 
     # MODEL = 'agents/'+save_dir+'/{}_{}_linear_gaussian_model_(traj_{}_dim_{})'
     if subroutine != 'train_agent':
-        run = wandb.init(project='linear_gaussian_model', save_code=True, entity='iai')
+        # run = wandb.init(project='linear_gaussian_model', save_code=True, entity='iai')
         os.makedirs(SAVE_DIR, exist_ok=True)
 
     os.makedirs('agents/', exist_ok=True)
