@@ -195,7 +195,7 @@ class CustomCallback(BaseCallback):
             # New best model, you could save the agent here
             if avg_return > self.best_mean_reward:
                 self.best_mean_reward = avg_return
-                self.model.save('{}_best.zip'+self.model_name_base)
+                # self.model.save('{}_best.zip'+self.model_name_base)
 
         # otherwise just log stochastic info
         else:
