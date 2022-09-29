@@ -958,7 +958,7 @@ def evaluate_posterior(ys, N, td, env=None):
             running_log_evidence_estimates.append(torch.logsumexp(log_p_y_over_qs[0:i+1], -1) - torch.log(torch.tensor(i+1.)))
         log_weights.append(log_p_x - log_q)  # ignore these since we consider the weights to be p(y|x)p(x)/q(x)
         total_rewards.append(total_reward)
-        wandb.log({'total_reward': total_reward})
+        # wandb.log({'total_reward': total_reward})
 
     print('\nevaluated posterior')
     # calculate variance estmate as
