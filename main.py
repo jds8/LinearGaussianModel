@@ -2722,7 +2722,6 @@ def vi_evidence_estimate(args):
     evidence_diffs = []
     vlgm = get_vlgm(args)
     ys_map = load_ys_map(args)
-    vlgm.args.ess_traj_lengths = torch.tensor(vlgm.args.ess_traj_lengths).sort().values
     for traj_length in vlgm.args.ess_traj_lengths:
         # create new args object to create a new VLGM
         new_args = deepcopy(args)
@@ -2740,7 +2739,6 @@ def vi_evidence_estimate(args):
 
 def make_evidence_plot(args, distribution_type, evidence_diffs):
     quantiles = torch.tensor([0.05, 0.5, 0.95])
-    traj_lengths = torch.tensor(args.ess_traj_lengths).sort().values
     lower_ci, med, upper_ci = torch.quantile(torch.tensor(evidence_diffs), quantiles, dim=1)
     plt.plot(args.ess_traj_lengths, med)
     plt.fill_between(args.ess_traj_lengths, y1=lower_ci, y2=upper_ci, alpha=0.3)
@@ -2764,7 +2762,6 @@ def vi_ess_traj(args):
     evidence_diffs = []
     vlgm = get_vlgm(args)
     ys_map = load_ys_map(args)
-    vlgm.args.ess_traj_lengths = torch.tensor(vlgm.args.ess_traj_lengths).sort().values
     for traj_length in vlgm.args.ess_traj_lengths:
         # create new args object to create a new VLGM
         new_args = deepcopy(args)

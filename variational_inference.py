@@ -105,11 +105,24 @@ class VariationalLGM:
         self.params = list(self.model.parameters())
 
         var_dir = 'variational_inference'
-        print('m in run_dir: {}'.format(args.m))
         self.run_dir = '{}/{}/m={}/lr={}_A={}_R={}'.format(var_dir, self.name, self.args.m, self.args.lr, self.args.A, self.args.R)
+
+        # if args.lr > 0.0001:
+        #     lr_str = ''
+        # else:
+        #     lr_str = 'lr={}_'.format(args.lr)
+        # if args.A > 1.0:
+        #     dir_type = 'bigA'
+        # if args.A < 1.0:
+        #     dir_type = 'smallA'
+        # if args.R > 1.0:
+        #     dir_type = 'bigR'
+        # if args.R < 1.0:
+        #     dir_type = 'smallR'
+        # self.run_dir = '/home/jsefas/linear-gaussian-model/from_borg/Sep-19-2022/m={}/{}{}'.format(self.args.m, lr_str, dir_type)
+
         if os.path.exists(self.run_dir):
             self.args.ess_traj_lengths = self.get_ess_traj_lengths()
-        # self.run_dir = '{}/m=0'.format(var_dir)
         self.model_state_dict_path = '{}/model_state_dict_traj_length_{}'.format(self.run_dir, self.args.traj_length)
         os.makedirs(self.run_dir, exist_ok=True)
 
@@ -122,7 +135,8 @@ class VariationalLGM:
         for filename in filenames:
             ess_traj_lengths.append(int(re.search('[0-9]+', filename)[0]))
         os.chdir(old_cwd)
-        return ess_traj_lengths
+        sorted_traj_lengths = torch.tensor(ess_traj_lengths).sort().values
+        return list(sorted_traj_lengths)
 
     def initialize_optimizer(self):
         self.optimizer = torch.optim.Adam(self.params, lr=self.args.lr)
@@ -197,11 +211,7 @@ class VariationalLGM:
         torch.save(self.model.state_dict(), self.model_state_dict_path)
 
     def load_models(self):
-        try:
-            self.model.load_state_dict(torch.load(self.model_state_dict_path))
-        except:
-            print(self.model_state_dict_path)
-            self.model.load_state_dict(torch.load(self.model_state_dict_path))
+        self.model.load_state_dict(torch.load(self.model_state_dict_path))
 
     def extract_policy(self):
         return Policy(lambda obs: self.get_model_input_from_obs(obs), self.model, self.args.dim)
@@ -351,7 +361,6 @@ def get_vlgm(args):
     args.Q_0 = Q_0
 
     args.m = args.condition_length
-    print('initial m from get_vlgm: {}'.format(args.m))
     args.condition_length = args.condition_length if args.condition_length > 0 else args.traj_length
 
     lgm_class = get_lgm_class_type(args.lgm_type)
