@@ -888,7 +888,7 @@ def condition_posterior(td, obs):
     return td.dist(arg={'value': obs})
 
 def evaluate_posterior(ys, N, td, env=None):
-    run = wandb.init(project='linear_gaussian_model evaluation', save_code=True, entity='iai')
+    # run = wandb.init(project='linear_gaussian_model evaluation', save_code=True, entity='iai')
     print('\nevaluating posterior...')
     if env is None:
         # create env
@@ -2764,7 +2764,10 @@ def vi_ess_traj(args):
     evidence_diffs = []
     vlgm = get_vlgm(args)
     ys_map = load_ys_map(args)
-    for traj_length in vlgm.args.ess_traj_lengths:
+    model_name = 'VariationalInference'
+    save_dir = '{}/{}_m={}_lr={}_A={}_R={}'.format(TODAY, distribution_type, vlgm.args.m, vlgm.args.lr, vlgm.args.A, vlgm.args.R)
+    os.makedirs(save_dir, exist_ok=True)
+    for i, traj_length in enumerate(vlgm.args.ess_traj_lengths):
         # create new args object to create a new VLGM
         new_args = deepcopy(args)
         new_args.condition_length = args.m
@@ -2773,14 +2776,16 @@ def vi_ess_traj(args):
         # load VLGM for this traj_length
         vlgm = get_vlgm(new_args)
         vlgm.load_models()
-        model_name = 'VariationalInference'
         ys_set = ys_map[traj_length.item()]
         output, lik_diffs = evaluate_vi_policy(vlgm, model_name, traj_length, ys_set=ys_set)
         outputs.append(output)
         evidence_diffs.append(lik_diffs)
+        save_outputs_with_names_traj(outputs, distribution_type,
+                                    'm={}_lr={}_A={}_R={}_{}(traj_lengths_thus_far_{}_dim_{})'.format(vlgm.args.m, vlgm.args.lr, vlgm.args.A,
+                                                                                             vlgm.args.R, distribution_type,
+                                                                                             args.ess_traj_lengths[0:i], args.dim),
+                                     save_dir=save_dir)
     make_evidence_plot(vlgm.args, VI_DISTRIBUTION, evidence_diffs)
-    save_dir = '{}/{}_m={}_lr={}_A={}_R={}'.format(TODAY, distribution_type, vlgm.args.m, vlgm.args.lr, vlgm.args.A, vlgm.args.R)
-    os.makedirs(save_dir, exist_ok=True)
     save_outputs_with_names_traj(outputs, distribution_type,
                                  'm={}_lr={}_A={}_R={}_{}(traj_lengths_{}_dim_{})'.format(vlgm.args.m, vlgm.args.lr, vlgm.args.A, vlgm.args.R, distribution_type, args.ess_traj_lengths, args.dim), save_dir=save_dir)
     make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=args.dim,
