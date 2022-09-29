@@ -104,8 +104,7 @@ class VariationalLGM:
         self.model = nn.Linear(args.model_dim, 2)
         self.params = list(self.model.parameters())
 
-        var_dir = 'variational_inference'
-        self.run_dir = '{}/{}/m={}/lr={}_A={}_R={}'.format(var_dir, self.name, self.args.m, self.args.lr, self.args.A, self.args.R)
+        self.run_dir = '{}/{}/m={}/lr={}_A={}_R={}'.format(args.var_dir, self.name, self.args.m, self.args.lr, self.args.A, self.args.R)
 
         # if args.lr > 0.0001:
         #     lr_str = ''

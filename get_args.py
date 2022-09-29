@@ -27,6 +27,7 @@ def get_args():
     parser.add_argument('--use_mlp_policy', type=bool, default=True, help='whether to use an MLP policy')
     parser.add_argument('--rl_type', type=str, default='PPO', help='which RL algorithm to use')
     parser.add_argument('--model_dir', type=str, default='/opt/agents', help='the directory containing rl models')
+    parser.add_argument('--var_dir', type=str, default='/opt/variational_inference', help='the directory containing rl models')
 
     # hyperparameters
     parser.add_argument('--clip_range', type=float, default=0.1, help='clip range')
