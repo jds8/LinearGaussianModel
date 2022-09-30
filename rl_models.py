@@ -1,5 +1,6 @@
 # general imports
 from stable_baselines3 import PPO, FKL, SAC
+# from sb3_contrib import RecurrentPPO
 from stable_baselines3.sac.policies import SACPolicy
 from stable_baselines3.fkl.policies import SACPolicy as FKLPolicy
 from stable_baselines3.common.callbacks import BaseCallback
@@ -7,6 +8,7 @@ import torch
 
 
 PPO_STR = "PPO"
+RECURRENT_PPO_STR = "RecurrentPPO"
 FKL_STR = "FKL"
 SAC_STR = "SAC"
 
@@ -14,6 +16,8 @@ SAC_STR = "SAC"
 def get_rl_type_from_str(rl_type):
     if rl_type == PPO_STR:
         return PPO
+    # if rl_type == RECURRENT_PPO_STR:
+    #     return RecurrentPPO
     elif rl_type == FKL_STR:
         return FKL
     elif rl_type == SAC_STR:

@@ -10,6 +10,7 @@ import torch
 import torch.distributions as dist
 import torch.nn as nn
 from stable_baselines3 import PPO, SAC, FKL
+# from sb3_contrib import RecurrentPPO
 from stable_baselines3.sac.policies import SACPolicy
 from stable_baselines3.fkl.policies import SACPolicy as FKLPolicy
 from stable_baselines3.common.callbacks import BaseCallback
@@ -274,6 +275,8 @@ def get_model_name(traj_length, dim, ent_coef, loss_type, condition_length, use_
     else:
         if rl_type == 'PPO':
             rl_type = PPO
+        # elif rl_type == 'RecurrentPPO':
+        #     rl_type = RecurrentPPO
         return MODEL_W_CONDITION_AND_RL_TYPE.format(ent_coef, loss_type, traj_length, dim, condition_length, use_mlp_policy, rl_type)+'.zip'
 
 def model_without_directory(model):
@@ -308,7 +311,7 @@ def train(traj_length, env, dim, condition_length, ent_coef=1.0,
     print('training agent: {}'.format(model_name))
 
     loss_type_dir_prefix = '' if loss_type == 'forward_kl' else 'reverse_'
-    save_dir = '/opt/agents/{}A={}_R={}/'.format(loss_type_dir_prefix, A, R)
+    save_dir = '{}/{}A={}_R={}/'.format(model_dir, loss_type_dir_prefix, A, R)
     os.makedirs(save_dir, exist_ok=True)
 
     if continue_training:
@@ -320,6 +323,11 @@ def train(traj_length, env, dim, condition_length, ent_coef=1.0,
                             policy_kwargs=dict(net_arch=[dict(pi=arch, vf=arch)]),
                             verbose=1, loss_type=loss_type, prior=prior, ignore_reward=ignore_reward,
                             learning_rate=learning_rate, clip_range=clip_range)
+        # elif rl_type == RecurrentPPO:
+        #     policy_kwargs=dict(net_arch=[dict(pi=arch, vf=arch)]),
+        #     model = rl_type('MlpLstmPolicy', env, ent_coef=ent_coef, device='cpu',
+        #                     policy_kwargs=policy_kwargs,
+        #                     verbose=1, loss_type=loss_type, prior=prior, learning_rate=learning_rate, clip_range=clip_range)
         elif rl_type == FKL:
             policy_kwargs = dict(net_arch=dict(pi=arch, qf=arch))
             model = rl_type('MlpPolicy', env, device='cpu', verbose=1, policy_kwargs=policy_kwargs,
@@ -1634,9 +1642,6 @@ def test_train(traj_length, dim, condition_length, ent_coef, loss_type,
                learning_rate, clip_range, linear_gaussian_env_type,
                continue_training, ignore_reward, use_mlp_policy,
                rl_type, args):
-    # table = create_dimension_table(torch.tensor([dim]), random=False)
-    posterior_evidence = compute_evidence(args.table, traj_length, dim)
-
     table = args.table
     A = table[dim]['A']
     Q = table[dim]['Q']
@@ -1645,10 +1650,13 @@ def test_train(traj_length, dim, condition_length, ent_coef, loss_type,
     mu_0 = table[dim]['mu_0']
     Q_0 = table[dim]['Q_0']
 
-    print("WARNING: not sampling new observations during training!")
+    ys = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0]
+
+    # print("WARNING: not sampling new observations during training!")
+    # make sure sample=True
     env = linear_gaussian_env_type(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0,
                                    using_entropy_loss=(loss_type==ENTROPY_LOSS),
-                                   ys=posterior_evidence.ys, sample=False)
+                                   ys=ys, sample=True)
 
     train(traj_length=traj_length, env=env, dim=dim, condition_length=condition_length,
           ent_coef=ent_coef, loss_type=loss_type,
@@ -2720,11 +2728,16 @@ def load_ys_map(args):
         ys_map[traj_length.item()] = torch.load(args.ys_sets_location+'/ys_for_traj_length_{}'.format(traj_length.item()))
     return ys_map
 
+def save_evidence_diffs(evidence_diffs, i, total):
+    ed = torch.stack(evidence_diffs)
+    torch.save(ed, '{}/EvidenceDifference(A={}_R={}_condition_length={})_{}_of_{}.csv'.format(TODAY, args.A, args.R, args.condition_length, i, total))
+
 def vi_evidence_estimate(args):
     evidence_diffs = []
     vlgm = get_vlgm(args)
     ys_map = load_ys_map(args)
-    for traj_length in vlgm.args.ess_traj_lengths:
+    total = len(vlgm.args.ess_traj_lengths)
+    for i, traj_length in enumerate(vlgm.args.ess_traj_lengths):
         # create new args object to create a new VLGM
         new_args = deepcopy(args)
         new_args.condition_length = args.m
@@ -2737,6 +2750,9 @@ def vi_evidence_estimate(args):
         ys_set = ys_map[traj_length.item()]
         _, lik_diffs = evaluate_vi_policy(vlgm, model_name, traj_length, ys_set=ys_set)
         evidence_diffs.append(lik_diffs)
+        if i%5 == 0:
+            save_evidence_diffs(evidence_diffs, i, total)
+    save_evidence_diffs(evidence_diffs, total, total)
     make_evidence_plot(vlgm.args, VI_DISTRIBUTION, evidence_diffs)
 
 def make_evidence_plot(args, distribution_type, evidence_diffs):
