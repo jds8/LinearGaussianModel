@@ -2737,6 +2737,7 @@ def vi_evidence_estimate(args):
     vlgm = get_vlgm(args)
     ys_map = load_ys_map(args)
     total = len(vlgm.args.ess_traj_lengths)
+    vlgm_ess_traj_lengths = vlgm.args.ess_traj_lengths
     for i, traj_length in enumerate(vlgm.args.ess_traj_lengths):
         # create new args object to create a new VLGM
         new_args = deepcopy(args)
@@ -2753,13 +2754,13 @@ def vi_evidence_estimate(args):
         if i%5 == 0:
             save_evidence_diffs(evidence_diffs, i, total)
     save_evidence_diffs(evidence_diffs, total, total)
-    make_evidence_plot(vlgm.args, VI_DISTRIBUTION, evidence_diffs)
+    make_evidence_plot(vlgm.args, VI_DISTRIBUTION, evidence_diffs, vlgm_ess_traj_lengths[:i+1])
 
-def make_evidence_plot(args, distribution_type, evidence_diffs):
+def make_evidence_plot(args, distribution_type, evidence_diffs, vlgm_ess_traj_lengths):
     quantiles = torch.tensor([0.05, 0.5, 0.95])
     lower_ci, med, upper_ci = torch.quantile(torch.tensor(evidence_diffs), quantiles, dim=1)
-    plt.plot(args.ess_traj_lengths, med)
-    plt.fill_between(args.ess_traj_lengths, y1=lower_ci, y2=upper_ci, alpha=0.3)
+    plt.plot(vlgm_ess_traj_lengths, med)
+    plt.fill_between(vlgm_ess_traj_lengths, y1=lower_ci, y2=upper_ci, alpha=0.3)
     plt.xlabel('Trajectory Lengths')
     plt.ylabel('Average Evidence Difference')
     plt.legend()
@@ -2783,7 +2784,10 @@ def vi_ess_traj(args):
     model_name = 'VariationalInference'
     save_dir = '{}/{}_m={}_lr={}_A={}_R={}'.format(TODAY, distribution_type, vlgm.args.m, vlgm.args.lr, vlgm.args.A, vlgm.args.R)
     os.makedirs(save_dir, exist_ok=True)
-    for i, traj_length in enumerate(vlgm.args.ess_traj_lengths):
+    vlgm_ess_traj_lengths = vlgm.args.ess_traj_lengths
+    for i, traj_length in enumerate(vlgm_ess_traj_lengths):
+        if traj_length > 14:
+            break
         # create new args object to create a new VLGM
         new_args = deepcopy(args)
         new_args.condition_length = args.m
@@ -2798,17 +2802,17 @@ def vi_ess_traj(args):
         evidence_diffs.append(lik_diffs)
         if i%5 == 0:
             save_outputs_with_names_traj(outputs, distribution_type,
-                                        'm={}_lr={}_A={}_R={}_{}(traj_lengths_thus_far_{}_dim_{})'.format(vlgm.args.m, vlgm.args.lr, vlgm.args.A,
+                                        'm={}_lr={}_A={}_R={}_{}(traj_lengths_until_{}_dim_{})'.format(vlgm.args.m, vlgm.args.lr, vlgm.args.A,
                                                                                                 vlgm.args.R, distribution_type,
-                                                                                                args.ess_traj_lengths[0:i], args.dim),
+                                                                                                traj_length, args.dim),
                                         save_dir=save_dir)
-    make_evidence_plot(vlgm.args, VI_DISTRIBUTION, evidence_diffs)
     save_outputs_with_names_traj(outputs, distribution_type,
-                                 'm={}_lr={}_A={}_R={}_{}(traj_lengths_{}_dim_{})'.format(vlgm.args.m, vlgm.args.lr, vlgm.args.A, vlgm.args.R, distribution_type, args.ess_traj_lengths, args.dim), save_dir=save_dir)
+                                 'm={}_lr={}_A={}_R={}_{}(dim_{})'.format(vlgm.args.m, vlgm.args.lr, vlgm.args.A, vlgm.args.R, distribution_type, args.dim), save_dir=save_dir)
     make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=args.dim,
                        num_samples=args.num_samples, num_repeats=args.num_repeats, traj_lengths=args.ess_traj_lengths,
                        xlabel='Trajectory Length', distribution_type=distribution_type, name='VariationalInference_m={}_lr={}_A={}_R={}'.format(vlgm.args.m, vlgm.args.lr, vlgm.args.A, vlgm.args.R),
                        save_dir=save_dir)
+    make_evidence_plot(vlgm.args, VI_DISTRIBUTION, evidence_diffs, vlgm_ess_traj_lengths[:i+1])
 
 
 if __name__ == "__main__":
