@@ -2000,13 +2000,13 @@ def plot_ess_from_data(directory, data_type, initial_idx=0):
             ess_type = data_with_columns.data_type
     _plot_ess(ess_type)
 
-def plot_ess_from_dir_partial_data(directory, data_type, initial_idx=0):
+def plot_ess_from_dir_partial_data(directory, data_type, initial_idx, title, y_axis, log_scale=False):
     data = None
     if not directory.endswith('/'):
         directory = directory + '/'
     for j, fil in enumerate(os.listdir(os.fsencode(directory))):
         filename = os.fsdecode(fil)
-        if 'ess' in filename.lower() and filename.endswith('.csv'):
+        if filename.endswith('.csv'):# and 'ess' in filename.lower():
             data_with_columns = load_ess_data(directory+filename, data_type)
             data_label = data_with_columns.data_label
             ess_type = data_with_columns.data_type
@@ -2015,21 +2015,24 @@ def plot_ess_from_dir_partial_data(directory, data_type, initial_idx=0):
             lower_ci, med, upper_ci = torch.quantile(data, quantiles, dim=0)
 
             _df = pd.read_csv('{}/{}'.format(directory, filename), index_col=0)
-            col_type = type(_df.columns[0])
-            x_vals = _df.columns.astype(np.int).sort_values()
-            df = _df[x_vals.astype(col_type)]
+            int_col = np.array([int(''.join(filter(str.isdigit, col))) for col in _df.columns])
+            sort_idx = np.argsort(int_col)
+            sorted_int_col = int_col[sort_idx]
+            df = _df[_df.columns[sort_idx]]
 
-            plt.plot(x_vals, med.squeeze(), label=data_label)
-            plt.fill_between(x_vals, y1=lower_ci, y2=upper_ci, alpha=0.3)
+            plt.plot(sorted_int_col, med.squeeze(), label=data_label)
+            plt.fill_between(sorted_int_col, y1=lower_ci, y2=upper_ci, alpha=0.3)
 
     xlabel = get_full_name_of_ess_type(ess_type)
     ax = plt.gca()
+    if log_scale:
+        ax.set_yscale('log')
     ax.xaxis.get_major_locator().set_params(integer=True)
     plt.xlabel('{}'.format(xlabel))
-    plt.ylabel('Effective Sample Size')
-    plt.title('Effective Sample Size vs. {}'.format(xlabel))
+    plt.ylabel(y_axis)
+    plt.title('{} vs. {}'.format(title, xlabel))
     legend_without_duplicate_labels(plt.gca())
-    plt.savefig('{}/ess_{}.pdf'.format(TODAY, ess_type))
+    plt.savefig('{}/ess_{}.pdf'.format(directory, ess_type))
     # wandb.save('{}/ess_{}.pdf'.format(TODAY, ess_type))
     plt.close()
 
@@ -2714,7 +2717,7 @@ def evaluate_vi_policy(vlgm, model_name, traj_length, ys_set=None):
     return OutputWithName(rl_output, model_name), evidence_diffs
 
 def save_ys_map(args):
-    for traj_length in torch.arange(1, args.ys_map_range):
+    for traj_length in torch.arange(1, args.ys_map_range+1):
         ys_set = []
         for _ in range(args.num_repeats):
             ys = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0]
@@ -2755,7 +2758,7 @@ def vi_evidence_estimate(args):
     save_evidence_diffs(evidence_diffs, total, total)
     make_evidence_plot(vlgm.args, VI_DISTRIBUTION, evidence_diffs)
 
-def make_evidence_plot(args, distribution_type, evidence_diffs):
+def make_evidence_plot(args, distribution_type, evidence_diffs, traj_lengths):
     quantiles = torch.tensor([0.05, 0.5, 0.95])
     lower_ci, med, upper_ci = torch.quantile(torch.tensor(evidence_diffs), quantiles, dim=1)
     plt.plot(args.ess_traj_lengths, med)
@@ -2977,7 +2980,9 @@ if __name__ == "__main__":
         plot_ess_from_data_from_files(filenames, data_type)
     elif subroutine == 'load_ess_data':
         print('executing: {}'.format('load_ess_data'))
-        plot_ess_from_dir_partial_data(ess_dir, data_type, initial_idx)
+        title = 'Average Absolute Deviation of Marginal Evidence'
+        y_axis = 'Average Absolute Deviation'
+        plot_ess_from_dir_partial_data(ess_dir, data_type, initial_idx=initial_idx, title=title, y_axis=y_axis, log_scale=True)
     elif subroutine == 'state_occupancy':
         print('executing: {}'.format('state_occupancy'))
         execute_state_occupancy(traj_length=traj_length, ent_coef=ent_coef)
