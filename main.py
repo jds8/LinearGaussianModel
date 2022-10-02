@@ -1745,7 +1745,7 @@ def sample_variance_ratios(traj_length, model_name, condition_length, policy=Non
             # print('variance_ratio_steps {}'.format(variance_ratio_steps))
 
             # if torch.abs(variance_ratio[0, 0] - variance_ratio_steps[0, 0]).item() > 0.001:
-            #     import pdb; pdb.set_trace()
+            #     import db; pdb.set_trace()
             #     dst = td_fps.condition(y_values=y, x_value=xt)
 
             # get next hidden state
@@ -2459,7 +2459,7 @@ def execute_pure_rl_ensemble(traj_lengths, dim, ent_coef, condition_length, use_
     Q_0 = args.Q_0
     mu_0 = args.mu_0
 
-    # outputs = []
+    outputs = []
     # rl_ds = []
     # _, policy = load_rl_model(model_name='/opt/agents/0.1_reverse_kl_linear_gaussian_model_(traj_10_dim_1_condition_length_5_use_mlp_policy_True).zip', device='cpu')
     # rl_ds.append(policy)
@@ -2471,6 +2471,9 @@ def execute_pure_rl_ensemble(traj_lengths, dim, ent_coef, condition_length, use_
     # rl_ds.append(policy)
     # _, policy = load_rl_model(model_name='/opt/agents/0.1_reverse_kl_linear_gaussian_model_(traj_10_dim_1).zip', device='cpu')
     # rl_ds.append(policy)
+
+    save_dir = 'pure_rl_m={}_A={}_R={}'.format(condition_length, A, R)
+    os.makedirs(save_dir, exist_ok=True)
 
     ys_map = load_ys_map(args)
     for traj_length in traj_lengths:
@@ -2520,8 +2523,10 @@ def execute_pure_rl_ensemble(traj_lengths, dim, ent_coef, condition_length, use_
         rl_estimator.save_data()
 
         outputs += [OutputWithName(rl_output, name)]
+        if i%5 == 0:
+            save_outputs_with_names_traj(outputs, RL_DISTRIBUTION, 'pure_rl_ensemble_so_far', save_dir=save_dir)
 
-    save_outputs_with_names_traj(outputs, RL_DISTRIBUTION, 'pure_rl_ensemble')
+    save_outputs_with_names_traj(outputs, RL_DISTRIBUTION, 'pure_rl_ensemble', save_dir=save_dir)
     make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=dim,
                        num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, traj_lengths=traj_lengths,
                        xlabel='Trajectory Length', distribution_type=RL_DISTRIBUTION, name='RL ensemble')
@@ -2912,7 +2917,8 @@ if __name__ == "__main__":
         model_type_dir = 'A=tensor([[1.]])_R=tensor([[1.8000]])'
     elif R < 1.:
         model_type_dir = 'A=tensor([[1.]])_R=tensor([[0.8000]])'
-    model_dir = '{}/{}/{}'.format(model_dir, model_type_dir, model_type_dir)
+    # model_dir = '{}/{}/{}'.format(model_dir, model_type_dir, model_type_dir)
+    model_dir = '{}/{}'.format(model_dir, model_type_dir)
     args.model_dir = model_dir
 
     if subroutine == 'train_agent':

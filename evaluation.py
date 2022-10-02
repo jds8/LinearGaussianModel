@@ -253,8 +253,6 @@ def evaluate_pure_rl_ensemble(rl_ds, N, env, condition_length, deterministic=Fal
             log_p_x += info['prior_reward']
             log_p_y_given_x += info['lik_reward']
             actions.append(info['action'])
-            print('xt is {}'.format(xt), ' action is {}'.format(info['action']), ' obs is {}'.format(old_obs))
-            import pdb; pdb.set_trace()
             log_qrobs.append(evaluate_actions(policy=rl_d, obs=old_obs.t(), actions=info['action']).item())
             xs.append(xt)
         try:
