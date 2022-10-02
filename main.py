@@ -2486,21 +2486,18 @@ def execute_pure_rl_ensemble(traj_lengths, dim, ent_coef, condition_length, use_
         # smallR = model_dir+'/A=tensor([[1.]])_R=tensor([[0.8000]])/A=tensor([[1.]])_R=tensor([[0.8000]])/'
         # bigR = model_dir+'/A=tensor([[1.]])_R=tensor([[1.8000]])/A=tensor([[1.]])_R=tensor([[1.8000]])/'
 
-        import pdb; pdb.set_trace()
         for m in torch.arange(condition_length, 0, -1):
-            print(model_dir)
             for j, fil in enumerate(os.listdir(os.fsencode(model_dir))):
                 filename = os.fsdecode(fil)
-                print(filename)
-                if "traj_{}".format(traj_length) in filename and "condition_length_{}".format(m) in filename:
+                if "traj_{}_".format(traj_length) in filename and "condition_length_{}".format(m.item()) in filename:
                     _, policy = load_rl_model(model_name=model_dir+'/'+filename, device='cpu')
                     rl_ds.append(policy)
-        print(rl_ds)
-        assert len(rl_ds) == condition_length
+                    break
+        print(len(rl_ds), ' versus ', condition_length)
 
         name = '{}(traj_len {} dim {})'.format(RL_DISTRIBUTION, traj_length, dim)
         rl_output = ImportanceOutput(traj_length=traj_length, ys=None, dim=dim)
-        ys_set = ys_map[traj_length.item()]
+        ys_set = ys_map[traj_length]
         for i in range(NUM_REPEATS):
             # ys = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0]
             ys = ys_set[i]

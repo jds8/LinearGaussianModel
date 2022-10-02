@@ -235,14 +235,16 @@ def evaluate_pure_rl_ensemble(rl_ds, N, env, condition_length, deterministic=Fal
         liks = []
         xts = []
         total_reward = 0.
-        rl_idx = 0
         log_qrobs = []
         while not done:
-            if env.states_left() < condition_length:
-                rl_idx += 1
-            rl_d = rl_ds[rl_idx]
+            states_left = env.states_left()
+            idx = 0
+            if states_left < condition_length:
+                idx = len(rl_ds) - states_left
+            rl_d = rl_ds[idx]
             xt = torch.tensor(rl_d.predict(obs, deterministic=deterministic)[0])
             xts.append(env.prev_xt)
+            old_obs = obs
             obs, reward, done, info = env.step(xt)
             total_reward += reward
             states.append(obs)
@@ -251,7 +253,9 @@ def evaluate_pure_rl_ensemble(rl_ds, N, env, condition_length, deterministic=Fal
             log_p_x += info['prior_reward']
             log_p_y_given_x += info['lik_reward']
             actions.append(info['action'])
-            log_qrobs.append(evaluate_actions(policy=rl_d, obs=obs.t(), actions=info['action']).item())
+            print('xt is {}'.format(xt), ' action is {}'.format(info['action']), ' obs is {}'.format(old_obs))
+            import pdb; pdb.set_trace()
+            log_qrobs.append(evaluate_actions(policy=rl_d, obs=old_obs.t(), actions=info['action']).item())
             xs.append(xt)
         try:
             if isinstance(xs[0], torch.Tensor):
