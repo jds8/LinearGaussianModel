@@ -621,7 +621,7 @@ def make_ess_plot_nice(outputs_with_names, fixed_feature_string,
     plt.ylabel('Effective Sample Size')
     plt.title('Effective Sample Size Versus {}\n (num samples: {}, num repeats: {})'.format(xlabel, num_samples, num_repeats))
     legend_without_duplicate_labels(plt.gca())
-    save_dir = save_dir if save_dir else '{}/{}/'
+    save_dir = save_dir if save_dir else '{}/{}/'.format(TODAY, distribution_type)
     os.makedirs(save_dir, exist_ok=True)
     plt.savefig('{}/{}_ess_plot_{}_{}.pdf'.format(save_dir, name, fixed_feature_string, fixed_feature))
     # wandb.save('{}/{}_ess_plot_{}_{}.pdf'.format(save_dir, name, fixed_feature_string, fixed_feature))
@@ -2472,7 +2472,7 @@ def execute_pure_rl_ensemble(traj_lengths, dim, ent_coef, condition_length, use_
     # _, policy = load_rl_model(model_name='/opt/agents/0.1_reverse_kl_linear_gaussian_model_(traj_10_dim_1).zip', device='cpu')
     # rl_ds.append(policy)
 
-    save_dir = 'pure_rl_m={}_A={}_R={}'.format(condition_length, A, R)
+    save_dir = '{}/pure_rl_m={}_A={}_R={}'.format(TODAY, condition_length, A, R)
     os.makedirs(save_dir, exist_ok=True)
 
     ys_map = load_ys_map(args)
@@ -3006,9 +3006,13 @@ if __name__ == "__main__":
         plot_ess_from_data_from_files(filenames, data_type)
     elif subroutine == 'load_ess_data':
         print('executing: {}'.format('load_ess_data'))
-        title = 'Average Absolute Deviation of Marginal Evidence'
-        y_axis = 'Average Absolute Deviation'
-        plot_ess_from_dir_partial_data(ess_dir, data_type, initial_idx=initial_idx, title=title, y_axis=y_axis, log_scale=True)
+        # title = 'Average Absolute Deviation of Marginal Evidence'
+        # y_axis = 'Average Absolute Deviation'
+        # log_scale = True
+        title = 'Effective Sample Size'
+        y_axis = 'Effective Sample Size'
+        log_scale = False
+        plot_ess_from_dir_partial_data(ess_dir, data_type, initial_idx=initial_idx, title=title, y_axis=y_axis, log_scale=log_scale)
     elif subroutine == 'state_occupancy':
         print('executing: {}'.format('state_occupancy'))
         execute_state_occupancy(traj_length=traj_length, ent_coef=ent_coef)
