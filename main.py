@@ -2451,14 +2451,13 @@ def plot_posterior_mean(ys, traj_length, dim, condition_length, xs=None):
 
     return means, xs
 
-def execute_pure_rl_ensemble(traj_lengths, dim, ent_coef, condition_length, use_mlp_policy, model_dir='.'):
-    table = create_dimension_table(torch.tensor([dim]), random=False)
-    A = table[dim]['A']
-    Q = table[dim]['Q']
-    C = table[dim]['C']
-    R = table[dim]['R']
-    Q_0 = table[dim]['Q_0']
-    mu_0 = table[dim]['mu_0']
+def execute_pure_rl_ensemble(traj_lengths, dim, ent_coef, condition_length, use_mlp_policy, model_dir, args):
+    A = args.A
+    Q = args.Q
+    C = args.C
+    R = args.R
+    Q_0 = args.Q_0
+    mu_0 = args.mu_0
 
     # outputs = []
     # rl_ds = []
@@ -2473,21 +2472,38 @@ def execute_pure_rl_ensemble(traj_lengths, dim, ent_coef, condition_length, use_
     # _, policy = load_rl_model(model_name='/opt/agents/0.1_reverse_kl_linear_gaussian_model_(traj_10_dim_1).zip', device='cpu')
     # rl_ds.append(policy)
 
+    ys_map = load_ys_map(args)
     for traj_length in traj_lengths:
         rl_ds = []
-        for m in torch.arange(condition_length, 0, -1):
-            base_model_name = get_model_name(traj_length=traj_length, dim=dim,
-                                             ent_coef=ent_coef, loss_type=loss_type,
-                                             condition_length=m, use_mlp_policy=use_mlp_policy)
+        # for m in torch.arange(condition_length, 0, -1):
+        #     base_model_name = get_model_name(traj_length=traj_length, dim=dim,
+        #                                      ent_coef=ent_coef, loss_type=loss_type,
+        #                                      condition_length=m, use_mlp_policy=use_mlp_policy)
 
-            model_name = '{}/{}'.format(model_dir, base_model_name)
-            _, policy = load_rl_model(model_name=model_name, device='cpu')
-            rl_ds.append(policy)
+        #     model_name = '{}/{}'.format(model_dir, base_model_name)
+        #     _, policy = load_rl_model(model_name=model_name, device='cpu')
+        #     rl_ds.append(policy)
+
+        # smallA = model_dir+'/A=tensor([[0.6000]])_R=tensor([[1.]])/A=tensor([[0.6000]])_R=tensor([[1.]])/'
+        # bigA = model_dir+'/A=tensor([[1.2000]])_R=tensor([[1.]])/A=tensor([[1.2000]])_R=tensor([[1.]])/'
+        # smallR = model_dir+'/A=tensor([[1.]])_R=tensor([[0.8000]])/A=tensor([[1.]])_R=tensor([[0.8000]])/'
+        # bigR = model_dir+'/A=tensor([[1.]])_R=tensor([[1.8000]])/A=tensor([[1.]])_R=tensor([[1.8000]])/'
+
+        for m in torch.arange(condition_length, 0, -1):
+            for j, fil in enumerate(os.listdir(os.fsencode(model_dir))):
+                filename = os.fsdecode(fil)
+                if "traj_{}_".format(traj_length) in filename and "condition_length_{}".format(m.item()) in filename:
+                    _, policy = load_rl_model(model_name=model_dir+'/'+filename, device='cpu')
+                    rl_ds.append(policy)
+                    break
+        print(len(rl_ds), ' versus ', condition_length)
 
         name = '{}(traj_len {} dim {})'.format(RL_DISTRIBUTION, traj_length, dim)
         rl_output = ImportanceOutput(traj_length=traj_length, ys=None, dim=dim)
-        for _ in range(NUM_REPEATS):
-            ys = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0]
+        ys_set = ys_map[traj_length]
+        for i in range(NUM_REPEATS):
+            # ys = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0]
+            ys = ys_set[i]
             env = linear_gaussian_env_type(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0,
                                            using_entropy_loss=(loss_type==ENTROPY_LOSS),
                                            ys=ys, sample=False)
@@ -2740,6 +2756,7 @@ def vi_evidence_estimate(args):
     vlgm = get_vlgm(args)
     ys_map = load_ys_map(args)
     total = len(vlgm.args.ess_traj_lengths)
+    vlgm_ess_traj_lengths = vlgm.args.ess_traj_lengths
     for i, traj_length in enumerate(vlgm.args.ess_traj_lengths):
         # create new args object to create a new VLGM
         new_args = deepcopy(args)
@@ -2756,13 +2773,13 @@ def vi_evidence_estimate(args):
         if i%5 == 0:
             save_evidence_diffs(evidence_diffs, i, total)
     save_evidence_diffs(evidence_diffs, total, total)
-    make_evidence_plot(vlgm.args, VI_DISTRIBUTION, evidence_diffs)
+    make_evidence_plot(vlgm.args, VI_DISTRIBUTION, evidence_diffs, vlgm_ess_traj_lengths[:i+1])
 
-def make_evidence_plot(args, distribution_type, evidence_diffs, traj_lengths):
+def make_evidence_plot(args, distribution_type, evidence_diffs, vlgm_ess_traj_lengths):
     quantiles = torch.tensor([0.05, 0.5, 0.95])
     lower_ci, med, upper_ci = torch.quantile(torch.tensor(evidence_diffs), quantiles, dim=1)
-    plt.plot(args.ess_traj_lengths, med)
-    plt.fill_between(args.ess_traj_lengths, y1=lower_ci, y2=upper_ci, alpha=0.3)
+    plt.plot(vlgm_ess_traj_lengths, med)
+    plt.fill_between(vlgm_ess_traj_lengths, y1=lower_ci, y2=upper_ci, alpha=0.3)
     plt.xlabel('Trajectory Lengths')
     plt.ylabel('Average Evidence Difference')
     plt.legend()
@@ -2786,7 +2803,10 @@ def vi_ess_traj(args):
     model_name = 'VariationalInference'
     save_dir = '{}/{}_m={}_lr={}_A={}_R={}'.format(TODAY, distribution_type, vlgm.args.m, vlgm.args.lr, vlgm.args.A, vlgm.args.R)
     os.makedirs(save_dir, exist_ok=True)
-    for i, traj_length in enumerate(vlgm.args.ess_traj_lengths):
+    vlgm_ess_traj_lengths = vlgm.args.ess_traj_lengths
+    for i, traj_length in enumerate(vlgm_ess_traj_lengths):
+        if traj_length > 14:
+            break
         # create new args object to create a new VLGM
         new_args = deepcopy(args)
         new_args.condition_length = args.m
@@ -2801,17 +2821,17 @@ def vi_ess_traj(args):
         evidence_diffs.append(lik_diffs)
         if i%5 == 0:
             save_outputs_with_names_traj(outputs, distribution_type,
-                                        'm={}_lr={}_A={}_R={}_{}(traj_lengths_thus_far_{}_dim_{})'.format(vlgm.args.m, vlgm.args.lr, vlgm.args.A,
+                                        'm={}_lr={}_A={}_R={}_{}(traj_lengths_until_{}_dim_{})'.format(vlgm.args.m, vlgm.args.lr, vlgm.args.A,
                                                                                                 vlgm.args.R, distribution_type,
-                                                                                                args.ess_traj_lengths[0:i], args.dim),
+                                                                                                traj_length, args.dim),
                                         save_dir=save_dir)
-    make_evidence_plot(vlgm.args, VI_DISTRIBUTION, evidence_diffs)
     save_outputs_with_names_traj(outputs, distribution_type,
-                                 'm={}_lr={}_A={}_R={}_{}(traj_lengths_{}_dim_{})'.format(vlgm.args.m, vlgm.args.lr, vlgm.args.A, vlgm.args.R, distribution_type, args.ess_traj_lengths, args.dim), save_dir=save_dir)
+                                 'm={}_lr={}_A={}_R={}_{}(dim_{})'.format(vlgm.args.m, vlgm.args.lr, vlgm.args.A, vlgm.args.R, distribution_type, args.dim), save_dir=save_dir)
     make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=args.dim,
                        num_samples=args.num_samples, num_repeats=args.num_repeats, traj_lengths=args.ess_traj_lengths,
                        xlabel='Trajectory Length', distribution_type=distribution_type, name='VariationalInference_m={}_lr={}_A={}_R={}'.format(vlgm.args.m, vlgm.args.lr, vlgm.args.A, vlgm.args.R),
                        save_dir=save_dir)
+    make_evidence_plot(vlgm.args, VI_DISTRIBUTION, evidence_diffs, vlgm_ess_traj_lengths[:i+1])
 
 
 if __name__ == "__main__":
@@ -2892,7 +2912,7 @@ if __name__ == "__main__":
         model_type_dir = 'A=tensor([[1.]])_R=tensor([[1.8000]])'
     elif R < 1.:
         model_type_dir = 'A=tensor([[1.]])_R=tensor([[0.8000]])'
-    model_dir = '{}/{}'.format(model_dir, model_type_dir)
+    model_dir = '{}/{}/{}'.format(model_dir, model_type_dir, model_type_dir)
     args.model_dir = model_dir
 
     if subroutine == 'train_agent':
@@ -3031,7 +3051,7 @@ if __name__ == "__main__":
         execute_rl_posterior_ensemble(ess_traj_lengths, dim, condition_length, model_name)
     elif subroutine == 'evaluate_pure_rl_ensemble':
         print('executing: {}'.format('evaluate_pure_rl_ensemble'))
-        execute_pure_rl_ensemble(ess_traj_lengths, dim, ent_coef, condition_length, use_mlp_policy, model_dir=model_dir)
+        execute_pure_rl_ensemble(ess_traj_lengths, dim, ent_coef, condition_length, use_mlp_policy, model_dir=model_dir, args=args)
     elif subroutine == 'compute_analytical_kl_at_each_state':
         print('executing: {}'.format('compute_analytical_kl_at_each_state'))
         kls = execute_compute_analytical_kl_at_each_state(traj_length, dim, condition_length)
