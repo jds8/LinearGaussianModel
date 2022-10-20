@@ -56,7 +56,7 @@ TEST_MODEL_W_CONDITION = '/opt/agents/A={}_R={}/{}_{}_linear_gaussian_model_(tra
 TODAY = date.today().strftime("%b-%d-%Y")
 
 SAVE_DIR = '/opt/linear_gaussian_data'
-RL_TIMESTEPS = 50000
+RL_TIMESTEPS = 100
 NUM_SAMPLES = 1000
 NUM_VARIANCE_SAMPLES = 10
 NUM_REPEATS = 20
@@ -2121,7 +2121,7 @@ def compute_SAC_kl_w_prior(sac_policy, prev_xt, ys, condition_length, A, Q, num_
         mean_actions, log_std, _ = sac_policy.actor.get_action_dist_params(obs)
         q_score = sac_policy.actor.action_dist.proba_distribution(mean_actions, log_std).log_prob(sac_action)
         action = torch.atanh(sac_action)
-        p_score = prior.log_prob(action)
+        p_score = prior.log_prob(action.to(prior.mean.dtype))
         kl += (q_score - p_score) / num_samples
 
     return kl
@@ -3009,8 +3009,8 @@ if __name__ == "__main__":
         # title = 'Average Absolute Deviation of Marginal Evidence'
         # y_axis = 'Average Absolute Deviation'
         # log_scale = True
-        title = 'Effective Sample Size'
-        y_axis = 'Effective Sample Size'
+        title = '(Stable Dynamics)\neffective sample size'
+        y_axis = 'effective sample size'
         log_scale = False
         plot_ess_from_dir_partial_data(ess_dir, data_type, initial_idx=initial_idx, title=title, y_axis=y_axis, log_scale=log_scale)
     elif subroutine == 'state_occupancy':

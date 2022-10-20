@@ -104,21 +104,21 @@ class VariationalLGM:
         self.model = nn.Linear(args.model_dim, 2)
         self.params = list(self.model.parameters())
 
-        self.run_dir = '{}/{}/m={}/lr={}_A={}_R={}'.format(args.var_dir, self.name, self.args.m, self.args.lr, self.args.A, self.args.R)
+        # self.run_dir = '{}/{}/m={}/lr={}_A={}_R={}'.format(args.var_dir, self.name, self.args.m, self.args.lr, self.args.A, self.args.R)
 
-        # if args.lr > 0.0001:
-        #     lr_str = ''
-        # else:
-        #     lr_str = 'lr={}_'.format(args.lr)
-        # if args.A > 1.0:
-        #     dir_type = 'bigA'
-        # if args.A < 1.0:
-        #     dir_type = 'smallA'
-        # if args.R > 1.0:
-        #     dir_type = 'bigR'
-        # if args.R < 1.0:
-        #     dir_type = 'smallR'
-        # self.run_dir = '/home/jsefas/linear-gaussian-model/from_borg/Sep-19-2022/m={}/{}{}'.format(self.args.m, lr_str, dir_type)
+        if args.lr > 0.0001:
+            lr_str = ''
+        else:
+            lr_str = 'lr={}_'.format(args.lr)
+        if args.A > 1.0:
+            dir_type = 'bigA'
+        if args.A < 1.0:
+            dir_type = 'smallA'
+        if args.R > 1.0:
+            dir_type = 'bigR'
+        if args.R < 1.0:
+            dir_type = 'smallR'
+        self.run_dir = '/home/jsefas/linear-gaussian-model/from_borg/Sep-19-2022/m={}/{}{}'.format(self.args.m, lr_str, dir_type)
 
         if os.path.exists(self.run_dir):
             self.args.ess_traj_lengths = self.get_ess_traj_lengths()
@@ -164,6 +164,8 @@ class VariationalLGM:
 
                 obses = []
                 prev_xts = [prev_xt]
+                sum_x_t_x_t = torch.zeros_like(self.args.A)
+                sum_x_t_plus_1_x_t = torch.zeros_like(self.args.A)
                 kls = []
                 for state_idx in range(traj_length):
                     obs = torch.cat([prev_xt.reshape(1, -1), ys[state_idx:state_idx+self.args.condition_length].reshape(1, -1)], dim=1)
@@ -176,7 +178,6 @@ class VariationalLGM:
                     kl = kl_divergence(q_dist, p_dist).squeeze()
                     kls.append(kl)
                     loss += kl
-                    # loss += dist.kl_divergence(q_dist, p_dist).squeeze()
 
                     # sample new xt
                     prev_xt = q_dist.rsample()
