@@ -12,14 +12,14 @@ import numpy as np
 from copy import deepcopy
 import time
 from typing import List
-from generative_model import \
+from generative_model import generate_trajectory, \
     single_gen_A, single_gen_Q,\
     single_gen_C, single_gen_R,\
     single_gen_mu_0, single_gen_Q_0,\
     gen_A, gen_Q,\
     gen_C, gen_R,\
     gen_mu_0, gen_Q_0
-from math_utils import band_matrix
+from math_utils import band_matrix, kalman_filter
 from dimension_table import create_dimension_table
 
 
@@ -1042,16 +1042,15 @@ def test_joint_vars():
     rhs_rvs = [xs[0], ys[0]]
     conditional = jvs.condition(rhs_rvs)
 
-    from generative_model import generate_trajectory
     # evaluate it
     ys = generate_trajectory(num_obs, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0]
     env = LinearGaussianEnv(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0, ys=ys, sample=False)
 
 def test_graphical_model():
     dim = 1
-    num_obs = 3
+    num_obs = 10
 
-    table = create_dimension_table(torch.tensor([dim]), random=False)
+    table = create_dimension_table(torch.tensor([dim]), random=True)
     lgv = get_linear_gaussian_variables(dim=dim, num_obs=num_obs, table=table)
     xs = lgv.xs
     ys = lgv.ys
@@ -1062,6 +1061,8 @@ def test_graphical_model():
     R = table[dim]['R']
     mu_0 = table[dim]['mu_0']
     Q_0 = table[dim]['Q_0']
+
+    obs = generate_trajectory(num_obs, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0]
 
     # jvs = JointVariables([xs[0], xs[1], ys[0]], A, C)
     # print(jvs.dist.covariance())
@@ -1115,11 +1116,20 @@ def test_graphical_model():
     # conditional_1 = jvs.condition(rhs_rvs)
     # print(conditional_1.covariance())
 
-    # # p(x2|y0, y1, y2)
-    # jvs = JointVariables([ys[0], ys[1], ys[2], xs[2]], A, C)
-    # rhs_rvs = [ys[0], ys[1], ys[2]]
-    # conditional_1 = jvs.condition(rhs_rvs)
-    # print(conditional_1.covariance())
+
+    # # p(x_{num_obs}|y{0:num_obs})
+    jvs = JointVariables(ys[0:num_obs] + [xs[-1]], A, C)
+    rhs_rvs = ys[0:num_obs]
+    conditional_1 = jvs.condition(rhs_rvs)
+    print(conditional_1.mean(value=obs))
+    print(conditional_1.covariance(a=obs))
+
+    # prior = dist.Normal(0, torch.sqrt(Q))
+    # state_transition_variance = Q
+    # likelihood_var = R
+    # pred = kalman_filter(obs, prior, state_transition_variance, likelihood_var, A, C)
+    # print(pred.mean)
+    # print(pred.variance)
 
     # # p(x1|y0, y1, y2)
     # jvs = JointVariables([ys[0], ys[1], ys[2], xs[1]], A, C)
@@ -1134,11 +1144,11 @@ def test_graphical_model():
     # print(conditional_1.covariance())
 
     # p(x0, x1, x2|y0, y1, y2)
-    jvs = JointVariables([xs[0], xs[1], xs[2], ys[0], ys[1], ys[2]], A, C)
-    rhs_rvs = [ys[0], ys[1], ys[2]]
-    conditional_1 = jvs.condition(rhs_rvs)
-    print(conditional_1.mean(value=torch.ones(len(rhs_rvs))))
-    print(conditional_1.covariance(value=torch.ones(len(rhs_rvs))))
+    # jvs = JointVariables([xs[0], xs[1], xs[2], ys[0], ys[1], ys[2]], A, C)
+    # rhs_rvs = [ys[0], ys[1], ys[2]]
+    # conditional_1 = jvs.condition(rhs_rvs)
+    # print(conditional_1.mean(value=torch.ones(len(rhs_rvs))))
+    # print(conditional_1.covariance(value=torch.ones(len(rhs_rvs))))
 
 if __name__ == "__main__":
     test_graphical_model()

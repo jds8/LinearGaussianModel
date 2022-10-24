@@ -76,3 +76,53 @@ def empirical_kl(p, q, samples=8):
 def kl_divergence(p, q):
     """ The call to abs is to avoid nans during calls to backward() """
     return q.scale.log() - p.scale.log() + (p.scale / q.scale).abs().pow(2)/2 + ((p.loc - q.loc) / q.scale).abs().pow(2)/2 - 0.5
+
+def gaussian_posterior(prior: dist.Normal, likelihood_var: torch.tensor, ob: torch.tensor, C: torch.tensor) -> dist.Normal:
+    mu = (prior.mean * likelihood_var + C * ob * prior.variance) / (C**2 * prior.variance + likelihood_var)
+    sigma_sq = (prior.variance * likelihood_var) / (C**2 * prior.variance + likelihood_var)
+
+    return dist.Normal(mu, torch.sqrt(sigma_sq))
+
+def integrate(posterior, state_transition_variance, A):
+    """
+    Multiplies two prob. dists and integrates out the variable that posterior is over
+    Input:
+    a filtering posterior: p(z_t|y_{1:t})
+    a state transition: p(z_{t+1}|z_t)
+
+    Output:
+    predictive posterior: p(z_{t+1}|y_{1:t})
+    """
+    P = posterior.variance
+    R = state_transition_variance
+
+    lambda_xx = 1/P + A**2/R
+    lambda_xy = -A/R
+    lambda_yy = 1/R
+
+    Sigma_inv = torch.tensor([[lambda_xx, lambda_xy], [lambda_xy, lambda_yy]])
+    Sigma = torch.inverse(Sigma_inv)
+
+    return dist.Normal(A*posterior.mean, torch.sqrt(Sigma[-1, -1]).item())
+
+def kalman_filter(obs, prior: dist.Normal, state_transition_variance: torch.tensor,
+                  likelihood_var: torch.tensor, A: torch.tensor, C: torch.tensor):
+    """
+    Computes p(z_t|y_{1:t}) for latents {z_t} and observations {y_t} where
+    prior: p(z_1)
+    state_transition: p(z_t|z_{t-1}) = N(Az_{t-1}, Q)
+    likelihood: p(y_t|z_t) = N(Cz_t, R)
+    """
+    prediction = prior  # p(z_1)
+    for ob in obs:
+        filtering_posterior = gaussian_posterior(prediction, likelihood_var, ob, C)  # p(z_t|y_{1:t})
+        prediction = integrate(filtering_posterior, state_transition_variance, A)  # p(z_{t+1}|y_{1:t})
+    return filtering_posterior
+
+def test_kalman_filter(obs, A, Q, C, R):
+    prior = dist.Normal(0, torch.sqrt(Q))
+    state_transition_variance = Q
+    likelihood_var = R
+    pred = kalman_filter(obs, prior, state_transition_variance, likelihood_var, A, C)
+    print(pred.mean)
+    print(pred.variance)

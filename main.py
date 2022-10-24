@@ -39,6 +39,7 @@ from pathlib import Path
 from data_loader import load_ess_data
 from plot import plot_ess_data, plot_state_occupancy, plot_3d_state_occupancy
 from linear_policy import LinearActorCriticPolicy
+from rnn_policy import RNNActorCriticPolicy
 from rl_models import load_rl_model, get_rl_type_from_str, evaluate_actions
 from variational_inference import VariationalLGM, get_vlgm
 
@@ -56,7 +57,7 @@ TEST_MODEL_W_CONDITION = '/opt/agents/A={}_R={}/{}_{}_linear_gaussian_model_(tra
 TODAY = date.today().strftime("%b-%d-%Y")
 
 SAVE_DIR = '/opt/linear_gaussian_data'
-RL_TIMESTEPS = 50000
+RL_TIMESTEPS = 100
 NUM_SAMPLES = 1000
 NUM_VARIANCE_SAMPLES = 10
 NUM_REPEATS = 20
@@ -289,7 +290,7 @@ def get_loss_type(model_name):
 def train(traj_length, env, dim, condition_length, ent_coef=1.0,
           loss_type='forward_kl', learning_rate=3e-4, clip_range=0.2,
           continue_training=False, ignore_reward=False, use_mlp_policy=False,
-          rl_type='PPO', A=1., R=1., model_dir=''):
+          rl_type='PPO', A=1., R=1., model_dir='', args=None):
     params = {}
     run = wandb.init(project='linear_gaussian_model training', save_code=True, config=params, entity='iai')
 
@@ -340,6 +341,11 @@ def train(traj_length, env, dim, condition_length, ent_coef=1.0,
             model = rl_type('MlpPolicy', env, device='cpu',
                             policy_kwargs=dict(net_arch=dict(pi=arch, qf=arch)),
                             verbose=1, learning_rate=learning_rate)
+    elif args is not None and args.custom_policy == 'rnn':
+        policy_kwargs = dict(latent_dim=args.dim)
+        model = rl_type(RNNActorCriticPolicy, env, ent_coef=ent_coef, device='cpu',
+                        verbose=1, policy_kwargs=policy_kwargs, loss_type=loss_type, prior=prior, ignore_reward=ignore_reward,
+                        learning_rate=learning_rate, clip_range=clip_range)
     else:
         model = rl_type(LinearActorCriticPolicy, env, ent_coef=ent_coef, device='cpu',
                         verbose=1, loss_type=loss_type, prior=prior, ignore_reward=ignore_reward,
@@ -621,7 +627,7 @@ def make_ess_plot_nice(outputs_with_names, fixed_feature_string,
     plt.ylabel('Effective Sample Size')
     plt.title('Effective Sample Size Versus {}\n (num samples: {}, num repeats: {})'.format(xlabel, num_samples, num_repeats))
     legend_without_duplicate_labels(plt.gca())
-    save_dir = save_dir if save_dir else '{}/{}/'
+    save_dir = save_dir if save_dir else '{}/{}/'.format(TODAY, distribution_type)
     os.makedirs(save_dir, exist_ok=True)
     plt.savefig('{}/{}_ess_plot_{}_{}.pdf'.format(save_dir, name, fixed_feature_string, fixed_feature))
     # wandb.save('{}/{}_ess_plot_{}_{}.pdf'.format(save_dir, name, fixed_feature_string, fixed_feature))
@@ -1664,7 +1670,7 @@ def test_train(traj_length, dim, condition_length, ent_coef, loss_type,
           learning_rate=learning_rate, clip_range=clip_range,
           continue_training=continue_training,
           ignore_reward=ignore_reward, use_mlp_policy=use_mlp_policy,
-          rl_type=rl_type, A=A, R=R, model_dir=args.model_dir)
+          rl_type=rl_type, A=A, R=R, model_dir=args.model_dir, args=args)
 
 def sample_variance_ratios(traj_length, model_name, condition_length, policy=None):
     """
@@ -1746,7 +1752,7 @@ def sample_variance_ratios(traj_length, model_name, condition_length, policy=Non
             # print('variance_ratio_steps {}'.format(variance_ratio_steps))
 
             # if torch.abs(variance_ratio[0, 0] - variance_ratio_steps[0, 0]).item() > 0.001:
-            #     import pdb; pdb.set_trace()
+            #     import db; pdb.set_trace()
             #     dst = td_fps.condition(y_values=y, x_value=xt)
 
             # get next hidden state
@@ -2001,13 +2007,13 @@ def plot_ess_from_data(directory, data_type, initial_idx=0):
             ess_type = data_with_columns.data_type
     _plot_ess(ess_type)
 
-def plot_ess_from_dir_partial_data(directory, data_type, initial_idx=0):
+def plot_ess_from_dir_partial_data(directory, data_type, initial_idx, title, y_axis, log_scale=False):
     data = None
     if not directory.endswith('/'):
         directory = directory + '/'
     for j, fil in enumerate(os.listdir(os.fsencode(directory))):
         filename = os.fsdecode(fil)
-        if 'ess' in filename.lower() and filename.endswith('.csv'):
+        if filename.endswith('.csv'):# and 'ess' in filename.lower():
             data_with_columns = load_ess_data(directory+filename, data_type)
             data_label = data_with_columns.data_label
             ess_type = data_with_columns.data_type
@@ -2016,21 +2022,24 @@ def plot_ess_from_dir_partial_data(directory, data_type, initial_idx=0):
             lower_ci, med, upper_ci = torch.quantile(data, quantiles, dim=0)
 
             _df = pd.read_csv('{}/{}'.format(directory, filename), index_col=0)
-            col_type = type(_df.columns[0])
-            x_vals = _df.columns.astype(np.int).sort_values()
-            df = _df[x_vals.astype(col_type)]
+            int_col = np.array([int(''.join(filter(str.isdigit, col))) for col in _df.columns])
+            sort_idx = np.argsort(int_col)
+            sorted_int_col = int_col[sort_idx]
+            df = _df[_df.columns[sort_idx]]
 
-            plt.plot(x_vals, med.squeeze(), label=data_label)
-            plt.fill_between(x_vals, y1=lower_ci, y2=upper_ci, alpha=0.3)
+            plt.plot(sorted_int_col, med.squeeze(), label=data_label)
+            plt.fill_between(sorted_int_col, y1=lower_ci, y2=upper_ci, alpha=0.3)
 
     xlabel = get_full_name_of_ess_type(ess_type)
     ax = plt.gca()
+    if log_scale:
+        ax.set_yscale('log')
     ax.xaxis.get_major_locator().set_params(integer=True)
     plt.xlabel('{}'.format(xlabel))
-    plt.ylabel('Effective Sample Size')
-    plt.title('Effective Sample Size vs. {}'.format(xlabel))
+    plt.ylabel(y_axis)
+    plt.title('{} vs. {}'.format(title, xlabel))
     legend_without_duplicate_labels(plt.gca())
-    plt.savefig('{}/ess_{}.pdf'.format(TODAY, ess_type))
+    plt.savefig('{}/ess_{}.pdf'.format(directory, ess_type))
     # wandb.save('{}/ess_{}.pdf'.format(TODAY, ess_type))
     plt.close()
 
@@ -2119,7 +2128,7 @@ def compute_SAC_kl_w_prior(sac_policy, prev_xt, ys, condition_length, A, Q, num_
         mean_actions, log_std, _ = sac_policy.actor.get_action_dist_params(obs)
         q_score = sac_policy.actor.action_dist.proba_distribution(mean_actions, log_std).log_prob(sac_action)
         action = torch.atanh(sac_action)
-        p_score = prior.log_prob(action)
+        p_score = prior.log_prob(action.to(prior.mean.dtype))
         kl += (q_score - p_score) / num_samples
 
     return kl
@@ -2457,7 +2466,7 @@ def execute_pure_rl_ensemble(traj_lengths, dim, ent_coef, condition_length, use_
     Q_0 = args.Q_0
     mu_0 = args.mu_0
 
-    # outputs = []
+    outputs = []
     # rl_ds = []
     # _, policy = load_rl_model(model_name='/opt/agents/0.1_reverse_kl_linear_gaussian_model_(traj_10_dim_1_condition_length_5_use_mlp_policy_True).zip', device='cpu')
     # rl_ds.append(policy)
@@ -2469,6 +2478,9 @@ def execute_pure_rl_ensemble(traj_lengths, dim, ent_coef, condition_length, use_
     # rl_ds.append(policy)
     # _, policy = load_rl_model(model_name='/opt/agents/0.1_reverse_kl_linear_gaussian_model_(traj_10_dim_1).zip', device='cpu')
     # rl_ds.append(policy)
+
+    save_dir = '{}/pure_rl_m={}_A={}_R={}'.format(TODAY, condition_length, A, R)
+    os.makedirs(save_dir, exist_ok=True)
 
     ys_map = load_ys_map(args)
     for traj_length in traj_lengths:
@@ -2487,19 +2499,17 @@ def execute_pure_rl_ensemble(traj_lengths, dim, ent_coef, condition_length, use_
         # smallR = model_dir+'/A=tensor([[1.]])_R=tensor([[0.8000]])/A=tensor([[1.]])_R=tensor([[0.8000]])/'
         # bigR = model_dir+'/A=tensor([[1.]])_R=tensor([[1.8000]])/A=tensor([[1.]])_R=tensor([[1.8000]])/'
 
-        import pdb; pdb.set_trace()
         for m in torch.arange(condition_length, 0, -1):
             for j, fil in enumerate(os.listdir(os.fsencode(model_dir))):
                 filename = os.fsdecode(fil)
-                if "traj_{}_".format(traj_length) in filename and "condition_length_{}".format(m) in filename:
+                if "traj_{}_".format(traj_length) in filename and "condition_length_{}".format(m.item()) in filename:
                     _, policy = load_rl_model(model_name=model_dir+'/'+filename, device='cpu')
                     rl_ds.append(policy)
-        import pdb; pdb.set_trace()
-        assert len(rl_ds) == condition_length
-
+                    break
+        print(len(rl_ds), ' versus ', condition_length)
         name = '{}(traj_len {} dim {})'.format(RL_DISTRIBUTION, traj_length, dim)
         rl_output = ImportanceOutput(traj_length=traj_length, ys=None, dim=dim)
-        ys_set = ys_map[traj_length.item()]
+        ys_set = ys_map[traj_length]
         for i in range(NUM_REPEATS):
             # ys = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0]
             ys = ys_set[i]
@@ -2519,8 +2529,10 @@ def execute_pure_rl_ensemble(traj_lengths, dim, ent_coef, condition_length, use_
         rl_estimator.save_data()
 
         outputs += [OutputWithName(rl_output, name)]
+        if i%5 == 0:
+            save_outputs_with_names_traj(outputs, RL_DISTRIBUTION, 'pure_rl_ensemble_so_far', save_dir=save_dir)
 
-    save_outputs_with_names_traj(outputs, RL_DISTRIBUTION, 'pure_rl_ensemble')
+    save_outputs_with_names_traj(outputs, RL_DISTRIBUTION, 'pure_rl_ensemble', save_dir=save_dir)
     make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=dim,
                        num_samples=NUM_SAMPLES, num_repeats=NUM_REPEATS, traj_lengths=traj_lengths,
                        xlabel='Trajectory Length', distribution_type=RL_DISTRIBUTION, name='RL ensemble')
@@ -2732,7 +2744,7 @@ def evaluate_vi_policy(vlgm, model_name, traj_length, ys_set=None):
     return OutputWithName(rl_output, model_name), evidence_diffs
 
 def save_ys_map(args):
-    for traj_length in torch.arange(1, args.ys_map_range):
+    for traj_length in torch.arange(1, args.ys_map_range+1):
         ys_set = []
         for _ in range(args.num_repeats):
             ys = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0]
@@ -2863,6 +2875,11 @@ if __name__ == "__main__":
     condition_length = args.condition_length if args.condition_length > 0 else 0
     linear_gaussian_env_type = get_env_type_from_arg(args.env_type, condition_length=condition_length)
 
+    if args.custom_policy:
+        if args.use_mlp_policy:
+            print('WARNING: turning use_mlp_policy off in favor of {}'.format(args.custom_policy))
+        args.use_mlp_policy = False
+
     use_mlp_policy = args.use_mlp_policy
     rl_type = get_rl_type_from_str(args.rl_type)
     model_name = get_model_name(traj_length=traj_length, dim=dim,
@@ -2911,7 +2928,8 @@ if __name__ == "__main__":
         model_type_dir = 'A=tensor([[1.]])_R=tensor([[1.8000]])'
     elif R < 1.:
         model_type_dir = 'A=tensor([[1.]])_R=tensor([[0.8000]])'
-    model_dir = '{}/{}/{}'.format(model_dir, model_type_dir, model_type_dir)
+    # model_dir = '{}/{}/{}'.format(model_dir, model_type_dir, model_type_dir)
+    model_dir = '{}/{}'.format(model_dir, model_type_dir)
     args.model_dir = model_dir
 
     if subroutine == 'train_agent':
@@ -2999,7 +3017,13 @@ if __name__ == "__main__":
         plot_ess_from_data_from_files(filenames, data_type)
     elif subroutine == 'load_ess_data':
         print('executing: {}'.format('load_ess_data'))
-        plot_ess_from_dir_partial_data(ess_dir, data_type, initial_idx)
+        # title = 'Average Absolute Deviation of Marginal Evidence'
+        # y_axis = 'Average Absolute Deviation'
+        # log_scale = True
+        title = '(Stable Dynamics)\neffective sample size'
+        y_axis = 'effective sample size'
+        log_scale = False
+        plot_ess_from_dir_partial_data(ess_dir, data_type, initial_idx=initial_idx, title=title, y_axis=y_axis, log_scale=log_scale)
     elif subroutine == 'state_occupancy':
         print('executing: {}'.format('state_occupancy'))
         execute_state_occupancy(traj_length=traj_length, ent_coef=ent_coef)
