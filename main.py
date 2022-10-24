@@ -1245,6 +1245,7 @@ def plot_ess_estimators_traj(outputs_with_names, traj_lengths):
     outputs = torch.stack([torch.tensor(output.output[output.name].ess) for output in outputs_with_names], dim=1)
     quantiles = torch.tensor([0.05, 0.5, 0.95])
     lower_ci, med, upper_ci = torch.quantile(outputs, quantiles, dim=0)
+    sorted_traj_lengths = sorted_traj_lengths[:len(med)]
     plt.plot(sorted_traj_lengths, med.squeeze(), label=outputs_with_names[0].name)
     plt.fill_between(sorted_traj_lengths, y1=lower_ci, y2=upper_ci, alpha=0.3)
 
@@ -2506,7 +2507,6 @@ def execute_pure_rl_ensemble(traj_lengths, dim, ent_coef, condition_length, use_
                     rl_ds.append(policy)
                     break
         print(len(rl_ds), ' versus ', condition_length)
-
         name = '{}(traj_len {} dim {})'.format(RL_DISTRIBUTION, traj_length, dim)
         rl_output = ImportanceOutput(traj_length=traj_length, ys=None, dim=dim)
         ys_set = ys_map[traj_length]
@@ -2801,7 +2801,7 @@ def make_evidence_plot(args, distribution_type, evidence_diffs, vlgm_ess_traj_le
     # wandb.save('{}/EvidenceDifference(A={}_R={}_condition_length={}).pdf'.format(TODAY, args.A, args.R, args.condition_length))
     plt.close()
 
-    estimates_df = pd.DataFrame(torch.stack([lower_ci, med, upper_ci]))
+    estimates_df = pd.DataFrame([lower_ci.tolist(), med.tolist(), upper_ci.tolist()])
     evidence_diffs_str = '{}/{}_EvidenceDifferences_m={}_A={}_R={}.csv'.format(TODAY, distribution_type, args.m, args.A, args.R)
     estimates_df.to_csv(evidence_diffs_str)
 
@@ -2839,7 +2839,7 @@ def vi_ess_traj(args):
     save_outputs_with_names_traj(outputs, distribution_type,
                                  'm={}_lr={}_A={}_R={}_{}(dim_{})'.format(vlgm.args.m, vlgm.args.lr, vlgm.args.A, vlgm.args.R, distribution_type, args.dim), save_dir=save_dir)
     make_ess_plot_nice(outputs, fixed_feature_string='dimension', fixed_feature=args.dim,
-                       num_samples=args.num_samples, num_repeats=args.num_repeats, traj_lengths=args.ess_traj_lengths,
+                       num_samples=args.num_samples, num_repeats=args.num_repeats, traj_lengths=vlgm_ess_traj_lengths[:i+1],
                        xlabel='Trajectory Length', distribution_type=distribution_type, name='VariationalInference_m={}_lr={}_A={}_R={}'.format(vlgm.args.m, vlgm.args.lr, vlgm.args.A, vlgm.args.R),
                        save_dir=save_dir)
     make_evidence_plot(vlgm.args, VI_DISTRIBUTION, evidence_diffs, vlgm_ess_traj_lengths[:i+1])
