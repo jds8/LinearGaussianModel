@@ -2449,14 +2449,13 @@ def plot_posterior_mean(ys, traj_length, dim, condition_length, xs=None):
 
     return means, xs
 
-def execute_pure_rl_ensemble(traj_lengths, dim, ent_coef, condition_length, use_mlp_policy, model_dir='.'):
-    table = create_dimension_table(torch.tensor([dim]), random=False)
-    A = table[dim]['A']
-    Q = table[dim]['Q']
-    C = table[dim]['C']
-    R = table[dim]['R']
-    Q_0 = table[dim]['Q_0']
-    mu_0 = table[dim]['mu_0']
+def execute_pure_rl_ensemble(traj_lengths, dim, ent_coef, condition_length, use_mlp_policy, model_dir, args):
+    A = args.A
+    Q = args.Q
+    C = args.C
+    R = args.R
+    Q_0 = args.Q_0
+    mu_0 = args.mu_0
 
     # outputs = []
     # rl_ds = []
@@ -2471,21 +2470,39 @@ def execute_pure_rl_ensemble(traj_lengths, dim, ent_coef, condition_length, use_
     # _, policy = load_rl_model(model_name='/opt/agents/0.1_reverse_kl_linear_gaussian_model_(traj_10_dim_1).zip', device='cpu')
     # rl_ds.append(policy)
 
+    ys_map = load_ys_map(args)
     for traj_length in traj_lengths:
         rl_ds = []
-        for m in torch.arange(condition_length, 0, -1):
-            base_model_name = get_model_name(traj_length=traj_length, dim=dim,
-                                             ent_coef=ent_coef, loss_type=loss_type,
-                                             condition_length=m, use_mlp_policy=use_mlp_policy)
+        # for m in torch.arange(condition_length, 0, -1):
+        #     base_model_name = get_model_name(traj_length=traj_length, dim=dim,
+        #                                      ent_coef=ent_coef, loss_type=loss_type,
+        #                                      condition_length=m, use_mlp_policy=use_mlp_policy)
 
-            model_name = '{}/{}'.format(model_dir, base_model_name)
-            _, policy = load_rl_model(model_name=model_name, device='cpu')
-            rl_ds.append(policy)
+        #     model_name = '{}/{}'.format(model_dir, base_model_name)
+        #     _, policy = load_rl_model(model_name=model_name, device='cpu')
+        #     rl_ds.append(policy)
+
+        # smallA = model_dir+'/A=tensor([[0.6000]])_R=tensor([[1.]])/A=tensor([[0.6000]])_R=tensor([[1.]])/'
+        # bigA = model_dir+'/A=tensor([[1.2000]])_R=tensor([[1.]])/A=tensor([[1.2000]])_R=tensor([[1.]])/'
+        # smallR = model_dir+'/A=tensor([[1.]])_R=tensor([[0.8000]])/A=tensor([[1.]])_R=tensor([[0.8000]])/'
+        # bigR = model_dir+'/A=tensor([[1.]])_R=tensor([[1.8000]])/A=tensor([[1.]])_R=tensor([[1.8000]])/'
+
+        import pdb; pdb.set_trace()
+        for m in torch.arange(condition_length, 0, -1):
+            for j, fil in enumerate(os.listdir(os.fsencode(model_dir))):
+                filename = os.fsdecode(fil)
+                if "traj_{}_".format(traj_length) in filename and "condition_length_{}".format(m) in filename:
+                    _, policy = load_rl_model(model_name=model_dir+'/'+filename, device='cpu')
+                    rl_ds.append(policy)
+        import pdb; pdb.set_trace()
+        assert len(rl_ds) == condition_length
 
         name = '{}(traj_len {} dim {})'.format(RL_DISTRIBUTION, traj_length, dim)
         rl_output = ImportanceOutput(traj_length=traj_length, ys=None, dim=dim)
-        for _ in range(NUM_REPEATS):
+        ys_set = ys_map[traj_length.item()]
+        for i in range(NUM_REPEATS):
             # ys = generate_trajectory(traj_length, A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0)[0]
+            ys = ys_set[i]
             env = linear_gaussian_env_type(A=A, Q=Q, C=C, R=R, mu_0=mu_0, Q_0=Q_0,
                                            using_entropy_loss=(loss_type==ENTROPY_LOSS),
                                            ys=ys, sample=False)
@@ -2894,7 +2911,7 @@ if __name__ == "__main__":
         model_type_dir = 'A=tensor([[1.]])_R=tensor([[1.8000]])'
     elif R < 1.:
         model_type_dir = 'A=tensor([[1.]])_R=tensor([[0.8000]])'
-    model_dir = '{}/{}'.format(model_dir, model_type_dir)
+    model_dir = '{}/{}/{}'.format(model_dir, model_type_dir, model_type_dir)
     args.model_dir = model_dir
 
     if subroutine == 'train_agent':
@@ -3031,7 +3048,7 @@ if __name__ == "__main__":
         execute_rl_posterior_ensemble(ess_traj_lengths, dim, condition_length, model_name)
     elif subroutine == 'evaluate_pure_rl_ensemble':
         print('executing: {}'.format('evaluate_pure_rl_ensemble'))
-        execute_pure_rl_ensemble(ess_traj_lengths, dim, ent_coef, condition_length, use_mlp_policy, model_dir=model_dir)
+        execute_pure_rl_ensemble(ess_traj_lengths, dim, ent_coef, condition_length, use_mlp_policy, model_dir=model_dir, args=args)
     elif subroutine == 'compute_analytical_kl_at_each_state':
         print('executing: {}'.format('compute_analytical_kl_at_each_state'))
         kls = execute_compute_analytical_kl_at_each_state(traj_length, dim, condition_length)
