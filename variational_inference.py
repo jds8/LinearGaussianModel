@@ -59,12 +59,14 @@ class Policy:
     def __init__(self, get_model_input_from_obs, model, x_dim):
         self.get_model_input_from_obs = get_model_input_from_obs
         self.model = model
+        self.softplus = torch.nn.Softplus()
         self.x_dim = x_dim
 
     def get_distribution(self, obs):
         inpt = self.get_model_input_from_obs(obs)
         mean_output, log_std_output = self.model(inpt).squeeze()
-        std_output = log_std_output.exp().reshape(1, 1) + 1e-8
+        # std_output = log_std_output.exp().reshape(1, 1) + 1e-8
+        std_output = self.softplus(log_std_output.reshape(1, 1))
         return Distribution(Distribution(dist.Normal(mean_output, std_output)))
 
     def predict(self, obs, deterministic=False):
@@ -151,6 +153,17 @@ class VariationalLGM:
         traj_length = self.args.traj_length
 
         print_interval = num_epochs / 50
+
+        A = torch.eye(*self.args.A.shape)
+        C = torch.eye(*self.args.C.shape)
+        Q = torch.eye(*self.args.Q.shape)
+        R = torch.eye(*self.args.R.shape)
+
+        A_estimates = [A]
+        C_estimates = [C]
+        Q_estimates = [Q]
+        R_estimates = [R]
+
         for epoch in range(num_epochs):
             loss = torch.tensor([0.])
             for _ in range(self.args.num_samples):
@@ -163,9 +176,16 @@ class VariationalLGM:
                 policy = self.extract_policy()
 
                 obses = []
-                prev_xts = [prev_xt]
-                sum_x_t_x_t = torch.zeros_like(self.args.A)
-                sum_x_t_plus_1_x_t = torch.zeros_like(self.args.A)
+                prev_xts = []
+                with torch.no_grad():
+                    full_sum_xt_xt = torch.zeros_like(self.args.A)
+                    sum_xt_plus_1_xt = torch.zeros_like(self.args.A)
+                    sum_xt_xt_plus_1 = torch.zeros_like(self.args.A)
+                    sum_yt_yt = torch.zeros_like(self.args.C)
+                    sum_yt_xt = torch.zeros_like(self.args.C)
+                    sum_xt_yt = torch.zeros_like(self.args.C)
+                    # y_minus_Cx_sqr = torch.zeros_like(self.args.R)
+                    # xt_plus_1_minus_Axt = torch.zeros_like(self.args.Q)
                 kls = []
                 for state_idx in range(traj_length):
                     obs = torch.cat([prev_xt.reshape(1, -1), ys[state_idx:state_idx+self.args.condition_length].reshape(1, -1)], dim=1)
@@ -173,20 +193,63 @@ class VariationalLGM:
 
                     # compute kl divergence with prior
                     q_dist = policy.get_distribution(obs).distribution.distribution
-                    mvn_p_dist = get_state_transition_dist(prev_xt, self.args.A, self.args.Q)
+                    # mvn_p_dist = get_state_transition_dist(prev_xt, self.args.A, self.args.Q)
+                    mvn_p_dist = get_state_transition_dist(prev_xt, A, Q)
                     p_dist = dist.Normal(mvn_p_dist.mean.squeeze(), torch.sqrt(mvn_p_dist.covariance_matrix).squeeze())
                     kl = kl_divergence(q_dist, p_dist).squeeze()
                     kls.append(kl)
                     loss += kl
 
                     # sample new xt
-                    prev_xt = q_dist.rsample()
-                    prev_xts.append(prev_xt)
+                    curr_xt = q_dist.rsample()
 
                     # score likelihood
-                    lik = score_y(ys[state_idx], prev_xt, self.args.C, self.args.R)
+                    # lik = score_y(ys[state_idx], curr_xt, self.args.C, self.args.R)
+                    lik = score_y(ys[state_idx], curr_xt, C, R)
                     # compute total loss
                     loss -= lik
+
+                    # collect parameter estimate terms
+                    with torch.no_grad():
+                        full_sum_xt_xt += torch.mm(curr_xt.reshape(-1, 1), curr_xt.reshape(1, -1))
+                        sum_xt_yt += torch.mm(curr_xt.reshape(-1, 1), ys[state_idx].reshape(1, -1))
+                        sum_yt_xt += torch.mm(ys[state_idx].reshape(-1, 1), curr_xt.reshape(1, -1))
+                        sum_yt_yt += ys[state_idx] * ys[state_idx]
+                        # y_minus_Cx_sqr += (ys[state_idx] - torch.mm(C, curr_xt))**2
+                        if prev_xts:
+                            prev_xt = prev_xts[-1]
+                            sum_xt_plus_1_xt += torch.mm(curr_xt.reshape(-1, 1), prev_xt.reshape(1, -1))
+                            sum_xt_xt_plus_1 += torch.mm(prev_xt.reshape(-1, 1), curr_xt.reshape(1, -1))
+                            # xt_plus_1_minus_Axt += (curr_xt - torch.mm(A, prev_xt))**2
+
+                        # update prev_xt to current sample before next iteration
+                        prev_xts.append(curr_xt)
+                        prev_xt = curr_xt
+
+                with torch.no_grad():
+                    # estimate parameters
+                    last_x_product = torch.mm(prev_xt.reshape(-1, 1), prev_xt.reshape(1, -1))
+                    first_x_product = torch.mm(prev_xts[0].reshape(-1, 1), prev_xts[0].reshape(1, -1))
+
+                    full_xt_xt_inv = torch.pinverse(full_sum_xt_xt)
+                    first_xt_xt_inv = full_xt_xt_inv - 1/(1+torch.trace(-last_x_product*full_xt_xt_inv))*torch.mm(torch.mm(full_xt_xt_inv, -last_x_product), full_xt_xt_inv)
+
+                    last_sum_xt_xt = full_sum_xt_xt - first_x_product
+                    first_sum_xt_xt = full_sum_xt_xt - last_x_product
+
+                    oldA = A.reshape(-1, sum_xt_xt_plus_1.shape[0])
+                    oldC = C.reshape(-1, sum_xt_yt.shape[0])
+                    A = torch.mm(sum_xt_plus_1_xt, first_xt_xt_inv)
+                    C = torch.mm(sum_yt_xt, full_xt_xt_inv)
+                    Q = 1/traj_length * ( last_sum_xt_xt - torch.mm(sum_xt_plus_1_xt, oldA.transpose(0,1)) - torch.mm(oldA, sum_xt_xt_plus_1) + torch.mm(oldA, torch.mm(first_sum_xt_xt, oldA)) )
+                    R = 1/(traj_length+1) * ( sum_yt_yt - torch.mm(sum_yt_xt, oldC.transpose(0, 1)) - torch.mm(oldC, sum_xt_yt) + torch.mm(oldC, torch.mm(full_sum_xt_xt, oldC.transpose(0, 1))) )
+                    # R_true = 1/(traj_length+1) * y_minus_Cx_sqr
+                    # Q_true = 1/(traj_length) * xt_plus_1_minus_Axt
+
+                A_estimates.append(A)
+                C_estimates.append(C)
+                Q_estimates.append(Q)
+                R_estimates.append(R)
 
             loss /= self.args.num_samples
             self.optimizer.zero_grad()
@@ -197,7 +260,11 @@ class VariationalLGM:
             if (epoch + 1) % print_interval == 0:
                 print(
                     f"Epoch [{epoch + 1}/{num_epochs}], "
-                    f"Loss: {loss.item():.4f}"
+                    f"Loss: {loss.item():.4f}, "
+                    f"A estimate: {A_estimates[-1].item():.4f}, "
+                    f"C estimate: {C_estimates[-1].item():.4f}, "
+                    f"Q estimate: {Q_estimates[-1].item():.4f}, "
+                    f"R estimate: {R_estimates[-1].item():.4f}"
                 )
         try:
             self.save_models()
@@ -224,19 +291,27 @@ class RNNWrapper(nn.RNN):
 
 class RecurrentVariationalLGM(VariationalLGM):
     def __init__(self, args):
-        args.model_dim = args.dim + args.obs_size
+        # args.model_dim = args.dim + args.obs_size
+        args.model_dim = args.obs_size
 
         super().__init__(args)
 
-        self.rnn = RNNWrapper(1, args.obs_size, args.num_rnn_layers)
-        self.params += list(self.rnn.parameters())
+        self.rnn = RNNWrapper(1, args.obs_size, args.num_rnn_layers, bidirectional=args.bidirectional)
+        self.latent_transform = torch.nn.Sequential(
+            torch.nn.Linear(self.args.dim, self.args.obs_size),
+            torch.nn.Tanh()
+        )
+        self.params += list(self.rnn.parameters()) + list(self.latent_transform.parameters())
         self.initialize_optimizer()
         self.rnn_state_dict_path = '{}/rnn_state_dict_traj_length_{}'.format(self.run_dir, self.args.traj_length)
+        self.latent_transform_state_dict_path = '{}/latent_transform_state_dict_traj_length_{}'.format(self.run_dir, self.args.traj_length)
         os.makedirs(self.run_dir, exist_ok=True)
 
     def get_obs_output(self, ys, state_idx):
         future_ys = ys[state_idx:state_idx+self.args.condition_length].reshape(-1, 1, 1)
         obs_output, _ = self.rnn(future_ys)
+        if self.rnn.bidirectional:
+            return obs_output[-1, :, :args.obs_size] + obs_output[-1, :, args.obs_output:]
         return obs_output[-1, :, :]
 
     def get_model_input(self, prev_xt, ys, state_idx):
@@ -253,8 +328,14 @@ class RecurrentVariationalLGM(VariationalLGM):
         prev_xt = _obs[:self.args.dim]
         future_ys = _obs[self.args.dim:].reshape(-1, 1, 1)
         obs_output, _ = self.rnn(future_ys)
-        b = obs_output[-1, :, :]
-        return torch.cat([prev_xt.reshape(1, -1), b.reshape(1, -1)], dim=1)
+        if self.rnn.bidirectional:
+            b = obs_output[-1, :, :args.obs_size] + obs_output[-1, :, args.obs_size:]
+            num_rnn_terms = 2
+        else:
+            b = obs_output[-1, :, :]
+            num_rnn_terms = 1
+        h_combined = (self.latent_transform(prev_xt.reshape(1, -1)) + b.reshape(1, -1)) / (num_rnn_terms+1)
+        return h_combined
 
     def clip_gradients(self):
         super().clip_gradients()
@@ -263,10 +344,12 @@ class RecurrentVariationalLGM(VariationalLGM):
     def save_models(self):
         super().save_models()
         torch.save(self.rnn.state_dict(), self.rnn_state_dict_path)
+        torch.save(self.latent_transform.state_dict(), self.latent_transform_state_dict_path)
 
     def load_models(self):
         super().load_models()
         self.rnn.load_state_dict(torch.load(self.rnn_state_dict_path))
+        self.rnn.load_state_dict(torch.load(self.latent_transform_state_dict_path))
 
 
 class LinearVariationalLGM(VariationalLGM):

@@ -39,6 +39,7 @@ from pathlib import Path
 from data_loader import load_ess_data
 from plot import plot_ess_data, plot_state_occupancy, plot_3d_state_occupancy
 from linear_policy import LinearActorCriticPolicy
+from rnn_policy import RNNActorCriticPolicy
 from rl_models import load_rl_model, get_rl_type_from_str, evaluate_actions
 from variational_inference import VariationalLGM, get_vlgm
 
@@ -289,7 +290,7 @@ def get_loss_type(model_name):
 def train(traj_length, env, dim, condition_length, ent_coef=1.0,
           loss_type='forward_kl', learning_rate=3e-4, clip_range=0.2,
           continue_training=False, ignore_reward=False, use_mlp_policy=False,
-          rl_type='PPO', A=1., R=1., model_dir=''):
+          rl_type='PPO', A=1., R=1., model_dir='', args=None):
     params = {}
     run = wandb.init(project='linear_gaussian_model training', save_code=True, config=params, entity='iai')
 
@@ -340,6 +341,11 @@ def train(traj_length, env, dim, condition_length, ent_coef=1.0,
             model = rl_type('MlpPolicy', env, device='cpu',
                             policy_kwargs=dict(net_arch=dict(pi=arch, qf=arch)),
                             verbose=1, learning_rate=learning_rate)
+    elif args is not None and args.custom_policy == 'rnn':
+        policy_kwargs = dict(latent_dim=args.dim)
+        model = rl_type(RNNActorCriticPolicy, env, ent_coef=ent_coef, device='cpu',
+                        verbose=1, policy_kwargs=policy_kwargs, loss_type=loss_type, prior=prior, ignore_reward=ignore_reward,
+                        learning_rate=learning_rate, clip_range=clip_range)
     else:
         model = rl_type(LinearActorCriticPolicy, env, ent_coef=ent_coef, device='cpu',
                         verbose=1, loss_type=loss_type, prior=prior, ignore_reward=ignore_reward,
@@ -1663,7 +1669,7 @@ def test_train(traj_length, dim, condition_length, ent_coef, loss_type,
           learning_rate=learning_rate, clip_range=clip_range,
           continue_training=continue_training,
           ignore_reward=ignore_reward, use_mlp_policy=use_mlp_policy,
-          rl_type=rl_type, A=A, R=R, model_dir=args.model_dir)
+          rl_type=rl_type, A=A, R=R, model_dir=args.model_dir, args=args)
 
 def sample_variance_ratios(traj_length, model_name, condition_length, policy=None):
     """
@@ -2868,6 +2874,11 @@ if __name__ == "__main__":
     ess_condition_lengths = args.ess_condition_lengths
     condition_length = args.condition_length if args.condition_length > 0 else 0
     linear_gaussian_env_type = get_env_type_from_arg(args.env_type, condition_length=condition_length)
+
+    if args.custom_policy:
+        if args.use_mlp_policy:
+            print('WARNING: turning use_mlp_policy off in favor of {}'.format(args.custom_policy))
+        args.use_mlp_policy = False
 
     use_mlp_policy = args.use_mlp_policy
     rl_type = get_rl_type_from_str(args.rl_type)
