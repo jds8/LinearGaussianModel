@@ -130,10 +130,13 @@ class CustomCallback(BaseCallback):
                                                         prev_xt=prev_xt, ys=obs_env.get_condition_ys(),
                                                         condition_length=obs_env.condition_length,
                                                         A=obs_env.A, Q=obs_env.Q, sac_num_samples=1000))
-                # td = obs_env.tds[obs_env.index]
-                # posterior_kls.append(compute_conditional_kl(td_fps=td, policy=self.model.policy,
-                #                             prev_xt=prev_xt, ys=obs_env.get_condition_ys(),
-                #                             condition_length=obs_env.condition_length))
+                try:
+                    td = obs_env.tds[obs_env.index]
+                    posterior_kls.append(compute_conditional_kl(td_fps=td, policy=self.model.policy,
+                                         prev_xt=prev_xt, ys=obs_env.get_condition_ys(),
+                                         condition_length=obs_env.condition_length))
+                except:
+                    pass
 
                 action = policy(obs)
                 obs, reward, done, info = env.step(action)
